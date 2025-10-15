@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-3D Segmentation Results Visualization
-다중 모델 비교를 위한 시각화 모듈
+3D Segmentation Results Visualization (DataFrame-based)
+다중 모델 비교를 위한 DataFrame 기반 시각화 모듈
 """
 
 import os

@@ -13,10 +13,13 @@
 │   └── model_swin_unetr.py     # Swin UNETR 모델
 ├── train/                      # 훈련 스크립트
 │   └── train_baseline.py       # Baseline 모델 훈련
+├── visualization/              # 시각화 모듈
+│   ├── __init__.py
+│   ├── visualization_3d.py     # 3D 시각화 (다중 모델 지원)
+│   └── visualization_dataframe.py # DataFrame 기반 시각화
 ├── baseline_results/           # 실험 결과 저장
 ├── data/                       # 데이터셋
 ├── integrated_experiment.py    # 통합 실험 스크립트
-├── visualization_3d.py         # 3D 시각화 모듈
 ├── data_loader_kaggle.py      # 데이터 로더
 └── requirements.txt            # 의존성 패키지
 ```
@@ -98,9 +101,10 @@ python integrated_experiment.py --epochs 10 --models unet3d unetr
 - 시드별 성능 분포 분석
 
 ### 3. 3D 시각화
-- 슬라이스별 세그멘테이션 결과 시각화
+- 슬라이스별 세그멘테이션 결과 시각화 (다중 모델 지원)
 - 학습 곡선 및 성능 비교 차트
 - 인터랙티브 3D 분석 플롯
+- DataFrame 기반 실험 결과 분석
 
 ### 4. 자동화된 실험 관리
 - 체크포인트 자동 저장
@@ -136,7 +140,8 @@ python integrated_experiment.py --epochs 10 --models unet3d unetr
 - 명령행 인자로 실시간 설정 변경 가능
 
 ### 시각화 커스터마이징
-- `visualization_3d.py`에서 차트 스타일 수정
+- `visualization/visualization_3d.py`: 다중 모델 3D 시각화
+- `visualization/visualization_dataframe.py`: DataFrame 기반 분석 차트
 - 새로운 분석 차트 추가 가능
 
 ## 📋 요구사항

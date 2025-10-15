@@ -34,7 +34,7 @@ from baseline import (
 from data_loader_kaggle import BratsKaggleDataset, get_data_loaders_kaggle
 
 # Import visualization
-from visualization_3d import create_comprehensive_analysis, create_interactive_3d_plot
+from visualization import create_comprehensive_analysis, create_interactive_3d_plot
 
 def set_seed(seed):
     """랜덤 시드 설정"""
