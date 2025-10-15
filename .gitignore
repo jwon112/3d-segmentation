@@ -1,0 +1,80 @@
+# Data files and datasets
+data/
+*.h5
+*.nii
+*.nii.gz
+*.csv
+*.zip
+*.tar.gz
+
+# Model checkpoints and weights
+checkpoints/
+*.pth
+*.pkl
+*.h5
+*.hdf5
+
+# Results and outputs
+baseline_results/
+experiment_results_*/
+wandb/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.html
+*.pdf
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Large files that shouldn't be tracked
+*.bin
+*.dat
+*.dump
+
+# Specific to this project
+comparison_*.gif
+segmentation_*.html
+volume_distribution.png
+dice_scores_analysis.png
+segmentation_slices.png
+training_history.png
+confusion_matrix_*.png
