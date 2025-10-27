@@ -2,6 +2,23 @@
 """
 3D Segmentation Integrated Experiment System
 Baseline 모델들을 훈련하고 결과를 비교 분석하는 통합 시스템
+
+Usage:
+    python integrated_experiment.py --epochs 10 --seeds 24
+    python integrated_experiment.py --datasets brats2021 --epochs 10
+    python integrated_experiment.py --data_path /path/to/data --epochs 50 --seeds 24 42 123
+
+Dataset Selection:
+    --datasets: 사용할 데이터셋 목록
+        - brats2021: BraTS2021 데이터셋 (기본값)
+        - auto: 자동 감지 (사용 가능한 데이터셋)
+
+Path Configuration:
+    --data_path: 데이터셋 루트 디렉토리 (기본값: 'data')
+    환경 변경 시:
+        - 로컬: --data_path ./data
+        - 서버: --data_path /data/project/brats
+        - 절대 경로: --data_path D:/Projects/data
 """
 
 import os
@@ -31,7 +48,7 @@ from baseline import (
 )
 
 # Import data loader and utilities
-from data_loader_kaggle import BratsKaggleDataset, get_data_loaders_kaggle
+from data_loader import get_data_loaders
 
 # Import visualization
 from visualization import create_comprehensive_analysis, create_interactive_3d_plot
@@ -226,8 +243,18 @@ def evaluate_model(model, test_loader, device='cuda'):
         'recall': avg_recall
     }
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None):
-    """3D Segmentation 통합 실험 실행"""
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None):
+    """3D Segmentation 통합 실험 실행
+    
+    Args:
+        data_path: 데이터셋 루트 디렉토리 경로 (기본: 'data')
+        epochs: 훈련 에포크 수
+        batch_size: 배치 크기
+        seeds: 실험 시드 리스트
+        models: 사용할 모델 리스트 (기본: ['unet3d', 'unetr', 'swin_unetr'])
+        datasets: 사용할 데이터셋 리스트 (기본: ['brats2021'])
+                  지원: 'brats2021', 'auto' (자동 선택)
+    """
     
     # 실험 결과 저장 디렉토리
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -240,6 +267,21 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     else:
         available_models = [m for m in models if m in ['unet3d', 'unetr', 'swin_unetr']]
     
+    # 사용 가능한 데이터셋들
+    if datasets is None:
+        available_datasets = ['brats2021']  # 기본값
+    else:
+        available_datasets = []
+        for ds in datasets:
+            if ds == 'auto':
+                # 자동 감지: 데이터셋 존재 여부 확인
+                brats2021_path = os.path.join(data_path, 'BraTS2021_Training_Data')
+                
+                if os.path.exists(brats2021_path):
+                    available_datasets.append('brats2021')
+            elif ds in ['brats2021']:
+                available_datasets.append(ds)
+    
     # 결과 저장용
     all_results = []
     all_epochs_results = []
@@ -247,91 +289,107 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\nUsing device: {device}")
     
-    # 각 시드별로 실험
-    for seed in seeds:
-        print(f"\n{'='*60}")
-        print(f"Training 3D Segmentation Models with seed: {seed}")
-        print(f"{'='*60}")
+    # 각 데이터셋별로 실험
+    for dataset_name in available_datasets:
+        print(f"\n{'#'*80}")
+        print(f"Dataset: {dataset_name.upper()}")
+        print(f"{'#'*80}")
         
-        set_seed(seed)
+        # 데이터셋별 디렉토리 구조 설정
+        dataset_dir = os.path.join(data_path, 'BraTS2021_Training_Data')
         
-        # 데이터 로더 생성
-        train_loader, val_loader, test_loader = get_data_loaders_kaggle(
-            data_dir=data_path,
-            batch_size=batch_size,
-            num_workers=0,  # Windows에서 안정성을 위해 0으로 설정
-            max_samples=10  # 메모리 효율성을 위해 제한
-        )
+        if not os.path.exists(dataset_dir):
+            print(f"Warning: Dataset {dataset_name} not found at {dataset_dir}. Skipping...")
+            continue
         
-        # 각 모델별로 실험
-        for model_name in available_models:
-            try:
-                print(f"\nTraining {model_name.upper()}...")
-                
-                # 모델 생성
-                model = get_model(model_name, n_channels=4, n_classes=4)
-                
-                # 모델 정보 출력
-                print(f"\n=== {model_name.upper()} Model Information ===")
-                total_params = sum(p.numel() for p in model.parameters())
-                trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-                print(f"Total parameters: {total_params:,}")
-                print(f"Trainable parameters: {trainable_params:,}")
-                
-                # 모델 크기 계산
-                param_size = 0
-                buffer_size = 0
-                for param in model.parameters():
-                    param_size += param.nelement() * param.element_size()
-                for buffer in model.buffers():
-                    buffer_size += buffer.nelement() * buffer.element_size()
-                model_size_mb = (param_size + buffer_size) / 1024 / 1024
-                print(f"Model size: {model_size_mb:.2f} MB")
-                
-                # FLOPs 계산
-                flops = calculate_flops(model, input_size=(1, 4, 64, 64, 64))
-                print(f"FLOPs: {flops:,}")
-                print("=" * 50)
-                
-                # 훈련
-                train_losses, val_dices, test_dices, epoch_results, best_epoch, best_val_dice = train_model(
-                    model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed
-                )
-                
-                # 평가
-                metrics = evaluate_model(model, test_loader, device)
-                
-                # 결과 저장
-                result = {
-                    'seed': seed,
-                    'model_name': model_name,
-                    'total_params': total_params,
-                    'flops': flops,
-                    'test_dice': metrics['dice'],
-                    'val_dice': best_val_dice,
-                    'precision': metrics['precision'],
-                    'recall': metrics['recall'],
-                    'best_epoch': best_epoch
-                }
-                all_results.append(result)
-                
-                # 모든 epoch 결과 저장
-                for epoch_result in epoch_results:
-                    epoch_data = {
+        # 각 시드별로 실험
+        for seed in seeds:
+            print(f"\n{'='*60}")
+            print(f"Training 3D Segmentation Models - Dataset: {dataset_name.upper()}, Seed: {seed}")
+            print(f"{'='*60}")
+            
+            set_seed(seed)
+            
+            # 데이터 로더 생성 (3D 데이터)
+            train_loader, val_loader, test_loader = get_data_loaders(
+                data_dir=data_path,
+                batch_size=batch_size,
+                num_workers=0,  # Windows에서 안정성을 위해 0으로 설정
+                max_samples=10,  # 메모리 효율성을 위해 제한
+                dim='3d'  # 3D 데이터 사용
+            )
+            
+            # 각 모델별로 실험
+            for model_name in available_models:
+                try:
+                    print(f"\nTraining {model_name.upper()}...")
+                    
+                    # 모델 생성
+                    model = get_model(model_name, n_channels=4, n_classes=4)
+                    
+                    # 모델 정보 출력
+                    print(f"\n=== {model_name.upper()} Model Information ===")
+                    total_params = sum(p.numel() for p in model.parameters())
+                    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                    print(f"Total parameters: {total_params:,}")
+                    print(f"Trainable parameters: {trainable_params:,}")
+                    
+                    # 모델 크기 계산
+                    param_size = 0
+                    buffer_size = 0
+                    for param in model.parameters():
+                        param_size += param.nelement() * param.element_size()
+                    for buffer in model.buffers():
+                        buffer_size += buffer.nelement() * buffer.element_size()
+                    model_size_mb = (param_size + buffer_size) / 1024 / 1024
+                    print(f"Model size: {model_size_mb:.2f} MB")
+                    
+                    # FLOPs 계산
+                    flops = calculate_flops(model, input_size=(1, 4, 64, 64, 64))
+                    print(f"FLOPs: {flops:,}")
+                    print("=" * 50)
+                    
+                    # 훈련
+                    train_losses, val_dices, test_dices, epoch_results, best_epoch, best_val_dice = train_model(
+                        model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed
+                    )
+                    
+                    # 평가
+                    metrics = evaluate_model(model, test_loader, device)
+                    
+                    # 결과 저장
+                    result = {
+                        'dataset': dataset_name,
                         'seed': seed,
                         'model_name': model_name,
-                        'epoch': epoch_result['epoch'],
-                        'train_loss': epoch_result['train_loss'],
-                        'val_dice': epoch_result['val_dice'],
-                        'test_dice': epoch_result['test_dice']
+                        'total_params': total_params,
+                        'flops': flops,
+                        'test_dice': metrics['dice'],
+                        'val_dice': best_val_dice,
+                        'precision': metrics['precision'],
+                        'recall': metrics['recall'],
+                        'best_epoch': best_epoch
                     }
-                    all_epochs_results.append(epoch_data)
-                
-                print(f"Final Val Dice: {best_val_dice:.4f} (epoch {best_epoch}) | Test Dice: {metrics['dice']:.4f} | Test Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
-                
-            except Exception as e:
-                print(f"Error with {model_name}: {e}")
-                continue
+                    all_results.append(result)
+                    
+                    # 모든 epoch 결과 저장
+                    for epoch_result in epoch_results:
+                        epoch_data = {
+                            'dataset': dataset_name,
+                            'seed': seed,
+                            'model_name': model_name,
+                            'epoch': epoch_result['epoch'],
+                            'train_loss': epoch_result['train_loss'],
+                            'val_dice': epoch_result['val_dice'],
+                            'test_dice': epoch_result['test_dice']
+                        }
+                        all_epochs_results.append(epoch_data)
+                    
+                    print(f"Final Val Dice: {best_val_dice:.4f} (epoch {best_epoch}) | Test Dice: {metrics['dice']:.4f} | Test Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
+                    
+                except Exception as e:
+                    print(f"Error with {model_name}: {e}")
+                    continue
     
     # 결과를 DataFrame으로 변환
     results_df = pd.DataFrame(all_results)
@@ -396,13 +454,15 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='3D Segmentation Integrated Experiment System')
     parser.add_argument('--data_path', type=str, default='data', 
-                       help='Path to BraTS dataset root')
+                       help='Path to BraTS dataset root (default: data/)')
     parser.add_argument('--epochs', type=int, default=10, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size')
     parser.add_argument('--seeds', nargs='+', type=int, default=[24], 
                        help='Random seeds for experiments')
     parser.add_argument('--models', nargs='+', type=str, default=None,
                        help='Specific models to train (default: unet3d,unetr,swin_unetr)')
+    parser.add_argument('--datasets', nargs='+', type=str, default=None,
+                       help='Datasets to use: brats2021, auto (default: brats2021)')
     
     args = parser.parse_args()
     
@@ -412,11 +472,12 @@ if __name__ == "__main__":
     print(f"Batch size: {args.batch_size}")
     print(f"Seeds: {args.seeds}")
     print(f"Models: {args.models if args.models else 'unet3d,unetr,swin_unetr'}")
+    print(f"Datasets: {args.datasets if args.datasets else 'brats2021 (auto-detected)'}")
     print(f"Results will be saved in: baseline_results/ folder")
     
     try:
         results_dir, results_df = run_integrated_experiment(
-            args.data_path, args.epochs, args.batch_size, args.seeds, args.models
+            args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets
         )
         
         if results_dir and results_df is not None:

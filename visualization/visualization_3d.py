@@ -501,7 +501,7 @@ def comprehensive_analysis_multi_model(models_dict: Dict[str, torch.nn.Module],
 if __name__ == "__main__":
     # 테스트
     from baseline import UNet3D_Simplified, UNETR_Simplified, SwinUNETR_Simplified
-    from data_loader_kaggle import get_data_loaders_kaggle
+    from data_loader import get_data_loaders
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
@@ -515,7 +515,7 @@ if __name__ == "__main__":
     }
     
     # 데이터 로더
-    train_loader, val_loader = get_data_loaders_kaggle('.', batch_size=1, num_workers=0, max_samples=3)
+    train_loader, val_loader, _ = get_data_loaders('.', batch_size=1, num_workers=0, max_samples=3)
     
     # 다중 모델 종합 분석
     comprehensive_analysis_multi_model(models_dict, val_loader, device, num_samples=2, results_dir='test_results')
