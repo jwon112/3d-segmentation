@@ -315,7 +315,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                 data_dir=data_path,
                 batch_size=batch_size,
                 num_workers=0,  # Windows에서 안정성을 위해 0으로 설정
-                max_samples=10,  # 메모리 효율성을 위해 제한
+                max_samples=None,  # 전체 데이터 사용
                 dim='3d'  # 3D 데이터 사용
             )
             
@@ -324,8 +324,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                 try:
                     print(f"\nTraining {model_name.upper()}...")
                     
-                    # 모델 생성
-                    model = get_model(model_name, n_channels=4, n_classes=4)
+                    # 모델 생성 (T1CE, FLAIR만 사용하므로 2 channels)
+                    model = get_model(model_name, n_channels=2, n_classes=4)
                     
                     # 모델 정보 출력
                     print(f"\n=== {model_name.upper()} Model Information ===")
