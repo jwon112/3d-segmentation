@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data.distributed import DistributedSampler
 import nibabel as nib
 from scipy import ndimage
 
@@ -179,7 +180,8 @@ class BratsDataset2D(Dataset):
 
 
 def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None, 
-                     train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, dim='3d'):
+                     train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, dim='3d',
+                     distributed=False, world_size=None, rank=None):
     """
     데이터 로더 생성
     
@@ -220,15 +222,40 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
             full_dataset, [train_len, val_len, test_len]
         )
     
-    # DataLoader 생성
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, 
-                              shuffle=True, num_workers=num_workers)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, 
-                            shuffle=False, num_workers=num_workers)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, 
-                             shuffle=False, num_workers=num_workers)
+    # Distributed samplers
+    train_sampler = val_sampler = test_sampler = None
+    if distributed and world_size is not None and rank is not None:
+        train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True, drop_last=False)
+        val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=False)
+        test_sampler = DistributedSampler(test_dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=False)
     
-    return train_loader, val_loader, test_loader
+    # DataLoader 생성 (분산 시 shuffle=False, sampler 사용)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=(train_sampler is None),
+        num_workers=num_workers,
+        pin_memory=True,
+        sampler=train_sampler,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        sampler=val_sampler,
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        sampler=test_sampler,
+    )
+    
+    return train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler
 
 
 

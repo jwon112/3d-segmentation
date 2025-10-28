@@ -41,6 +41,26 @@ INPUT_SIZE_2D = (256, 256)
 # 3D models keep dataset-native depth; adjust if needed
 INPUT_SIZE_3D = (240, 240, 155)
 
+# Distributed training helpers
+def setup_distributed():
+    import torch.distributed as dist
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        rank = int(os.environ['RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+        local_rank = int(os.environ.get('LOCAL_RANK', 0))
+        dist.init_process_group(backend='nccl', init_method='env://')
+        torch.cuda.set_device(local_rank)
+        return True, rank, local_rank, world_size
+    return False, 0, 0, 1
+
+def cleanup_distributed():
+    import torch.distributed as dist
+    if dist.is_available() and dist.is_initialized():
+        dist.destroy_process_group()
+
+def is_main_process(rank: int):
+    return rank == 0
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -74,9 +94,11 @@ def calculate_flops(model, input_size=(1, 4, 64, 64, 64)):
     """모델의 FLOPs 계산"""
     try:
         from thop import profile
-        device = next(model.parameters()).device
+        # unwrap DDP if needed
+        real_model = model.module if hasattr(model, 'module') else model
+        device = next(real_model.parameters()).device
         dummy_input = torch.randn(input_size).to(device)
-        flops, params = profile(model, inputs=(dummy_input,), verbose=False)
+        flops, params = profile(real_model, inputs=(dummy_input,), verbose=False)
         return flops
     except ImportError:
         print("thop not installed. Install with: pip install thop")
@@ -156,7 +178,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None):
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
-def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24):
+def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0):
     """모델 훈련 함수"""
     model = model.to(device)
     criterion = combined_loss
@@ -177,6 +199,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     
     for epoch in range(epochs):
         # Training
+        if train_sampler is not None:
+            # ensure different shuffles per epoch
+            train_sampler.set_epoch(epoch)
         model.train()
         tr_loss = tr_dice_sum = n_tr = 0.0
         for inputs, labels in tqdm(train_loader, desc=f"Train {epoch+1}/{epochs}", leave=False):
@@ -267,11 +292,12 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             'test_dice': test_dice
         })
         
-        print(f"Epoch {epoch+1}/{epochs} | Train Loss {tr_loss:.4f} Dice {tr_dice:.4f} | Val Loss {va_loss:.4f} Dice {va_dice:.4f} | Test Dice {test_dice:.4f}")
+        if is_main_process(rank):
+            print(f"Epoch {epoch+1}/{epochs} | Train Loss {tr_loss:.4f} Dice {tr_dice:.4f} | Val Loss {va_loss:.4f} Dice {va_dice:.4f} | Test Dice {test_dice:.4f}")
     
     return train_losses, val_dices, test_dices, epoch_results, best_epoch, best_val_dice
 
-def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model'):
+def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model', distributed: bool = False, world_size: int = 1):
     """모델 평가 함수"""
     model.eval()
     test_dice = 0.0
@@ -313,6 +339,12 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model')
                 recall_scores.append(recall)
     
     test_dice /= len(test_loader)
+    # Reduce across processes if distributed
+    if distributed and world_size > 1:
+        import torch.distributed as dist
+        td = torch.tensor([test_dice], device=device)
+        dist.all_reduce(td, op=dist.ReduceOp.SUM)
+        test_dice = (td / world_size).item()
     
     # Background 제외한 평균 (클래스 1, 2, 3만)
     avg_precision = np.mean(precision_scores[1::4])  # 클래스별로 평균
@@ -368,8 +400,15 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     all_results = []
     all_epochs_results = []
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"\nUsing device: {device}")
+    # Distributed setup
+    distributed, rank, local_rank, world_size = setup_distributed()
+    if distributed:
+        device = torch.device(f'cuda:{local_rank}')
+        if is_main_process(rank):
+            print(f"\nUsing DDP with world_size={world_size}, local_rank={local_rank}")
+    else:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"\nUsing device: {device}")
     
     # 각 데이터셋별로 실험
     for dataset_name in available_datasets:
@@ -393,12 +432,15 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
             set_seed(seed)
             
             # 데이터 로더 생성
-            train_loader, val_loader, test_loader = get_data_loaders(
+            train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
                 data_dir=data_path,
                 batch_size=batch_size,
-                num_workers=0,  # Windows에서 안정성을 위해 0으로 설정
+                num_workers=0,  # Windows에서 안정성을 위해 0으로 설정 (서버에서는 늘려도 됨)
                 max_samples=None,  # 전체 데이터 사용
-                dim=dim  # 2D 또는 3D
+                dim=dim,  # 2D 또는 3D
+                distributed=distributed,
+                world_size=world_size,
+                rank=rank
             )
             
             # 각 모델별로 실험
@@ -408,28 +450,36 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     
                     # 모델 생성 (T1CE, FLAIR만 사용하므로 2 channels)
                     model = get_model(model_name, n_channels=2, n_classes=4, dim=dim)
+                    # DDP wrap
+                    if distributed:
+                        from torch.nn.parallel import DistributedDataParallel as DDP
+                        model = model.to(device)
+                        model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False)
                     
                     # 모델 정보 출력
                     print(f"\n=== {model_name.upper()} Model Information ===")
-                    total_params = sum(p.numel() for p in model.parameters())
-                    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                    real_model = model.module if hasattr(model, 'module') else model
+                    total_params = sum(p.numel() for p in real_model.parameters())
+                    trainable_params = sum(p.numel() for p in real_model.parameters() if p.requires_grad)
                     print(f"Total parameters: {total_params:,}")
                     print(f"Trainable parameters: {trainable_params:,}")
                     
-                    # 모델 크기 계산
+                    # 모델 크기 계산 (real_model 사용)
                     param_size = 0
                     buffer_size = 0
-                    for param in model.parameters():
+                    for param in real_model.parameters():
                         param_size += param.nelement() * param.element_size()
-                    for buffer in model.buffers():
+                    for buffer in real_model.buffers():
                         buffer_size += buffer.nelement() * buffer.element_size()
                     model_size_mb = (param_size + buffer_size) / 1024 / 1024
-                    print(f"Model size: {model_size_mb:.2f} MB")
-                    print("=" * 50)
+                    if is_main_process(rank):
+                        print(f"Model size: {model_size_mb:.2f} MB")
+                        print("=" * 50)
                     
                     # 훈련
                     train_losses, val_dices, test_dices, epoch_results, best_epoch, best_val_dice = train_model(
-                        model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed
+                        model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
+                        train_sampler=train_sampler, rank=rank
                     )
                     
                     # FLOPs 계산 (모델이 device에 있는 상태에서)
@@ -437,10 +487,11 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_2D))
                     else:
                         flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_3D))
-                    print(f"FLOPs: {flops:,}")
+                    if is_main_process(rank):
+                        print(f"FLOPs: {flops:,}")
                     
                     # 평가
-                    metrics = evaluate_model(model, test_loader, device, model_name)
+                    metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size)
                     
                     # 결과 저장
                     result = {
@@ -455,7 +506,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         'recall': metrics['recall'],
                         'best_epoch': best_epoch
                     }
-                    all_results.append(result)
+                    if is_main_process(rank):
+                        all_results.append(result)
                     
                     # 모든 epoch 결과 저장
                     for epoch_result in epoch_results:
@@ -468,9 +520,11 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             'val_dice': epoch_result['val_dice'],
                             'test_dice': epoch_result['test_dice']
                         }
-                        all_epochs_results.append(epoch_data)
+                        if is_main_process(rank):
+                            all_epochs_results.append(epoch_data)
                     
-                    print(f"Final Val Dice: {best_val_dice:.4f} (epoch {best_epoch}) | Test Dice: {metrics['dice']:.4f} | Test Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
+                    if is_main_process(rank):
+                        print(f"Final Val Dice: {best_val_dice:.4f} (epoch {best_epoch}) | Test Dice: {metrics['dice']:.4f} | Test Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
                     
                 except Exception as e:
                     print(f"Error with {model_name}: {e}")
@@ -488,20 +542,23 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         return results_dir, results_df
     
     # CSV로 저장
-    csv_path = os.path.join(results_dir, "integrated_experiment_results.csv")
-    results_df.to_csv(csv_path, index=False)
-    print(f"Results saved to: {csv_path}")
+    if is_main_process(0) or not distributed:
+        csv_path = os.path.join(results_dir, "integrated_experiment_results.csv")
+        results_df.to_csv(csv_path, index=False)
+        print(f"Results saved to: {csv_path}")
     
     # 모든 epoch 결과 저장
     epochs_df = None
     if all_epochs_results:
         epochs_df = pd.DataFrame(all_epochs_results)
-        epochs_csv_path = os.path.join(results_dir, "all_epochs_results.csv")
-        epochs_df.to_csv(epochs_csv_path, index=False)
-        print(f"All epochs results saved to: {epochs_csv_path}")
+        if is_main_process(0) or not distributed:
+            epochs_csv_path = os.path.join(results_dir, "all_epochs_results.csv")
+            epochs_df.to_csv(epochs_csv_path, index=False)
+            print(f"All epochs results saved to: {epochs_csv_path}")
     
     # 모델별 성능 비교 분석
-    print("\nCreating model comparison analysis...")
+    if is_main_process(0) or not distributed:
+        print("\nCreating model comparison analysis...")
     
     # 모델별 평균 성능
     try:
@@ -511,23 +568,24 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
             'precision': ['mean', 'std'],
             'recall': ['mean', 'std']
         }).round(4)
-        
-        comparison_path = os.path.join(results_dir, "model_comparison.csv")
-        model_comparison.to_csv(comparison_path)
-        print(f"Model comparison saved to: {comparison_path}")
+        if is_main_process(0) or not distributed:
+            comparison_path = os.path.join(results_dir, "model_comparison.csv")
+            model_comparison.to_csv(comparison_path)
+            print(f"Model comparison saved to: {comparison_path}")
     except KeyError as e:
         print(f"Warning: Could not create model comparison: {e}")
     
     # 시각화 생성
-    print("\nCreating visualization charts...")
-    try:
-        create_comprehensive_analysis(results_df, epochs_df, results_dir)
-        create_interactive_3d_plot(results_df, results_dir)
-    except Exception as e:
-        print(f"Warning: Could not create visualization: {e}")
+    if is_main_process(0) or not distributed:
+        print("\nCreating visualization charts...")
+        try:
+            create_comprehensive_analysis(results_df, epochs_df, results_dir)
+            create_interactive_3d_plot(results_df, results_dir)
+        except Exception as e:
+            print(f"Warning: Could not create visualization: {e}")
     
     # 결과 출력
-    if not results_df.empty:
+    if (is_main_process(0) or not distributed) and not results_df.empty:
         print("\n" + "="*80)
         print("3D SEGMENTATION INTEGRATED EXPERIMENT RESULTS SUMMARY")
         print("="*80)
@@ -550,6 +608,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                 avg_params = model_results['total_params'].mean()
                 print(f"{model_name.upper():12}: Test Dice {avg_dice:.4f} | Val Dice {avg_val_dice:.4f} | Avg Params {avg_params:,.0f}")
     
+    # cleanup
+    if distributed:
+        cleanup_distributed()
     return results_dir, results_df
 
 if __name__ == "__main__":

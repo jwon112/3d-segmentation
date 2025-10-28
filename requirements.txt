@@ -1,5 +1,7 @@
 torch>=1.9.0
 torchvision>=0.10.0
+transformers>=4.30.0
+einops>=0.6.0
 nibabel>=3.2.0
 numpy>=1.21.0
 scipy>=1.7.0
