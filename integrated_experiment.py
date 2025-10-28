@@ -468,7 +468,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
             train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
                 data_dir=data_path,
                 batch_size=batch_size,
-                num_workers=8,  # 서버에서 병목 제거를 위해 8로 설정
+                num_workers=4,  # /dev/shm 2GB에서 안전하게 동작
                 max_samples=None,  # 전체 데이터 사용
                 dim=dim,  # 2D 또는 3D
                 distributed=distributed,
