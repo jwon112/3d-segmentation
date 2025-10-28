@@ -454,7 +454,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     if distributed:
                         from torch.nn.parallel import DistributedDataParallel as DDP
                         model = model.to(device)
-                        model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False)
+                        model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
                     
                     # 모델 정보 출력
                     print(f"\n=== {model_name.upper()} Model Information ===")
