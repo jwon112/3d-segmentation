@@ -204,7 +204,17 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             train_sampler.set_epoch(epoch)
         model.train()
         tr_loss = tr_dice_sum = n_tr = 0.0
-        for inputs, labels in tqdm(train_loader, desc=f"Train {epoch+1}/{epochs}", leave=False):
+        
+        # 프로파일링: 첫 10 step만 타이밍 측정
+        profile_steps = 10
+        load_times, fwd_times, bwd_times = [], [], []
+        torch.cuda.synchronize()
+        
+        for step, (inputs, labels) in enumerate(tqdm(train_loader, desc=f"Train {epoch+1}/{epochs}", leave=False)):
+            if step < profile_steps:
+                torch.cuda.synchronize()
+                t_start = time.time()
+            
             inputs, labels = inputs.to(device), labels.to(device)
             
             # MobileUNETR는 2D 입력을 그대로 사용 (depth 차원 추가 안함)
@@ -213,11 +223,26 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 inputs = inputs.unsqueeze(2)  # Add depth dimension (B, C, H, W) -> (B, C, 1, H, W)
                 labels = labels.unsqueeze(2)
             
+            if step < profile_steps:
+                t_load = time.time()
+                load_times.append(t_load - t_start)
+            
             optimizer.zero_grad()
             logits = model(inputs)
+            
+            if step < profile_steps:
+                torch.cuda.synchronize()
+                t_fwd = time.time()
+                fwd_times.append(t_fwd - t_load)
+            
             loss = criterion(logits, labels)
             loss.backward()
             optimizer.step()
+            
+            if step < profile_steps:
+                torch.cuda.synchronize()
+                t_bwd = time.time()
+                bwd_times.append(t_bwd - t_fwd)
             
             dice_scores = calculate_dice_score(logits.detach(), labels)
             mean_dice = dice_scores.mean()
@@ -229,6 +254,14 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         tr_loss /= max(1, n_tr)
         tr_dice = tr_dice_sum / max(1, n_tr)
         train_losses.append(tr_loss)
+        
+        # 프로파일링 결과 출력 (첫 epoch만)
+        if epoch == 0 and n_tr > 0:
+            avg_load = np.mean(load_times)
+            avg_fwd = np.mean(fwd_times)
+            avg_bwd = np.mean(bwd_times)
+            if is_main_process(rank):
+                print(f"\n[Profile] Avg load: {avg_load:.3f}s, fwd: {avg_fwd:.3f}s, bwd: {avg_bwd:.3f}s, total: {avg_load+avg_fwd+avg_bwd:.3f}s/step")
         
         # Validation
         model.eval()
@@ -435,7 +468,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
             train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
                 data_dir=data_path,
                 batch_size=batch_size,
-                num_workers=0,  # Windows에서 안정성을 위해 0으로 설정 (서버에서는 늘려도 됨)
+                num_workers=8,  # 서버에서 병목 제거를 위해 8로 설정
                 max_samples=None,  # 전체 데이터 사용
                 dim=dim,  # 2D 또는 3D
                 distributed=distributed,
