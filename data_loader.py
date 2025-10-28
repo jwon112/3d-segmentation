@@ -6,6 +6,7 @@ BraTS 데이터 로더
 
 import os
 import torch
+import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import Dataset, DataLoader, random_split
 import nibabel as nib
@@ -160,6 +161,19 @@ class BratsDataset2D(Dataset):
         # 텐서로 변환
         image = torch.from_numpy(image_slice).float()  # (2, H, W)
         mask = torch.from_numpy(mask_slice).long()  # (H, W)
+        
+        # BraTS label 매핑: 4 -> 3 (4는 전체 tumor이고, ET(3)로 매핑)
+        mask = torch.where(mask == 4, torch.tensor(3).long(), mask)
+        
+        # MobileUNETR을 위해 256x256으로 resize (16의 배수)
+        if image.shape[1] == 240 or image.shape[2] == 240:
+            image = image.unsqueeze(0)  # (1, 2, H, W)
+            image = F.interpolate(image, size=(256, 256), mode='bilinear', align_corners=False)
+            image = image.squeeze(0)  # (2, 256, 256)
+            
+            mask = mask.unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
+            mask = F.interpolate(mask.float(), size=(256, 256), mode='nearest')
+            mask = mask.squeeze(0).squeeze(0).long()  # (256, 256)
         
         return image, mask
 

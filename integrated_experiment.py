@@ -35,6 +35,12 @@ from tqdm import tqdm
 import random
 import time
 
+# Global input size configuration
+# 2D models use 256x256 for stable down/upsampling (avoid odd sizes)
+INPUT_SIZE_2D = (256, 256)
+# 3D models keep dataset-native depth; adjust if needed
+INPUT_SIZE_3D = (240, 240, 155)
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -43,9 +49,10 @@ from baseline import (
     UNet3D_Simplified, 
     UNETR_Simplified, 
     SwinUNETR_Simplified,
-    combined_loss,
-    calculate_dice_score
+    MobileUNETR,
 )
+from losses import combined_loss
+from metrics import calculate_dice_score
 
 # Import data loader and utilities
 from data_loader import get_data_loaders
@@ -78,22 +85,72 @@ def calculate_flops(model, input_size=(1, 4, 64, 64, 64)):
         print(f"Error calculating FLOPs: {e}")
         return 0
 
-def get_model(model_name, n_channels=4, n_classes=4):
-    """모델 생성 함수"""
+def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None):
+    """모델 생성 함수
+    
+    Args:
+        model_name: 모델 이름
+        n_channels: 입력 채널 수
+        n_classes: 출력 클래스 수
+        dim: '2d' 또는 '3d'
+        patch_size: 하이퍼파라미터 (None이면 모델별 기본값 사용)
+    """
+    # 2D 입력인 경우 3D로 확장 (unsqueeze depth dimension)
     if model_name == 'unet3d':
+        if dim == '2d':
+            # 2D 데이터는 depth 차원 추가가 필요
+            pass
         return UNet3D_Simplified(n_channels=n_channels, n_classes=n_classes)
     elif model_name == 'unetr':
+        # dim에 따라 img_size 설정
+        if dim == '2d':
+            img_size = INPUT_SIZE_2D
+            # patch_size가 지정되지 않으면 기본값 사용 (2D)
+            if patch_size is None:
+                patch_size = (16, 16)  # 논문 권장값 (16, 16, 16)의 2D 버전
+        else:
+            img_size = (240, 240, 155)
+            # patch_size가 지정되지 않으면 기본값 사용 (3D)
+            if patch_size is None:
+                patch_size = (16, 16, 16)  # 논문 권장값
         return UNETR_Simplified(
-            img_size=(64, 64, 64), 
-            patch_size=(8, 8, 8),
+            img_size=img_size, 
+            patch_size=patch_size,
             in_channels=n_channels, 
             out_channels=n_classes
         )
     elif model_name == 'swin_unetr':
+        # dim에 따라 img_size 설정
+        if dim == '2d':
+            img_size = INPUT_SIZE_2D
+            # patch_size가 지정되지 않으면 기본값 사용 (2D)
+            if patch_size is None:
+                patch_size = (4, 4)
+        else:
+            img_size = (240, 240, 155)
+            # patch_size가 지정되지 않으면 기본값 사용 (3D)
+            if patch_size is None:
+                patch_size = (4, 4, 4)
         return SwinUNETR_Simplified(
-            img_size=(64, 64, 64), 
-            patch_size=(4, 4, 4),
+            img_size=img_size, 
+            patch_size=patch_size,
             in_channels=n_channels, 
+            out_channels=n_classes
+        )
+    elif model_name == 'mobile_unetr':
+        # MobileUNETR는 2D 전용 모델
+        if dim != '2d':
+            raise ValueError("MobileUNETR is only supported for 2D data (dim='2d')")
+        
+        # img_size 설정 (2D만) - 전역 설정 사용
+        img_size = INPUT_SIZE_2D
+        if patch_size is None:
+            patch_size = (16, 16)  # 2D에서 권장값
+        
+        return MobileUNETR(
+            img_size=img_size,
+            patch_size=patch_size,
+            in_channels=n_channels,
             out_channels=n_classes
         )
     else:
@@ -125,6 +182,12 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         for inputs, labels in tqdm(train_loader, desc=f"Train {epoch+1}/{epochs}", leave=False):
             inputs, labels = inputs.to(device), labels.to(device)
             
+            # MobileUNETR는 2D 입력을 그대로 사용 (depth 차원 추가 안함)
+            # 다른 모델들은 3D 입력 필요 (depth 차원 추가)
+            if model_name != 'mobile_unetr' and len(inputs.shape) == 4:
+                inputs = inputs.unsqueeze(2)  # Add depth dimension (B, C, H, W) -> (B, C, 1, H, W)
+                labels = labels.unsqueeze(2)
+            
             optimizer.zero_grad()
             logits = model(inputs)
             loss = criterion(logits, labels)
@@ -148,6 +211,12 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         with torch.no_grad():
             for inputs, labels in tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False):
                 inputs, labels = inputs.to(device), labels.to(device)
+                
+                # MobileUNETR는 2D 입력을 그대로 사용
+                if model_name != 'mobile_unetr' and len(inputs.shape) == 4:
+                    inputs = inputs.unsqueeze(2)
+                    labels = labels.unsqueeze(2)
+                
                 logits = model(inputs)
                 loss = criterion(logits, labels)
                 dice_scores = calculate_dice_score(logits, labels)
@@ -166,6 +235,12 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         with torch.no_grad():
             for inputs, labels in tqdm(test_loader, desc="Test  ", leave=False):
                 inputs, labels = inputs.to(device), labels.to(device)
+                
+                # MobileUNETR는 2D 입력을 그대로 사용
+                if model_name != 'mobile_unetr' and len(inputs.shape) == 4:
+                    inputs = inputs.unsqueeze(2)
+                    labels = labels.unsqueeze(2)
+                
                 logits = model(inputs)
                 dice_scores = calculate_dice_score(logits, labels)
                 mean_dice = dice_scores.mean()
@@ -196,7 +271,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     
     return train_losses, val_dices, test_dices, epoch_results, best_epoch, best_val_dice
 
-def evaluate_model(model, test_loader, device='cuda'):
+def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model'):
     """모델 평가 함수"""
     model.eval()
     test_dice = 0.0
@@ -206,6 +281,12 @@ def evaluate_model(model, test_loader, device='cuda'):
     with torch.no_grad():
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
+            
+            # 2D/3D 분기: 2D 모델은 그대로, 3D 모델은 depth 차원 추가
+            if model_name != 'mobile_unetr' and len(inputs.shape) == 4:
+                inputs = inputs.unsqueeze(2)
+                labels = labels.unsqueeze(2)
+            
             logits = model(inputs)
             
             # Dice score 계산
@@ -243,7 +324,7 @@ def evaluate_model(model, test_loader, device='cuda'):
         'recall': avg_recall
     }
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d'):
     """3D Segmentation 통합 실험 실행
     
     Args:
@@ -251,9 +332,10 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         epochs: 훈련 에포크 수
         batch_size: 배치 크기
         seeds: 실험 시드 리스트
-        models: 사용할 모델 리스트 (기본: ['unet3d', 'unetr', 'swin_unetr'])
+        models: 사용할 모델 리스트 (기본: ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr'])
         datasets: 사용할 데이터셋 리스트 (기본: ['brats2021'])
                   지원: 'brats2021', 'auto' (자동 선택)
+        dim: 데이터 차원 '2d' 또는 '3d' (기본: '2d')
     """
     
     # 실험 결과 저장 디렉토리
@@ -263,9 +345,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     
     # 사용 가능한 모델들
     if models is None:
-        available_models = ['unet3d', 'unetr', 'swin_unetr']
+        available_models = ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr']
     else:
-        available_models = [m for m in models if m in ['unet3d', 'unetr', 'swin_unetr']]
+        available_models = [m for m in models if m in ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr']]
     
     # 사용 가능한 데이터셋들
     if datasets is None:
@@ -310,13 +392,13 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
             
             set_seed(seed)
             
-            # 데이터 로더 생성 (3D 데이터)
+            # 데이터 로더 생성
             train_loader, val_loader, test_loader = get_data_loaders(
                 data_dir=data_path,
                 batch_size=batch_size,
                 num_workers=0,  # Windows에서 안정성을 위해 0으로 설정
                 max_samples=None,  # 전체 데이터 사용
-                dim='3d'  # 3D 데이터 사용
+                dim=dim  # 2D 또는 3D
             )
             
             # 각 모델별로 실험
@@ -325,7 +407,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     print(f"\nTraining {model_name.upper()}...")
                     
                     # 모델 생성 (T1CE, FLAIR만 사용하므로 2 channels)
-                    model = get_model(model_name, n_channels=2, n_classes=4)
+                    model = get_model(model_name, n_channels=2, n_classes=4, dim=dim)
                     
                     # 모델 정보 출력
                     print(f"\n=== {model_name.upper()} Model Information ===")
@@ -343,10 +425,6 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         buffer_size += buffer.nelement() * buffer.element_size()
                     model_size_mb = (param_size + buffer_size) / 1024 / 1024
                     print(f"Model size: {model_size_mb:.2f} MB")
-                    
-                    # FLOPs 계산
-                    flops = calculate_flops(model, input_size=(1, 4, 64, 64, 64))
-                    print(f"FLOPs: {flops:,}")
                     print("=" * 50)
                     
                     # 훈련
@@ -354,8 +432,15 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed
                     )
                     
+                    # FLOPs 계산 (모델이 device에 있는 상태에서)
+                    if dim == '2d':
+                        flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_2D))
+                    else:
+                        flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_3D))
+                    print(f"FLOPs: {flops:,}")
+                    
                     # 평가
-                    metrics = evaluate_model(model, test_loader, device)
+                    metrics = evaluate_model(model, test_loader, device, model_name)
                     
                     # 결과 저장
                     result = {
@@ -389,10 +474,18 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     
                 except Exception as e:
                     print(f"Error with {model_name}: {e}")
+                    import traceback
+                    print("Full traceback:")
+                    traceback.print_exc()
                     continue
     
     # 결과를 DataFrame으로 변환
     results_df = pd.DataFrame(all_results)
+    
+    # 결과가 비어있는 경우 처리
+    if results_df.empty:
+        print("Warning: No results were collected. All experiments failed.")
+        return results_dir, results_df
     
     # CSV로 저장
     csv_path = os.path.join(results_dir, "integrated_experiment_results.csv")
@@ -400,6 +493,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     print(f"Results saved to: {csv_path}")
     
     # 모든 epoch 결과 저장
+    epochs_df = None
     if all_epochs_results:
         epochs_df = pd.DataFrame(all_epochs_results)
         epochs_csv_path = os.path.join(results_dir, "all_epochs_results.csv")
@@ -410,44 +504,51 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     print("\nCreating model comparison analysis...")
     
     # 모델별 평균 성능
-    model_comparison = results_df.groupby('model_name').agg({
-        'test_dice': ['mean', 'std'],
-        'val_dice': ['mean', 'std'],
-        'precision': ['mean', 'std'],
-        'recall': ['mean', 'std']
-    }).round(4)
-    
-    comparison_path = os.path.join(results_dir, "model_comparison.csv")
-    model_comparison.to_csv(comparison_path)
-    print(f"Model comparison saved to: {comparison_path}")
+    try:
+        model_comparison = results_df.groupby('model_name').agg({
+            'test_dice': ['mean', 'std'],
+            'val_dice': ['mean', 'std'],
+            'precision': ['mean', 'std'],
+            'recall': ['mean', 'std']
+        }).round(4)
+        
+        comparison_path = os.path.join(results_dir, "model_comparison.csv")
+        model_comparison.to_csv(comparison_path)
+        print(f"Model comparison saved to: {comparison_path}")
+    except KeyError as e:
+        print(f"Warning: Could not create model comparison: {e}")
     
     # 시각화 생성
     print("\nCreating visualization charts...")
-    create_comprehensive_analysis(results_df, epochs_df, results_dir)
-    create_interactive_3d_plot(results_df, results_dir)
+    try:
+        create_comprehensive_analysis(results_df, epochs_df, results_dir)
+        create_interactive_3d_plot(results_df, results_dir)
+    except Exception as e:
+        print(f"Warning: Could not create visualization: {e}")
     
     # 결과 출력
-    print("\n" + "="*80)
-    print("3D SEGMENTATION INTEGRATED EXPERIMENT RESULTS SUMMARY")
-    print("="*80)
-    
-    print("\n--- Model Performance Summary ---")
-    for model_name in available_models:
-        model_results = results_df[results_df['model_name'] == model_name]
-        if not model_results.empty:
-            print(f"\n{model_name.upper()} Model:")
-            for _, row in model_results.iterrows():
-                print(f"  Seed {row['seed']:3d} | Test Dice: {row['test_dice']:.4f} | Val Dice: {row['val_dice']:.4f} | Params: {row['total_params']:,}")
-    
-    # 모델별 평균 성능
-    print("\n--- Model-wise Average Performance ---")
-    for model_name in available_models:
-        model_results = results_df[results_df['model_name'] == model_name]
-        if not model_results.empty:
-            avg_dice = model_results['test_dice'].mean()
-            avg_val_dice = model_results['val_dice'].mean()
-            avg_params = model_results['total_params'].mean()
-            print(f"{model_name.upper():12}: Test Dice {avg_dice:.4f} | Val Dice {avg_val_dice:.4f} | Avg Params {avg_params:,.0f}")
+    if not results_df.empty:
+        print("\n" + "="*80)
+        print("3D SEGMENTATION INTEGRATED EXPERIMENT RESULTS SUMMARY")
+        print("="*80)
+        
+        print("\n--- Model Performance Summary ---")
+        for model_name in available_models:
+            model_results = results_df[results_df['model_name'] == model_name]
+            if not model_results.empty:
+                print(f"\n{model_name.upper()} Model:")
+                for _, row in model_results.iterrows():
+                    print(f"  Seed {row['seed']:3d} | Test Dice: {row['test_dice']:.4f} | Val Dice: {row['val_dice']:.4f} | Params: {row['total_params']:,}")
+        
+        # 모델별 평균 성능
+        print("\n--- Model-wise Average Performance ---")
+        for model_name in available_models:
+            model_results = results_df[results_df['model_name'] == model_name]
+            if not model_results.empty:
+                avg_dice = model_results['test_dice'].mean()
+                avg_val_dice = model_results['val_dice'].mean()
+                avg_params = model_results['total_params'].mean()
+                print(f"{model_name.upper():12}: Test Dice {avg_dice:.4f} | Val Dice {avg_val_dice:.4f} | Avg Params {avg_params:,.0f}")
     
     return results_dir, results_df
 
@@ -463,6 +564,8 @@ if __name__ == "__main__":
                        help='Specific models to train (default: unet3d,unetr,swin_unetr)')
     parser.add_argument('--datasets', nargs='+', type=str, default=None,
                        help='Datasets to use: brats2021, auto (default: brats2021)')
+    parser.add_argument('--dim', type=str, default='2d', choices=['2d', '3d'],
+                       help='Data dimension: 2d or 3d (default: 2d)')
     
     args = parser.parse_args()
     
@@ -471,13 +574,14 @@ if __name__ == "__main__":
     print(f"Epochs: {args.epochs}")
     print(f"Batch size: {args.batch_size}")
     print(f"Seeds: {args.seeds}")
-    print(f"Models: {args.models if args.models else 'unet3d,unetr,swin_unetr'}")
+    print(f"Models: {args.models if args.models else 'unet3d,unetr,swin_unetr,mobile_unetr'}")
     print(f"Datasets: {args.datasets if args.datasets else 'brats2021 (auto-detected)'}")
+    print(f"Dimension: {args.dim}")
     print(f"Results will be saved in: baseline_results/ folder")
     
     try:
         results_dir, results_df = run_integrated_experiment(
-            args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets
+            args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim
         )
         
         if results_dir and results_df is not None:

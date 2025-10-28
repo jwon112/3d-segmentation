@@ -152,34 +152,7 @@ class UNet3D_Simplified(nn.Module):
         logits = self.outc(d1)
         return logits
 
-def dice_loss(pred, target, smooth=1e-5):
-    """Dice Loss 계산"""
-    pred = F.softmax(pred, dim=1)
-    target_one_hot = F.one_hot(target, num_classes=pred.shape[1]).permute(0, 4, 1, 2, 3).float()
-    
-    intersection = (pred * target_one_hot).sum(dim=(2, 3, 4))
-    union = pred.sum(dim=(2, 3, 4)) + target_one_hot.sum(dim=(2, 3, 4))
-    
-    dice = (2. * intersection + smooth) / (union + smooth)
-    return 1 - dice.mean()
-
-def combined_loss(pred, target, alpha=0.5):
-    """Cross Entropy + Dice Loss"""
-    ce_loss = F.cross_entropy(pred, target)
-    dice = dice_loss(pred, target)
-    return alpha * ce_loss + (1 - alpha) * dice
-
-def calculate_dice_score(pred, target, smooth=1e-5):
-    """Dice Score 계산"""
-    pred = torch.argmax(pred, dim=1)
-    target_one_hot = F.one_hot(target, num_classes=pred.max().item() + 1).permute(0, 4, 1, 2, 3).float()
-    pred_one_hot = F.one_hot(pred, num_classes=pred.max().item() + 1).permute(0, 4, 1, 2, 3).float()
-    
-    intersection = (pred_one_hot * target_one_hot).sum(dim=(2, 3, 4))
-    union = pred_one_hot.sum(dim=(2, 3, 4)) + target_one_hot.sum(dim=(2, 3, 4))
-    
-    dice = (2. * intersection + smooth) / (union + smooth)
-    return dice.mean(dim=0)  # 클래스별 평균
+# Losses and metrics moved to ml/losses.py and ml/metrics.py
 
 if __name__ == "__main__":
     # 모델 테스트
