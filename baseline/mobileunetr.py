@@ -909,12 +909,31 @@ class MViTDecoderxs(nn.Module):
 # Build Pretrained Huggingface MobileViT Implementations
 ##############################################################################
 class MViTsEncoderPretrained(nn.Module):
-    def __init__(self):
+    def __init__(self, use_pretrained=True):
         super().__init__()
 
         self.encoder = MobileViTModel.from_pretrained(
             "apple/mobilevit-small"
         ).base_model
+        
+        # If not using pretrained, re-initialize weights with random init
+        if not use_pretrained:
+            self._reset_encoder_weights()
+
+    def _reset_encoder_weights(self):
+        """Re-initialize encoder weights with random initialization"""
+        for module in self.encoder.modules():
+            if isinstance(module, nn.Conv2d):
+                nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+            elif isinstance(module, (nn.BatchNorm2d, nn.LayerNorm)):
+                nn.init.constant_(module.weight, 1)
+                nn.init.constant_(module.bias, 0)
+            elif isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, 0, 0.02)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
 
     def forward(self, x):
         raw_input = x.clone()
@@ -961,9 +980,10 @@ class MViTsSegPretrained(nn.Module):
         bottleneck_params,
         decoder_params,
         image_size=512,
+        use_pretrained=True,
     ):
         super().__init__()
-        self.encoder = MViTsEncoderPretrained()
+        self.encoder = MViTsEncoderPretrained(use_pretrained=use_pretrained)
         self.bottleneck = MViTBottleneck(**bottleneck_params)
         self.decoder = MViTDecoders(**decoder_params)
         self.image_size = image_size
@@ -1023,7 +1043,7 @@ class MViTxxsSegPretrained(nn.Module):
 ##############################################################################
 # Build/Import Model
 ##############################################################################
-def build_mobileunetr_s(config=None, num_classes: int = 1, image_size: int = 512):
+def build_mobileunetr_s(config=None, num_classes: int = 1, image_size: int = 512, use_pretrained=True):
 
     # mobileunetr small config
     if config is None:
@@ -1067,6 +1087,7 @@ def build_mobileunetr_s(config=None, num_classes: int = 1, image_size: int = 512
         bottleneck_params=config["model_parameters"]["bottle_neck"],
         decoder_params=config["model_parameters"]["decoder"],
         image_size=config["model_parameters"]["image_size"],
+        use_pretrained=use_pretrained,
     )
     return model
 
@@ -1161,7 +1182,7 @@ class MobileUNETRWithChannelAdapter(nn.Module):
         return self.model(x)
 
 
-def MobileUNETR(img_size=(512, 512), patch_size=(16, 16), in_channels=2, out_channels=4):
+def MobileUNETR(img_size=(512, 512), patch_size=(16, 16), in_channels=2, out_channels=4, use_pretrained=True):
     """MobileUNETR wrapper function
     
     Args:
@@ -1169,13 +1190,14 @@ def MobileUNETR(img_size=(512, 512), patch_size=(16, 16), in_channels=2, out_cha
         patch_size: Patch size for ViT (2D: (ph, pw), 3D: (pd, ph, pw))
         in_channels: Number of input channels
         out_channels: Number of output channels
+        use_pretrained: Whether to use pretrained MobileViT encoder weights
     
     Returns:
         MobileUNETR model instance with channel adapter
     """
     if len(img_size) == 2:
         # 2D case
-        model = build_mobileunetr_s(num_classes=out_channels, image_size=img_size[0])
+        model = build_mobileunetr_s(num_classes=out_channels, image_size=img_size[0], use_pretrained=use_pretrained)
         # Pretrained MobileViT expects 3 channels, adapt for 2 channels (T1CE, FLAIR)
         if in_channels == 2:
             # Wrap the entire model with channel adapter

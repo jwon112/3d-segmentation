@@ -71,6 +71,7 @@ from baseline import (
     SwinUNETR_Simplified,
     MobileUNETR,
 )
+from baseline.mobileunetr_3d import MobileUNETR_3D_Wrapper
 from losses import combined_loss
 from metrics import calculate_dice_score
 
@@ -107,7 +108,7 @@ def calculate_flops(model, input_size=(1, 4, 64, 64, 64)):
         print(f"Error calculating FLOPs: {e}")
         return 0
 
-def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None):
+def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, use_pretrained=False):
     """모델 생성 함수
     
     Args:
@@ -116,6 +117,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None):
         n_classes: 출력 클래스 수
         dim: '2d' 또는 '3d'
         patch_size: 하이퍼파라미터 (None이면 모델별 기본값 사용)
+        use_pretrained: pretrained 가중치 사용 여부 (MobileUNETR의 경우)
     """
     # 2D 입력인 경우 3D로 확장 (unsqueeze depth dimension)
     if model_name == 'unet3d':
@@ -173,6 +175,23 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None):
             img_size=img_size,
             patch_size=patch_size,
             in_channels=n_channels,
+            out_channels=n_classes,
+            use_pretrained=use_pretrained
+        )
+    elif model_name == 'mobile_unetr_3d':
+        # MobileUNETR 3D 모델
+        if dim != '3d':
+            raise ValueError("MobileUNETR 3D is only supported for 3D data (dim='3d')")
+        
+        # img_size 설정 (3D)
+        img_size = INPUT_SIZE_3D
+        if patch_size is None:
+            patch_size = (2, 2, 2)  # 3D에서 권장값
+        
+        return MobileUNETR_3D_Wrapper(
+            img_size=img_size,
+            patch_size=patch_size,
+            in_channels=n_channels,
             out_channels=n_classes
         )
     else:
@@ -217,9 +236,10 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             
             inputs, labels = inputs.to(device), labels.to(device)
             
-            # MobileUNETR는 2D 입력을 그대로 사용 (depth 차원 추가 안함)
+            # MobileUNETR 2D는 2D 입력을 그대로 사용 (depth 차원 추가 안함)
+            # mobile_unetr_3d는 3D 입력을 그대로 사용
             # 다른 모델들은 3D 입력 필요 (depth 차원 추가)
-            if model_name != 'mobile_unetr' and len(inputs.shape) == 4:
+            if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
                 inputs = inputs.unsqueeze(2)  # Add depth dimension (B, C, H, W) -> (B, C, 1, H, W)
                 labels = labels.unsqueeze(2)
             
@@ -270,8 +290,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             for inputs, labels in tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False):
                 inputs, labels = inputs.to(device), labels.to(device)
                 
-                # MobileUNETR는 2D 입력을 그대로 사용
-                if model_name != 'mobile_unetr' and len(inputs.shape) == 4:
+                # MobileUNETR 2D는 2D 입력을 그대로 사용
+                # mobile_unetr_3d는 3D 입력을 그대로 사용
+                if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
                     inputs = inputs.unsqueeze(2)
                     labels = labels.unsqueeze(2)
                 
@@ -294,8 +315,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             for inputs, labels in tqdm(test_loader, desc="Test  ", leave=False):
                 inputs, labels = inputs.to(device), labels.to(device)
                 
-                # MobileUNETR는 2D 입력을 그대로 사용
-                if model_name != 'mobile_unetr' and len(inputs.shape) == 4:
+                # MobileUNETR 2D는 2D 입력을 그대로 사용
+                # mobile_unetr_3d는 3D 입력을 그대로 사용
+                if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
                     inputs = inputs.unsqueeze(2)
                     labels = labels.unsqueeze(2)
                 
@@ -389,7 +411,7 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
         'recall': avg_recall
     }
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d'):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False):
     """3D Segmentation 통합 실험 실행
     
     Args:
@@ -401,6 +423,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         datasets: 사용할 데이터셋 리스트 (기본: ['brats2021'])
                   지원: 'brats2021', 'auto' (자동 선택)
         dim: 데이터 차원 '2d' 또는 '3d' (기본: '2d')
+        use_pretrained: pretrained 가중치 사용 여부 (기본: False, scratch 학습)
     """
     
     # 실험 결과 저장 디렉토리
@@ -410,9 +433,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     
     # 사용 가능한 모델들
     if models is None:
-        available_models = ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr']
+        available_models = ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d']
     else:
-        available_models = [m for m in models if m in ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr']]
+        available_models = [m for m in models if m in ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d']]
     
     # 사용 가능한 데이터셋들
     if datasets is None:
@@ -482,7 +505,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     print(f"\nTraining {model_name.upper()}...")
                     
                     # 모델 생성 (T1CE, FLAIR만 사용하므로 2 channels)
-                    model = get_model(model_name, n_channels=2, n_classes=4, dim=dim)
+                    model = get_model(model_name, n_channels=2, n_classes=4, dim=dim, use_pretrained=args.use_pretrained)
                     # DDP wrap
                     if distributed:
                         from torch.nn.parallel import DistributedDataParallel as DDP
@@ -660,6 +683,8 @@ if __name__ == "__main__":
                        help='Datasets to use: brats2021, auto (default: brats2021)')
     parser.add_argument('--dim', type=str, default='2d', choices=['2d', '3d'],
                        help='Data dimension: 2d or 3d (default: 2d)')
+    parser.add_argument('--use_pretrained', action='store_true', default=False,
+                       help='Use pretrained weights (default: False, scratch training)')
     
     args = parser.parse_args()
     
@@ -675,7 +700,7 @@ if __name__ == "__main__":
     
     try:
         results_dir, results_df = run_integrated_experiment(
-            args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim
+            args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim, args.use_pretrained
         )
         
         if results_dir and results_df is not None:
