@@ -332,12 +332,15 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         # Learning rate scheduling
         scheduler.step(va_loss)
         
-        # Best model tracking 및 체크포인트 저장
+        # Best model tracking 및 체크포인트 저장 (rank 0만)
         if va_dice > best_val_dice:
             best_val_dice = va_dice
             best_epoch = epoch + 1
-            torch.save(model.state_dict(), ckpt_path)
-            print(f"Saved best checkpoint to {ckpt_path}")
+            if is_main_process(rank):
+                # DDP 모델의 경우 module을 통해 접근
+                model_to_save = model.module if hasattr(model, 'module') else model
+                torch.save(model_to_save.state_dict(), ckpt_path)
+                print(f"Saved best checkpoint to {ckpt_path}")
         
         # Epoch 결과 저장
         epoch_results.append({
