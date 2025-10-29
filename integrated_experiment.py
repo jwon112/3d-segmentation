@@ -206,7 +206,6 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     
     train_losses = []
     val_dices = []
-    test_dices = []
     epoch_results = []
     
     best_val_dice = 0.0
@@ -309,51 +308,35 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         va_dice = va_dice_sum / max(1, n_va)
         val_dices.append(va_dice)
         
-        # Test
-        test_dice = 0.0
-        with torch.no_grad():
-            for inputs, labels in tqdm(test_loader, desc="Test  ", leave=False):
-                inputs, labels = inputs.to(device), labels.to(device)
-                
-                # MobileUNETR 2D는 2D 입력을 그대로 사용
-                # mobile_unetr_3d는 3D 입력을 그대로 사용
-                if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
-                    inputs = inputs.unsqueeze(2)
-                    labels = labels.unsqueeze(2)
-                
-                logits = model(inputs)
-                dice_scores = calculate_dice_score(logits, labels)
-                mean_dice = dice_scores.mean()
-                test_dice += mean_dice.item()
-        
-        test_dice /= len(test_loader)
-        test_dices.append(test_dice)
-        
         # Learning rate scheduling
         scheduler.step(va_loss)
         
         # Best model tracking 및 체크포인트 저장 (rank 0만)
+        # Test set은 최종에만 평가하므로, epoch 중에는 평가하지 않음
+        checkpoint_saved = False
         if va_dice > best_val_dice:
             best_val_dice = va_dice
             best_epoch = epoch + 1
+            checkpoint_saved = True
             if is_main_process(rank):
                 # DDP 모델의 경우 module을 통해 접근
                 model_to_save = model.module if hasattr(model, 'module') else model
                 torch.save(model_to_save.state_dict(), ckpt_path)
-                print(f"Saved best checkpoint to {ckpt_path}")
+                print(f"[Epoch {epoch+1}] Saved best checkpoint (Val Dice: {va_dice:.4f}) to {ckpt_path}")
         
-        # Epoch 결과 저장
+        # Epoch 결과 저장 (test_dice는 최종 평가 시에만 설정됨)
         epoch_results.append({
             'epoch': epoch + 1,
             'train_loss': tr_loss,
             'val_dice': va_dice,
-            'test_dice': test_dice
+            'test_dice': None  # 최종 평가 시에만 설정
         })
         
         if is_main_process(rank):
-            print(f"Epoch {epoch+1}/{epochs} | Train Loss {tr_loss:.4f} Dice {tr_dice:.4f} | Val Loss {va_loss:.4f} Dice {va_dice:.4f} | Test Dice {test_dice:.4f}")
+            checkpoint_msg = " [BEST]" if checkpoint_saved else ""
+            print(f"Epoch {epoch+1}/{epochs} | Train Loss {tr_loss:.4f} Dice {tr_dice:.4f} | Val Loss {va_loss:.4f} Dice {va_dice:.4f}{checkpoint_msg}")
     
-    return train_losses, val_dices, test_dices, epoch_results, best_epoch, best_val_dice
+    return train_losses, val_dices, epoch_results, best_epoch, best_val_dice
 
 def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model', distributed: bool = False, world_size: int = 1):
     """모델 평가 함수"""
@@ -536,7 +519,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         print("=" * 50)
                     
                     # 훈련
-                    train_losses, val_dices, test_dices, epoch_results, best_epoch, best_val_dice = train_model(
+                    train_losses, val_dices, epoch_results, best_epoch, best_val_dice = train_model(
                         model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
                         train_sampler=train_sampler, rank=rank
                     )
@@ -549,7 +532,18 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     if is_main_process(rank):
                         print(f"FLOPs: {flops:,}")
                     
-                    # 평가
+                    # 최종 평가: Best 모델 로드 후 Test set 평가
+                    if is_main_process(rank):
+                        print(f"\nLoading best model (epoch {best_epoch}, Val Dice: {best_val_dice:.4f}) for final test evaluation...")
+                    # Best 체크포인트에서 모델 로드
+                    ckpt_path = f"baseline_results/{model_name}_seed_{seed}_best.pth"
+                    if os.path.exists(ckpt_path):
+                        real_model = model.module if hasattr(model, 'module') else model
+                        real_model.load_state_dict(torch.load(ckpt_path, map_location=device))
+                        if is_main_process(rank):
+                            print(f"Loaded best checkpoint from {ckpt_path}")
+                    
+                    # Test set 평가
                     metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size)
                     
                     # 결과 저장
@@ -568,7 +562,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     if is_main_process(rank):
                         all_results.append(result)
                     
-                    # 모든 epoch 결과 저장
+                    # 모든 epoch 결과 저장 (test_dice는 최종 평가 값으로 업데이트)
                     for epoch_result in epoch_results:
                         epoch_data = {
                             'dataset': dataset_name,
@@ -577,7 +571,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             'epoch': epoch_result['epoch'],
                             'train_loss': epoch_result['train_loss'],
                             'val_dice': epoch_result['val_dice'],
-                            'test_dice': epoch_result['test_dice']
+                            'test_dice': metrics['dice'] if epoch_result['epoch'] == best_epoch else None  # Best epoch에만 최종 test dice 기록
                         }
                         if is_main_process(rank):
                             all_epochs_results.append(epoch_data)

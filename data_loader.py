@@ -14,6 +14,25 @@ import nibabel as nib
 from scipy import ndimage
 
 
+def _normalize_volume_np(vol):
+    """퍼센타일 클리핑 + Z-score 정규화 (비영점 마스크 기준)
+
+    Args:
+        vol (np.ndarray): (H, W, D) 또는 (H, W) 강도 볼륨
+    Returns:
+        np.ndarray: 정규화된 볼륨
+    """
+    nz = vol > 0
+    if nz.sum() == 0:
+        return vol
+    v = vol[nz]
+    lo, hi = np.percentile(v, [0.5, 99.5])
+    vol = np.clip(vol, lo, hi)
+    m = v.mean()
+    s = v.std() + 1e-8
+    vol[nz] = (vol[nz] - m) / s
+    return vol
+
 class BratsDataset3D(Dataset):
     """3D BraTS 데이터셋 (Depth, Height, Width)"""
     
@@ -73,12 +92,19 @@ class BratsDataset3D(Dataset):
         flair = nib.load(os.path.join(patient_dir, flair_file)).get_fdata()
         seg = nib.load(os.path.join(patient_dir, seg_file)).get_fdata()
         
+        # 정규화 (채널별, 비영점 기준 퍼센타일 클리핑 + Z-score)
+        t1ce = _normalize_volume_np(t1ce)
+        flair = _normalize_volume_np(flair)
+
         # (H, W, D) 형태로 결합 (T1CE, FLAIR만)
         image = np.stack([t1ce, flair], axis=-1)  # (H, W, D, 2)
         
         # 텐서로 변환
         image = torch.from_numpy(np.transpose(image, (3, 0, 1, 2))).float()  # (2, H, W, D)
         mask = torch.from_numpy(seg).long()
+        
+        # BraTS label 매핑: 4 -> 3 (4는 전체 tumor이고, ET(3)로 매핑)
+        mask = torch.where(mask == 4, torch.tensor(3).long(), mask)
         
         return image, mask
 
@@ -154,6 +180,10 @@ class BratsDataset2D(Dataset):
         flair = nib.load(os.path.join(patient_dir, flair_file)).get_fdata()
         seg = nib.load(os.path.join(patient_dir, seg_file)).get_fdata()
         
+        # 정규화 (채널별, 퍼센타일 클리핑 + Z-score)
+        t1ce = _normalize_volume_np(t1ce)
+        flair = _normalize_volume_np(flair)
+
         # 슬라이스 추출 (depth 차원)
         image = np.stack([t1ce, flair], axis=0)  # (2, H, W, D)
         image_slice = image[:, :, :, slice_idx]  # (2, H, W)
