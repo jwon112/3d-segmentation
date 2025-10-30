@@ -264,7 +264,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 bwd_times.append(t_bwd - t_fwd)
             
             dice_scores = calculate_dice_score(logits.detach(), labels)
-            mean_dice = dice_scores.mean()
+            # 배경(클래스 0) 제외 평균 Dice
+            mean_dice = dice_scores[1:].mean()
             bsz = inputs.size(0)
             tr_loss += loss.item() * bsz
             tr_dice_sum += mean_dice.item() * bsz
@@ -298,7 +299,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 logits = model(inputs)
                 loss = criterion(logits, labels)
                 dice_scores = calculate_dice_score(logits, labels)
-                mean_dice = dice_scores.mean()
+                # 배경(클래스 0) 제외 평균 Dice
+                mean_dice = dice_scores[1:].mean()
                 bsz = inputs.size(0)
                 va_loss += loss.item() * bsz
                 va_dice_sum += mean_dice.item() * bsz
@@ -358,7 +360,8 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             
             # Dice score 계산
             dice_scores = calculate_dice_score(logits, labels)
-            mean_dice = dice_scores.mean()
+            # 배경(클래스 0) 제외 평균 Dice
+            mean_dice = dice_scores[1:].mean()
             test_dice += mean_dice.item()
             
             # Precision, Recall 계산 (클래스별)
