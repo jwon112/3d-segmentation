@@ -371,7 +371,12 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             do_validate = is_main_process(rank_env)
             # sync all ranks before starting validation step to keep collective order
             import torch.distributed as dist
-            dist.barrier()
+            try:
+                lrank = int(os.environ.get('LOCAL_RANK', 0))
+                dist.barrier(device_ids=[lrank])
+            except TypeError:
+                # older PyTorch or non-NCCL backends
+                dist.barrier()
 
         if do_validate:
             with torch.no_grad():
@@ -404,12 +409,19 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             import torch.distributed as dist
             world_size_env = int(os.environ['WORLD_SIZE'])
             # ensure all ranks reach this point together to avoid long waits in BROADCAST
-            dist.barrier()
+            try:
+                lrank = int(os.environ.get('LOCAL_RANK', 0))
+                dist.barrier(device_ids=[lrank])
+            except TypeError:
+                dist.barrier()
             device_tensor = torch.tensor([va_loss, va_dice_sum, n_va], dtype=torch.float32, device=device)
             dist.broadcast(device_tensor, src=0)
             va_loss, va_dice_sum, n_va = device_tensor.tolist()
             # sync again so all ranks leave validation in lockstep
-            dist.barrier()
+            try:
+                dist.barrier(device_ids=[lrank])
+            except TypeError:
+                dist.barrier()
         
         va_loss /= max(1, n_va)
         va_dice = va_dice_sum / max(1, n_va)
