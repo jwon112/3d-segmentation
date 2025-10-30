@@ -271,7 +271,8 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
-def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0):
+def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
+                sw_patch_size=(128, 128, 128), sw_overlap=0.5):
     """모델 훈련 함수"""
     model = model.to(device)
     criterion = combined_loss
@@ -321,13 +322,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 load_times.append(t_load - t_start)
             
             optimizer.zero_grad()
-            # 3D 테스트: 슬라이딩 윈도우 추론
-            if model_name in ['mobile_unetr_3d'] and inputs.dim() == 5 and inputs.size(0) == 1:
-                logits = sliding_window_inference_3d(
-                    model, inputs, patch_size=(128, 128, 128), overlap=0.5, device=device, model_name=model_name
-                )
-            else:
-                logits = model(inputs)
+            # 학습 단계에서는 슬라이딩 윈도우를 사용하지 않음 (단일 패치 forward)
+            logits = model(inputs)
             
             if step < profile_steps:
                 torch.cuda.synchronize()
@@ -376,10 +372,10 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     inputs = inputs.unsqueeze(2)
                     labels = labels.unsqueeze(2)
 
-                # 3D 검증: 슬라이딩 윈도우 추론
+                # 3D 검증: 슬라이딩 윈도우 추론 (학습 아님)
                 if model_name in ['mobile_unetr_3d'] and inputs.dim() == 5 and inputs.size(0) == 1:
                     logits = sliding_window_inference_3d(
-                        model, inputs, patch_size=(128, 128, 128), overlap=0.5, device=device, model_name=model_name
+                        model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
                     )
                 else:
                     logits = model(inputs)
