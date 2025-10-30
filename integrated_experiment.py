@@ -22,6 +22,7 @@ Path Configuration:
 """
 
 import os
+import copy
 import sys
 import torch
 import torch.nn as nn
@@ -171,9 +172,11 @@ def calculate_flops(model, input_size=(1, 4, 64, 64, 64)):
         from thop import profile
         # unwrap DDP if needed
         real_model = model.module if hasattr(model, 'module') else model
+        # Profile on a deepcopy to avoid mutating the live model with thop buffers
         device = next(real_model.parameters()).device
+        model_copy = copy.deepcopy(real_model).to(device).eval()
         dummy_input = torch.randn(input_size).to(device)
-        flops, params = profile(real_model, inputs=(dummy_input,), verbose=False)
+        flops, params = profile(model_copy, inputs=(dummy_input,), verbose=False)
         return flops
     except ImportError:
         print("thop not installed. Install with: pip install thop")
@@ -405,6 +408,16 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             if is_main_process(rank):
                 # DDP 모델의 경우 module을 통해 접근
                 model_to_save = model.module if hasattr(model, 'module') else model
+                # Clean thop profiling buffers if any
+                for m in model_to_save.modules():
+                    for bname in ('total_ops', 'total_params'):
+                        if hasattr(m, bname):
+                            try:
+                                delattr(m, bname)
+                            except Exception:
+                                pass
+                        if isinstance(getattr(m, '_buffers', None), dict) and bname in m._buffers:
+                            m._buffers.pop(bname, None)
                 torch.save(model_to_save.state_dict(), ckpt_path)
                 print(f"[Epoch {epoch+1}] Saved best checkpoint (Val Dice: {va_dice:.4f}) to {ckpt_path}")
         
@@ -625,7 +638,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     ckpt_path = f"baseline_results/{model_name}_seed_{seed}_best.pth"
                     if os.path.exists(ckpt_path):
                         real_model = model.module if hasattr(model, 'module') else model
-                        real_model.load_state_dict(torch.load(ckpt_path, map_location=device))
+                        state = torch.load(ckpt_path, map_location=device)
+                        # Allow loading even if state_dict has extra thop buffers
+                        real_model.load_state_dict(state, strict=False)
                         if is_main_process(rank):
                             print(f"Loaded best checkpoint from {ckpt_path}")
                     
