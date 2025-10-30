@@ -360,8 +360,8 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         prefetch_factor=4 if num_workers > 0 else 2,
     )
     # Validation/Test: conservative loader settings to avoid /dev/shm issues
-    v_workers = 0
-    t_workers = 0
+    v_workers = 2
+    t_workers = 2
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
