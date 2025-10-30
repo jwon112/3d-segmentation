@@ -403,6 +403,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
             import torch.distributed as dist
             world_size_env = int(os.environ['WORLD_SIZE'])
+            # ensure all ranks reach this point together to avoid long waits in BROADCAST
+            dist.barrier()
             device_tensor = torch.tensor([va_loss, va_dice_sum, n_va], dtype=torch.float32, device=device)
             dist.broadcast(device_tensor, src=0)
             va_loss, va_dice_sum, n_va = device_tensor.tolist()
