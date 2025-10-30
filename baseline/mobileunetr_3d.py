@@ -322,18 +322,28 @@ class MV3DBottleneck(nn.Module):
 
 
 class MV3DDecoders(nn.Module):
-    """3D Decoder with skip connections"""
-    def __init__(self, dims, channels, num_classes):
+    """3D Decoder with skip connections
+
+    Build a chain of Conv3d blocks that progressively reduce channels. The first
+    block takes `base_channels` (e.g., encoder's last feature channels), and the
+    rest follow the provided `channels` list.
+    """
+    def __init__(self, base_channels: int, channels, num_classes):
         super().__init__()
         self.decoders = nn.ModuleList()
-        
-        for i in range(len(dims)):
-            decoder = nn.Sequential(
-                nn.Conv3d(channels[i], channels[i+1] if i+1 < len(channels) else num_classes, 3, 1, 1, bias=False),
-                nn.BatchNorm3d(channels[i+1] if i+1 < len(channels) else num_classes),
-                nn.SiLU(),
+
+        in_c = base_channels
+        for i, out_c in enumerate(channels):
+            self.decoders.append(
+                nn.Sequential(
+                    nn.Conv3d(in_c, out_c, 3, 1, 1, bias=False),
+                    nn.BatchNorm3d(out_c),
+                    nn.SiLU(),
+                )
             )
-            self.decoders.append(decoder)
+            in_c = out_c
+        # final projection to num_classes
+        self.final = nn.Conv3d(in_c, num_classes, kernel_size=1, stride=1, padding=0, bias=True)
     
     def forward(self, x, skip_connections):
         """x: (B, D*H*W, dim), skip_connections: list of (B, C, D, H, W)"""
@@ -348,12 +358,11 @@ class MV3DDecoders(nn.Module):
         # Process through decoders
         for i, decoder in enumerate(self.decoders):
             x = decoder(x)
-            
-            # Upsample if needed
+            # Upsample if needed (simple progressive upsampling)
             if i < len(self.decoders) - 1:
-                # Upsample to match next expected size
                 x = F.interpolate(x, scale_factor=2, mode='trilinear', align_corners=False)
-        
+        # Final logits
+        x = self.final(x)
         return x
 
 
@@ -394,9 +403,10 @@ class MobileUNETR_3D(nn.Module):
         )
         
         # Decoder
+        # Use encoder's last feature channels (320) as base, then reduce
         self.decoder = MV3DDecoders(
-            dims=[144, 192, 240],
-            channels=[16, 32, 64, 64, 96, 96, 128, 128, 160, 160, 196, 196, self.out_channels],
+            base_channels=320,
+            channels=[196, 160, 128, 96, 64, 32, 16],
             num_classes=self.out_channels
         )
     
