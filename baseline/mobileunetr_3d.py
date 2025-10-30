@@ -161,7 +161,8 @@ class MobileViTv3Block(nn.Module):
 
 def conv_nxn_bn(inp, oup, stride=1):
     return nn.Sequential(
-        nn.Conv3d(inp, oup, 3, stride, 1, groups=inp, bias=False),
+        # Use standard 3D convolution (no depthwise grouping) to satisfy out_channels % groups == 0
+        nn.Conv3d(inp, oup, 3, stride, 1, bias=False),
         nn.BatchNorm3d(oup),
         nn.SiLU(),
     )
