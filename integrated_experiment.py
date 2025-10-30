@@ -369,6 +369,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
             rank_env = int(os.environ['RANK'])
             do_validate = is_main_process(rank_env)
+            # sync all ranks before starting validation step to keep collective order
+            import torch.distributed as dist
+            dist.barrier()
 
         if do_validate:
             with torch.no_grad():
@@ -401,11 +404,10 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             import torch.distributed as dist
             world_size_env = int(os.environ['WORLD_SIZE'])
             device_tensor = torch.tensor([va_loss, va_dice_sum, n_va], dtype=torch.float32, device=device)
-            if do_validate:
-                dist.broadcast(device_tensor, src=0)
-            else:
-                dist.broadcast(device_tensor, src=0)
+            dist.broadcast(device_tensor, src=0)
             va_loss, va_dice_sum, n_va = device_tensor.tolist()
+            # sync again so all ranks leave validation in lockstep
+            dist.barrier()
         
         va_loss /= max(1, n_va)
         va_dice = va_dice_sum / max(1, n_va)
@@ -610,7 +612,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     if distributed:
                         from torch.nn.parallel import DistributedDataParallel as DDP
                         model = model.to(device)
-                        model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
+                        model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False)
                     
                     # 모델 정보 출력
                     print(f"\n=== {model_name.upper()} Model Information ===")
