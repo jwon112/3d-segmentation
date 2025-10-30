@@ -606,7 +606,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     # 훈련
                     train_losses, val_dices, epoch_results, best_epoch, best_val_dice = train_model(
                         model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
-                        train_sampler=train_sampler, rank=rank
+                        train_sampler=train_sampler, rank=rank,
+                        sw_patch_size=(128, 128, 128), sw_overlap=0.25
                     )
                     
                     # FLOPs 계산 (모델이 device에 있는 상태에서)
@@ -629,7 +630,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             print(f"Loaded best checkpoint from {ckpt_path}")
                     
                     # Test set 평가
-                    metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size)
+                    metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size,
+                                              sw_patch_size=(128, 128, 128), sw_overlap=0.25)
                     
                     # 결과 저장
                     result = {
