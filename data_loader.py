@@ -370,7 +370,7 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         pin_memory=False,
         sampler=val_sampler,
         persistent_workers=False,
-        prefetch_factor=2,
+        prefetch_factor=(2 if v_workers > 0 else None),
     )
     test_loader = DataLoader(
         test_dataset,
@@ -380,7 +380,7 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         pin_memory=False,
         sampler=test_sampler,
         persistent_workers=False,
-        prefetch_factor=2,
+        prefetch_factor=(2 if t_workers > 0 else None),
     )
     
     return train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler
