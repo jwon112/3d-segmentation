@@ -360,8 +360,8 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         prefetch_factor=4 if num_workers > 0 else 2,
     )
     # Validation/Test: conservative loader settings to avoid /dev/shm issues
-    v_workers = 2
-    t_workers = 2
+    v_workers = 0
+    t_workers = 0
     # 3D 검증/테스트는 슬라이딩 윈도우 특성상 batch_size=1 권장
     val_bs = 1 if dim == '3d' else batch_size
     test_bs = 1 if dim == '3d' else batch_size
