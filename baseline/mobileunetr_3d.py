@@ -131,25 +131,13 @@ class MobileViTv3Block(nn.Module):
         x = self.conv1(x)
         x = self.conv2(x)
 
-        # Transform from 3D volume to patches (B, C, D, H, W) -> (B, n_patches, dim)
-        b, c, d, h, w = x.shape
-        n_patches_h = h // self.ph
-        n_patches_w = w // self.pw
-        n_patches_d = d // self.pd
-        n_patches = n_patches_d * n_patches_h * n_patches_w
-
-        # Reshape to patches
-        x = x.reshape(b, c, n_patches_d, self.pd, n_patches_h, self.ph, n_patches_w, self.pw)
-        x = rearrange(x, "b c npd pd nph ph npw pw -> b (npd nph npw) (c pd ph pw)")
-        
+        # Flatten spatial dimensions to sequence for transformer: (B, C=dim, D, H, W) -> (B, N=DHW, dim)
+        b, c, d, h, w = x.shape  # here c == dim
+        x = x.permute(0, 2, 3, 4, 1).reshape(b, d * h * w, c)
         # Global representations through transformer
         x = self.transformer(x)
-        
-        # Transform back to 3D volume
-        x = rearrange(x, "b (npd nph npw) (c pd ph pw) -> b c npd pd nph ph npw pw",
-                     npd=n_patches_d, nph=n_patches_h, npw=n_patches_w,
-                     pd=self.pd, ph=self.ph, pw=self.pw)
-        x = x.reshape(b, c, d, h, w)
+        # Back to (B, C=dim, D, H, W)
+        x = x.reshape(b, d, h, w, c).permute(0, 4, 1, 2, 3)
 
         # Fusion of local and global features
         x = self.conv3(x)
@@ -229,25 +217,13 @@ class MobileViTv3Block_NoStem(nn.Module):
         x = self.conv1(x)
         x = self.conv2(x)
 
-        # Transform from 3D volume to patches (B, C, D, H, W) -> (B, n_patches, dim)
-        b, c, d, h, w = x.shape
-        n_patches_h = h // self.ph
-        n_patches_w = w // self.pw
-        n_patches_d = d // self.pd
-        n_patches = n_patches_d * n_patches_h * n_patches_w
-
-        # Reshape to patches
-        x = x.reshape(b, c, n_patches_d, self.pd, n_patches_h, self.ph, n_patches_w, self.pw)
-        x = rearrange(x, "b c npd pd nph ph npw pw -> b (npd nph npw) (c pd ph pw)")
-        
+        # Flatten spatial dims to sequence for transformer: (B, C=dim, D, H, W) -> (B, N=DHW, dim)
+        b, c, d, h, w = x.shape  # here c == dim
+        x = x.permute(0, 2, 3, 4, 1).reshape(b, d * h * w, c)
         # Global representations through transformer
         x = self.transformer(x)
-        
-        # Transform back to 3D volume
-        x = rearrange(x, "b (npd nph npw) (c pd ph pw) -> b c npd pd nph ph npw pw",
-                     npd=n_patches_d, nph=n_patches_h, npw=n_patches_w,
-                     pd=self.pd, ph=self.ph, pw=self.pw)
-        x = x.reshape(b, c, d, h, w)
+        # Back to (B, C=dim, D, H, W)
+        x = x.reshape(b, d, h, w, c).permute(0, 4, 1, 2, 3)
 
         # Fusion of local and global features
         x = self.conv3(x)
