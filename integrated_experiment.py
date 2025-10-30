@@ -435,7 +435,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     
     return train_losses, val_dices, epoch_results, best_epoch, best_val_dice
 
-def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model', distributed: bool = False, world_size: int = 1):
+def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model', distributed: bool = False, world_size: int = 1,
+                   sw_patch_size=(128, 128, 128), sw_overlap=0.25):
     """모델 평가 함수"""
     model.eval()
     test_dice = 0.0
@@ -451,7 +452,13 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                 inputs = inputs.unsqueeze(2)
                 labels = labels.unsqueeze(2)
             
-            logits = model(inputs)
+            # 3D 테스트: 슬라이딩 윈도우 추론
+            if model_name in ['mobile_unetr_3d'] and inputs.dim() == 5 and inputs.size(0) == 1:
+                logits = sliding_window_inference_3d(
+                    model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
+                )
+            else:
+                logits = model(inputs)
             
             # Dice score 계산
             dice_scores = calculate_dice_score(logits, labels)
