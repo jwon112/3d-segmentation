@@ -362,34 +362,50 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             if is_main_process(rank):
                 print(f"\n[Profile] Avg load: {avg_load:.3f}s, fwd: {avg_fwd:.3f}s, bwd: {avg_bwd:.3f}s, total: {avg_load+avg_fwd+avg_bwd:.3f}s/step")
         
-        # Validation
+        # Validation (rank 0 only to save /dev/shm)
         model.eval()
         va_loss = va_dice_sum = n_va = 0.0
-        with torch.no_grad():
-            for inputs, labels in tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False):
-                inputs, labels = inputs.to(device), labels.to(device)
+        do_validate = True
+        if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+            rank_env = int(os.environ['RANK'])
+            do_validate = is_main_process(rank_env)
 
-                # MobileUNETR 2D는 2D 입력을 그대로 사용
-                # mobile_unetr_3d는 3D 입력을 그대로 사용
-                if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
-                    inputs = inputs.unsqueeze(2)
-                    labels = labels.unsqueeze(2)
+        if do_validate:
+            with torch.no_grad():
+                for inputs, labels in tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False):
+                    inputs, labels = inputs.to(device), labels.to(device)
 
-                # 3D 검증: 슬라이딩 윈도우 추론 (학습 아님)
-                if model_name in ['mobile_unetr_3d'] and inputs.dim() == 5 and inputs.size(0) == 1:
-                    logits = sliding_window_inference_3d(
-                        model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
-                    )
-                else:
-                    logits = model(inputs)
-                loss = criterion(logits, labels)
-                dice_scores = calculate_dice_score(logits, labels)
-                # 배경(클래스 0) 제외 평균 Dice
-                mean_dice = dice_scores[1:].mean()
-                bsz = inputs.size(0)
-                va_loss += loss.item() * bsz
-                va_dice_sum += mean_dice.item() * bsz
-                n_va += bsz
+                    # MobileUNETR 2D는 2D 입력을 그대로 사용
+                    # mobile_unetr_3d는 3D 입력을 그대로 사용
+                    if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
+                        inputs = inputs.unsqueeze(2)
+                        labels = labels.unsqueeze(2)
+
+                    # 3D 검증: 슬라이딩 윈도우 추론 (학습 아님)
+                    if model_name in ['mobile_unetr_3d'] and inputs.dim() == 5 and inputs.size(0) == 1:
+                        logits = sliding_window_inference_3d(
+                            model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
+                        )
+                    else:
+                        logits = model(inputs)
+                    loss = criterion(logits, labels)
+                    dice_scores = calculate_dice_score(logits, labels)
+                    # 배경(클래스 0) 제외 평균 Dice
+                    mean_dice = dice_scores[1:].mean()
+                    bsz = inputs.size(0)
+                    va_loss += loss.item() * bsz
+                    va_dice_sum += mean_dice.item() * bsz
+                    n_va += bsz
+        # Reduce/broadcast metrics to all ranks for scheduler consistency
+        if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+            import torch.distributed as dist
+            world_size_env = int(os.environ['WORLD_SIZE'])
+            device_tensor = torch.tensor([va_loss, va_dice_sum, n_va], dtype=torch.float32, device=device)
+            if do_validate:
+                dist.broadcast(device_tensor, src=0)
+            else:
+                dist.broadcast(device_tensor, src=0)
+            va_loss, va_dice_sum, n_va = device_tensor.tolist()
         
         va_loss /= max(1, n_va)
         va_dice = va_dice_sum / max(1, n_va)
@@ -631,7 +647,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     if is_main_process(rank):
                         print(f"FLOPs: {flops:,}")
                     
-                    # 최종 평가: Best 모델 로드 후 Test set 평가
+                    # 최종 평가: Best 모델 로드 후 Test set 평가 (rank 0 only)
                     if is_main_process(rank):
                         print(f"\nLoading best model (epoch {best_epoch}, Val Dice: {best_val_dice:.4f}) for final test evaluation...")
                     # Best 체크포인트에서 모델 로드
@@ -639,14 +655,16 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     if os.path.exists(ckpt_path):
                         real_model = model.module if hasattr(model, 'module') else model
                         state = torch.load(ckpt_path, map_location=device)
-                        # Allow loading even if state_dict has extra thop buffers
                         real_model.load_state_dict(state, strict=False)
                         if is_main_process(rank):
                             print(f"Loaded best checkpoint from {ckpt_path}")
-                    
-                    # Test set 평가
-                    metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size,
-                                              sw_patch_size=(128, 128, 128), sw_overlap=0.25)
+
+                    # Test set 평가 (rank 0에서만 실행하여 /dev/shm/CPU 메모리 절약)
+                    if is_main_process(rank):
+                        metrics = evaluate_model(model, test_loader, device, model_name, distributed=False, world_size=world_size,
+                                                  sw_patch_size=(128, 128, 128), sw_overlap=0.25)
+                    else:
+                        metrics = {'dice': 0.0, 'precision': 0.0, 'recall': 0.0}
                     
                     # 결과 저장
                     result = {

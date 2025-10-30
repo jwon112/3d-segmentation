@@ -362,9 +362,12 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
     # Validation/Test: conservative loader settings to avoid /dev/shm issues
     v_workers = 2
     t_workers = 2
+    # 3D 검증/테스트는 슬라이딩 윈도우 특성상 batch_size=1 권장
+    val_bs = 1 if dim == '3d' else batch_size
+    test_bs = 1 if dim == '3d' else batch_size
     val_loader = DataLoader(
         val_dataset,
-        batch_size=batch_size,
+        batch_size=val_bs,
         shuffle=False,
         num_workers=v_workers,
         pin_memory=False,
@@ -374,7 +377,7 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
     )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=batch_size,
+        batch_size=test_bs,
         shuffle=False,
         num_workers=t_workers,
         pin_memory=False,
