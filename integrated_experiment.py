@@ -91,6 +91,80 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+
+def _make_blend_weights_3d(patch_size):
+    """Create separable cosine blending weights for 3D patches (H,W,D layout).
+    Returns tensor of shape (1, 1, H, W, D).
+    """
+    import math
+    ph, pw, pd = patch_size
+    def one_dim(n):
+        t = torch.arange(n, dtype=torch.float32)
+        # raised cosine from 0..pi
+        w = 0.5 * (1 - torch.cos(math.pi * (t + 0.5) / n))
+        # avoid zeros on borders completely
+        return w.clamp_min(1e-4)
+    wh = one_dim(ph)
+    ww = one_dim(pw)
+    wd = one_dim(pd)
+    w3 = wh.view(ph, 1, 1) * ww.view(1, pw, 1) * wd.view(1, 1, pd)
+    w3 = w3 / w3.max()
+    return w3.view(1, 1, ph, pw, pd)
+
+
+def sliding_window_inference_3d(model, volume, patch_size=(128, 128, 128), overlap=0.5, device='cuda', model_name='mobile_unetr_3d'):
+    """Naive sliding-window inference for tensors shaped (1, C, H, W, D).
+    Aggregates logits with cosine blending. Returns logits of shape (1, C_out, H, W, D).
+    """
+    assert volume.dim() == 5 and volume.size(0) == 1, "Expect (1, C, H, W, D)"
+    _, C, H, W, D = volume.shape
+    ph, pw, pd = patch_size
+
+    # strides
+    sh = max(1, int(ph * (1 - overlap)))
+    sw = max(1, int(pw * (1 - overlap)))
+    sd = max(1, int(pd * (1 - overlap)))
+
+    # prepare accumulators
+    with torch.no_grad():
+        # run one pass to get out channels
+        # crop a minimal patch within bounds
+        y0 = min(0, H - ph)
+        x0 = min(0, W - pw)
+        z0 = min(0, D - pd)
+        patch = volume[:, :, 0:ph, 0:pw, 0:pd].to(device)
+        logits0 = model(patch)
+        C_out = logits0.size(1)
+
+    out = torch.zeros((1, C_out, H, W, D), dtype=torch.float32, device=device)
+    wsum = torch.zeros((1, 1, H, W, D), dtype=torch.float32, device=device)
+    wpatch = _make_blend_weights_3d(patch_size).to(device)
+
+    def ranges(L, p, s):
+        if L <= p:
+            return [0]
+        xs = list(range(0, L - p + 1, s))
+        if xs[-1] != L - p:
+            xs.append(L - p)
+        return xs
+
+    hs = ranges(H, ph, sh)
+    ws = ranges(W, pw, sw)
+    ds = ranges(D, pd, sd)
+
+    model.eval()
+    with torch.no_grad():
+        for hy in hs:
+            for wx in ws:
+                for dz in ds:
+                    patch = volume[:, :, hy:hy+ph, wx:wx+pw, dz:dz+pd].to(device)
+                    logits = model(patch)
+                    out[:, :, hy:hy+ph, wx:wx+pw, dz:dz+pd] += logits * wpatch
+                    wsum[:, :, hy:hy+ph, wx:wx+pw, dz:dz+pd] += wpatch
+
+    out = out / wsum.clamp_min(1e-6)
+    return out
+
 def calculate_flops(model, input_size=(1, 4, 64, 64, 64)):
     """모델의 FLOPs 계산"""
     try:
@@ -247,7 +321,13 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 load_times.append(t_load - t_start)
             
             optimizer.zero_grad()
-            logits = model(inputs)
+            # 3D 테스트: 슬라이딩 윈도우 추론
+            if model_name in ['mobile_unetr_3d'] and inputs.dim() == 5 and inputs.size(0) == 1:
+                logits = sliding_window_inference_3d(
+                    model, inputs, patch_size=(128, 128, 128), overlap=0.5, device=device, model_name=model_name
+                )
+            else:
+                logits = model(inputs)
             
             if step < profile_steps:
                 torch.cuda.synchronize()
@@ -289,14 +369,20 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         with torch.no_grad():
             for inputs, labels in tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False):
                 inputs, labels = inputs.to(device), labels.to(device)
-                
+
                 # MobileUNETR 2D는 2D 입력을 그대로 사용
                 # mobile_unetr_3d는 3D 입력을 그대로 사용
                 if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
                     inputs = inputs.unsqueeze(2)
                     labels = labels.unsqueeze(2)
-                
-                logits = model(inputs)
+
+                # 3D 검증: 슬라이딩 윈도우 추론
+                if model_name in ['mobile_unetr_3d'] and inputs.dim() == 5 and inputs.size(0) == 1:
+                    logits = sliding_window_inference_3d(
+                        model, inputs, patch_size=(128, 128, 128), overlap=0.5, device=device, model_name=model_name
+                    )
+                else:
+                    logits = model(inputs)
                 loss = criterion(logits, labels)
                 dice_scores = calculate_dice_score(logits, labels)
                 # 배경(클래스 0) 제외 평균 Dice

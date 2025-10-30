@@ -109,6 +109,85 @@ class BratsDataset3D(Dataset):
         return image, mask
 
 
+class BratsPatchDataset3D(Dataset):
+    """3D BraTS 패치 데이터셋 (학습용)
+
+    - 원본 볼륨에서 128x128x128 패치를 랜덤 샘플링
+    - 포그라운드(>0) 비율 임계값을 만족하도록 중심 후보 우선 샘플링
+    - 패딩으로 경계 안전 처리
+    """
+    def __init__(self, base_dataset: BratsDataset3D, patch_size=(128, 128, 128),
+                 samples_per_volume: int = 4, min_fg_ratio: float = 0.01, max_tries: int = 20):
+        self.base_dataset = base_dataset
+        self.patch_size = patch_size
+        self.samples_per_volume = samples_per_volume
+        self.min_fg_ratio = min_fg_ratio
+        self.max_tries = max_tries
+
+        # 인덱스 매핑: (volume_index, sample_idx)
+        self.index_map = []
+        for vidx in range(len(self.base_dataset)):
+            for s in range(self.samples_per_volume):
+                self.index_map.append((vidx, s))
+
+    def __len__(self):
+        return len(self.index_map)
+
+    def __getitem__(self, idx):
+        vidx, _ = self.index_map[idx]
+        image, mask = self.base_dataset[vidx]  # image: (2, H, W, D), mask: (H, W, D)
+
+        C, H, W, D = image.shape
+        ph, pw, pd = self.patch_size
+
+        # 필요 시 패딩 (경계 안전)
+        pad_h = max(0, ph - H)
+        pad_w = max(0, pw - W)
+        pad_d = max(0, pd - D)
+        if pad_h or pad_w or pad_d:
+            # pad: (left, right, top, bottom, front, back)
+            image = F.pad(image, (0, pad_d, 0, pad_w, 0, pad_h))  # (2, H, W, D)
+            mask = F.pad(mask, (0, pad_d, 0, pad_w, 0, pad_h))
+            C, H, W, D = image.shape
+
+        # 포그라운드 비율 조건을 만족하는 패치 시도
+        tries = 0
+        best_patch = None
+        best_ratio = -1.0
+        while tries < self.max_tries:
+            # 라벨에서 포그라운드 좌표 찾기
+            fg = (mask > 0).nonzero(as_tuple=False)
+            if fg.numel() > 0:
+                # 포그라운드에서 랜덤 중심 선택
+                ci = fg[torch.randint(0, fg.shape[0], (1,)).item()]
+                cy, cx, cz = ci.tolist()
+            else:
+                # 포그라운드가 없다면 랜덤 중심
+                cy = torch.randint(0, H, (1,)).item()
+                cx = torch.randint(0, W, (1,)).item()
+                cz = torch.randint(0, D, (1,)).item()
+
+            sy = max(0, min(cy - ph // 2, H - ph))
+            sx = max(0, min(cx - pw // 2, W - pw))
+            sz = max(0, min(cz - pd // 2, D - pd))
+
+            img_patch = image[:, sy:sy+ph, sx:sx+pw, sz:sz+pd]
+            msk_patch = mask[sy:sy+ph, sx:sx+pw, sz:sz+pd]
+
+            fg_ratio = (msk_patch > 0).float().mean().item()
+            if fg_ratio >= self.min_fg_ratio:
+                return img_patch, msk_patch
+
+            if fg_ratio > best_ratio:
+                best_ratio = fg_ratio
+                best_patch = (img_patch, msk_patch)
+
+            tries += 1
+
+        # 조건 만족 실패 시 가장 좋은 패치 반환
+        return best_patch
+
+
 class BratsDataset2D(Dataset):
     """2D BraTS 데이터셋 (Height, Width) - 슬라이스 단위"""
     
@@ -250,6 +329,16 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         
         train_dataset, val_dataset, test_dataset = random_split(
             full_dataset, [train_len, val_len, test_len]
+        )
+
+    # 3D 학습은 패치 데이터셋으로 래핑 (128^3, FG-aware)
+    if dim == '3d':
+        train_dataset = BratsPatchDataset3D(
+            base_dataset=train_dataset.dataset if hasattr(train_dataset, 'dataset') else train_dataset,
+            patch_size=(128, 128, 128),
+            samples_per_volume=4,
+            min_fg_ratio=0.01,
+            max_tries=20,
         )
     
     # Distributed samplers
