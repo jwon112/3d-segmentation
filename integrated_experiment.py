@@ -275,7 +275,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         raise ValueError(f"Unknown model: {model_name}")
 
 def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
-                sw_patch_size=(128, 128, 128), sw_overlap=0.5):
+                sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d'):
     """모델 훈련 함수"""
     model = model.to(device)
     criterion = combined_loss
@@ -376,7 +376,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     labels = labels.unsqueeze(2)
 
                 # 3D 검증: 슬라이딩 윈도우 추론 (학습 아님)
-                if model_name in ['mobile_unetr_3d'] and inputs.dim() == 5 and inputs.size(0) == 1:
+                # 모든 3D 모델은 전체 볼륨을 처리하기 위해 슬라이딩 윈도우 사용
+                if dim == '3d' and inputs.dim() == 5 and inputs.size(0) == 1:
                     logits = sliding_window_inference_3d(
                         model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
                     )
@@ -453,7 +454,8 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                 labels = labels.unsqueeze(2)
             
             # 3D 테스트: 슬라이딩 윈도우 추론
-            if model_name in ['mobile_unetr_3d'] and inputs.dim() == 5 and inputs.size(0) == 1:
+            # 모든 3D 모델은 전체 볼륨을 처리하기 위해 슬라이딩 윈도우 사용
+            if inputs.dim() == 5 and inputs.size(0) == 1:  # 3D 볼륨
                 logits = sliding_window_inference_3d(
                     model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
                 )
@@ -627,7 +629,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     train_losses, val_dices, epoch_results, best_epoch, best_val_dice = train_model(
                         model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
                         train_sampler=train_sampler, rank=rank,
-                        sw_patch_size=(128, 128, 128), sw_overlap=0.25
+                        sw_patch_size=(128, 128, 128), sw_overlap=0.25, dim=dim
                     )
                     
                     # FLOPs 계산 (모델이 device에 있는 상태에서)
