@@ -366,6 +366,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         model.eval()
         va_loss = va_dice_sum = n_va = 0.0
         with torch.no_grad():
+            debug_printed = False
             for inputs, labels in tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False):
                 inputs, labels = inputs.to(device), labels.to(device)
 
@@ -387,6 +388,18 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 dice_scores = calculate_dice_score(logits, labels)
                 # 배경(클래스 0) 제외 평균 Dice
                 mean_dice = dice_scores[1:].mean()
+                if not debug_printed:
+                    pred_arg = torch.argmax(logits, dim=1)
+                    pred_counts = [int((pred_arg == c).sum().item()) for c in range(4)]
+                    gt_counts = [int((labels == c).sum().item()) for c in range(4)]
+                    if is_main_process(rank):
+                        try:
+                            dv = dice_scores.detach().cpu().tolist()
+                        except Exception:
+                            dv = []
+                        print(f"Val sample stats | pred counts: {pred_counts} | gt counts: {gt_counts}")
+                        print(f"Val per-class dice: {dv}")
+                    debug_printed = True
                 bsz = inputs.size(0)
                 va_loss += loss.item() * bsz
                 va_dice_sum += mean_dice.item() * bsz
