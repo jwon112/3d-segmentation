@@ -117,7 +117,7 @@ class BratsPatchDataset3D(Dataset):
     - 패딩으로 경계 안전 처리
     """
     def __init__(self, base_dataset: BratsDataset3D, patch_size=(128, 128, 128),
-                 samples_per_volume: int = 8, min_fg_ratio: float = 0.05, max_tries: int = 20):
+                 samples_per_volume: int = 16, min_fg_ratio: float = 0.10, max_tries: int = 20):
         self.base_dataset = base_dataset
         self.patch_size = patch_size
         self.samples_per_volume = samples_per_volume
@@ -336,8 +336,8 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         train_dataset = BratsPatchDataset3D(
             base_dataset=train_dataset.dataset if hasattr(train_dataset, 'dataset') else train_dataset,
             patch_size=(128, 128, 128),
-            samples_per_volume=8,
-            min_fg_ratio=0.05,
+            samples_per_volume=16,
+            min_fg_ratio=0.10,
             max_tries=20,
         )
     

@@ -642,7 +642,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     train_losses, val_dices, epoch_results, best_epoch, best_val_dice = train_model(
                         model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
                         train_sampler=train_sampler, rank=rank,
-                        sw_patch_size=(128, 128, 128), sw_overlap=0.25, dim=dim
+                        sw_patch_size=(128, 128, 128), sw_overlap=0.10, dim=dim
                     )
                     
                     # FLOPs 계산 (모델이 device에 있는 상태에서)
@@ -667,7 +667,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
 
                     # Test set 평가 (모든 랭크 동일 경로)
                     metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size,
-                                              sw_patch_size=(128, 128, 128), sw_overlap=0.25)
+                                              sw_patch_size=(128, 128, 128), sw_overlap=0.10)
                     
                     # 결과 저장
                     result = {
