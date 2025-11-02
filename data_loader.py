@@ -357,7 +357,7 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         pin_memory=True,
         sampler=train_sampler,
         persistent_workers=(num_workers > 0),
-        prefetch_factor=4 if num_workers > 0 else 2,
+        prefetch_factor=(4 if num_workers > 0 else None),
     )
     # Validation/Test: conservative loader settings to avoid /dev/shm issues
     v_workers = 0
