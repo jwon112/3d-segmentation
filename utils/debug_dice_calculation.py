@@ -24,7 +24,10 @@ import torch.nn.functional as F
 
 
 def manual_dice_calculation(pred, target, num_classes, smooth=1e-5):
-    """수동 Dice 계산 (검증용)"""
+    """수동 Dice 계산 (검증용)
+    
+    GT에 존재하지 않는 클래스는 Dice를 0으로 설정 (의미 없는 메트릭 방지)
+    """
     dice_scores = []
     
     for c in range(num_classes):
@@ -34,8 +37,17 @@ def manual_dice_calculation(pred, target, num_classes, smooth=1e-5):
         intersection = (pred_class & target_class).sum().float()
         union = pred_class.sum().float() + target_class.sum().float()
         
+        # GT에 클래스가 존재하는지 확인
+        target_exists = target_class.sum().float() > 0
+        
+        # Dice 계산
         dice = (2.0 * intersection + smooth) / (union + smooth)
-        dice_scores.append(dice.item())
+        
+        # GT에 존재하지 않는 클래스는 Dice를 0으로 설정
+        if not target_exists:
+            dice = 0.0
+        
+        dice_scores.append(dice.item() if isinstance(dice, torch.Tensor) else dice)
     
     return np.array(dice_scores)
 
