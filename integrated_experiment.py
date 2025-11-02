@@ -418,7 +418,6 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             
             # 디버깅: 모든 샘플의 Dice 통계 출력
             if is_main_process(rank) and len(all_sample_dices) > 0:
-                import numpy as np
                 all_dices_arr = np.array(all_sample_dices)
                 print(f"\n[Val Epoch {epoch+1}] All samples Dice stats:")
                 print(f"  샘플 수: {len(all_sample_dices)}")
