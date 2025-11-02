@@ -73,7 +73,7 @@ from baseline import (
     MobileUNETR,
 )
 from baseline.mobileunetr_3d import MobileUNETR_3D_Wrapper
-from losses import combined_loss
+from losses import combined_loss, combined_loss_nnunet_style
 from metrics import calculate_dice_score
 
 # Import data loader and utilities
@@ -275,10 +275,17 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         raise ValueError(f"Unknown model: {model_name}")
 
 def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
-                sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d'):
-    """모델 훈련 함수"""
+                sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True):
+    """모델 훈련 함수
+    
+    Args:
+        use_nnunet_loss: If True, use nnU-Net style loss (Soft Dice with Squared Pred, Dice 70% + CE 30%)
+                        If False, use standard combined loss (Dice 50% + CE 50%)
+    """
     model = model.to(device)
-    criterion = combined_loss
+    # nnU-Net style loss: Soft Dice with Squared Prediction, Dice 70% + CE 30%
+    # Standard loss: Dice 50% + CE 50%
+    criterion = combined_loss_nnunet_style if use_nnunet_loss else combined_loss
     optimizer = optim.Adam(model.parameters(), lr=lr)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
     
@@ -533,13 +540,14 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
         'recall': avg_recall
     }
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True):
     """3D Segmentation 통합 실험 실행
     
     Args:
         data_path: 데이터셋 루트 디렉토리 경로 (기본: 'data')
         epochs: 훈련 에포크 수
         batch_size: 배치 크기
+        use_nnunet_loss: If True, use nnU-Net style loss (Soft Dice with Squared Pred, Dice 70% + CE 30%)
         seeds: 실험 시드 리스트
         models: 사용할 모델 리스트 (기본: ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr'])
         datasets: 사용할 데이터셋 리스트 (기본: ['brats2021'])
@@ -658,7 +666,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     train_losses, val_dices, epoch_results, best_epoch, best_val_dice = train_model(
                         model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
                         train_sampler=train_sampler, rank=rank,
-                        sw_patch_size=(128, 128, 128), sw_overlap=0.10, dim=dim
+                        sw_patch_size=(128, 128, 128), sw_overlap=0.10, dim=dim, use_nnunet_loss=use_nnunet_loss
                     )
                     
                     # FLOPs 계산 (모델이 device에 있는 상태에서)
@@ -821,8 +829,15 @@ if __name__ == "__main__":
                        help='Data dimension: 2d or 3d (default: 2d)')
     parser.add_argument('--use_pretrained', action='store_true', default=False,
                        help='Use pretrained weights (default: False, scratch training)')
+    parser.add_argument('--use_nnunet_loss', action='store_true', default=True,
+                       help='Use nnU-Net style loss (Soft Dice with Squared Pred, Dice 70%% + CE 30%%) (default: True)')
+    parser.add_argument('--use_standard_loss', action='store_true', default=False,
+                       help='Use standard combined loss (Dice 50%% + CE 50%%) instead of nnU-Net style')
     
     args = parser.parse_args()
+    
+    # --use_standard_loss가 True이면 nnU-Net loss 비활성화
+    use_nnunet_loss = args.use_nnunet_loss and not args.use_standard_loss
     
     print("Starting 3D Segmentation Integrated Experiment System")
     print(f"Data path: {args.data_path}")
@@ -832,11 +847,12 @@ if __name__ == "__main__":
     print(f"Models: {args.models if args.models else 'unet3d,unetr,swin_unetr,mobile_unetr'}")
     print(f"Datasets: {args.datasets if args.datasets else 'brats2021 (auto-detected)'}")
     print(f"Dimension: {args.dim}")
+    print(f"Loss function: {'nnU-Net style (Soft Dice Squared + Dice 70%%/CE 30%%)' if use_nnunet_loss else 'Standard (Dice 50%%/CE 50%%)'}")
     print(f"Results will be saved in: baseline_results/ folder")
     
     try:
         results_dir, results_df = run_integrated_experiment(
-            args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim, args.use_pretrained
+            args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim, args.use_pretrained, use_nnunet_loss
         )
         
         if results_dir and results_df is not None:
