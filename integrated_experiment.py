@@ -367,7 +367,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         va_loss = va_dice_sum = n_va = 0.0
         with torch.no_grad():
             debug_printed = False
-            for inputs, labels in tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False):
+            all_sample_dices = []  # 디버깅: 모든 샘플의 Dice 수집
+            for idx, (inputs, labels) in enumerate(tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False)):
                 inputs, labels = inputs.to(device), labels.to(device)
 
                 # MobileUNETR 2D는 2D 입력을 그대로 사용
@@ -388,6 +389,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 dice_scores = calculate_dice_score(logits, labels)
                 # 배경(클래스 0) 제외 평균 Dice
                 mean_dice = dice_scores[1:].mean()
+                all_sample_dices.append(mean_dice.item())  # 디버깅
+                
                 if not debug_printed:
                     pred_arg = torch.argmax(logits, dim=1)
                     pred_counts = [int((pred_arg == c).sum().item()) for c in range(4)]
@@ -397,13 +400,26 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                             dv = dice_scores.detach().cpu().tolist()
                         except Exception:
                             dv = []
-                        print(f"Val sample stats | pred counts: {pred_counts} | gt counts: {gt_counts}")
-                        print(f"Val per-class dice: {dv}")
+                        print(f"Val sample {idx+1} stats | pred counts: {pred_counts} | gt counts: {gt_counts}")
+                        print(f"Val sample {idx+1} per-class dice: {dv}")
+                        print(f"Val sample {idx+1} mean_dice (fg only): {mean_dice.item():.10f}")
                     debug_printed = True
                 bsz = inputs.size(0)
                 va_loss += loss.item() * bsz
                 va_dice_sum += mean_dice.item() * bsz
                 n_va += bsz
+            
+            # 디버깅: 모든 샘플의 Dice 통계 출력
+            if is_main_process(rank) and len(all_sample_dices) > 0:
+                import numpy as np
+                all_dices_arr = np.array(all_sample_dices)
+                print(f"\n[Val Epoch {epoch+1}] All samples Dice stats:")
+                print(f"  샘플 수: {len(all_sample_dices)}")
+                print(f"  평균: {all_dices_arr.mean():.10f}")
+                print(f"  최소: {all_dices_arr.min():.10f}")
+                print(f"  최대: {all_dices_arr.max():.10f}")
+                print(f"  표준편차: {all_dices_arr.std():.10f}")
+                print(f"  0.0317과의 차이: {abs(all_dices_arr.mean() - 0.0317):.10f}")
         
         va_loss /= max(1, n_va)
         va_dice = va_dice_sum / max(1, n_va)

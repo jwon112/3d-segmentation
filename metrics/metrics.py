@@ -32,7 +32,25 @@ def calculate_dice_score(pred, target, smooth=1e-5, num_classes=4):
         intersection = (pred_one_hot * target_one_hot).sum(dim=(2, 3, 4))
         union = pred_one_hot.sum(dim=(2, 3, 4)) + target_one_hot.sum(dim=(2, 3, 4))
     
-    dice = (2.0 * intersection + smooth) / (union + smooth)
-    return dice.mean(dim=0)
+    # Dice 계산: (2 * intersection + smooth) / (union + smooth)
+    # 배치 차원 평균 (B, C) -> (C,)
+    intersection_mean = intersection.mean(dim=0)  # (C,)
+    union_mean = union.mean(dim=0)  # (C,)
+    
+    # GT에 클래스가 존재하는지 확인 (target에서 각 클래스가 나타나는지)
+    # target_one_hot: (B, C, ...), sum over spatial dims -> (B, C)
+    spatial_dims = tuple(range(2, target_one_hot.dim()))
+    target_sum = target_one_hot.sum(dim=spatial_dims)  # (B, C)
+    target_exists = (target_sum > 0).any(dim=0).float()  # (C,) - 배치 중 하나라도 존재하면 1.0
+    
+    # Dice 계산: GT에 존재하지 않는 클래스는 union=0, intersection=0
+    # -> (2*0 + smooth) / (0 + smooth) = 1.0 (잘못된 결과)
+    # 이를 방지하기 위해: union이 0이면 Dice도 0으로 설정
+    dice = (2.0 * intersection_mean + smooth) / (union_mean + smooth)
+    
+    # GT에 존재하지 않거나 예측도 없는 클래스(union=0)는 Dice를 0으로 설정
+    dice = torch.where(union_mean > 0, dice, torch.zeros_like(dice))
+    
+    return dice
 
 
