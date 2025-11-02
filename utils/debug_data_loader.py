@@ -200,24 +200,22 @@ def check_dataset_samples(dataset, dataset_name, num_samples=5):
 
 
 def check_patch_dataset(base_dataset, patch_size=(128, 128, 128), 
-                        samples_per_volume=16, min_fg_ratio=0.10):
-    """BratsPatchDataset3D 검증"""
+                        samples_per_volume=16):
+    """BratsPatchDataset3D 검증 (nnU-Net 스타일)"""
     print(f"\n{'='*60}")
-    print("BratsPatchDataset3D 패치 샘플링 검증")
+    print("BratsPatchDataset3D 패치 샘플링 검증 (nnU-Net 스타일)")
     print(f"{'='*60}")
     
     patch_dataset = BratsPatchDataset3D(
         base_dataset=base_dataset,
         patch_size=patch_size,
         samples_per_volume=samples_per_volume,
-        min_fg_ratio=min_fg_ratio,
-        max_tries=20
     )
     
     print(f"패치 데이터셋 크기: {len(patch_dataset)}")
     print(f"기본 데이터셋 크기: {len(base_dataset)}")
     print(f"볼륨당 샘플 수: {samples_per_volume}")
-    print(f"최소 포그라운드 비율: {min_fg_ratio}")
+    print(f"샘플링 전략: nnU-Net 스타일 (1/3 포그라운드 오버샘플링, 2/3 완전 랜덤)")
     
     # 여러 패치 샘플 확인
     num_patches_to_check = min(10, len(patch_dataset))
@@ -255,7 +253,13 @@ def check_patch_dataset(base_dataset, patch_size=(128, 128, 128),
         print(f"평균: {np.mean(fg_ratios):.4f}")
         print(f"최소: {np.min(fg_ratios):.4f}")
         print(f"최대: {np.max(fg_ratios):.4f}")
-        print(f"최소 임계값 ({min_fg_ratio}) 만족율: {(np.array(fg_ratios) >= min_fg_ratio).sum() / len(fg_ratios) * 100:.1f}%")
+        print(f"표준편차: {np.std(fg_ratios):.4f}")
+        
+        # nnU-Net 스타일 검증: 1/3은 포그라운드 오버샘플링이므로 포그라운드가 있을 가능성이 높음
+        fg_patches = [r for r in fg_ratios if r > 0]
+        print(f"포그라운드 포함 패치 비율: {len(fg_patches)}/{len(fg_ratios)} ({len(fg_patches)/len(fg_ratios)*100:.1f}%)")
+        if fg_patches:
+            print(f"포그라운드 포함 패치의 평균 비율: {np.mean(fg_patches):.4f}")
     
     print("✓ 패치 샘플링 검증 통과")
     return True
@@ -324,7 +328,7 @@ def main():
     # 2. 패치 데이터셋 검증
     print("\n[2단계] 패치 데이터셋 검증")
     if not check_patch_dataset(base_dataset_3d, patch_size=(128, 128, 128), 
-                               samples_per_volume=16, min_fg_ratio=0.10):
+                               samples_per_volume=16):
         print("❌ 패치 데이터셋 검증 실패")
         return
     
