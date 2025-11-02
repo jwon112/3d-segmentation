@@ -15,6 +15,7 @@ import os
 import torch
 import numpy as np
 from pathlib import Path
+import argparse
 
 # 프로젝트 루트를 경로에 추가
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -300,11 +301,18 @@ def compare_train_val_distributions(train_loader, val_loader):
 
 def main():
     """메인 검증 함수"""
+    parser = argparse.ArgumentParser(description='데이터 로더 검증')
+    parser.add_argument('--data_dir', type=str, 
+                        default=os.environ.get('BRATS_DATA_DIR', '/home/work/3D_/BT/BRATS2021'),
+                        help='BraTS 데이터셋 루트 디렉토리 (기본값: 환경변수 BRATS_DATA_DIR 또는 /home/work/3D_/BT/BRATS2021)')
+    args = parser.parse_args()
+    
+    data_dir = args.data_dir
+    
     print("="*60)
     print("데이터 로더 종합 검증")
     print("="*60)
-    
-    data_dir = 'data'
+    print(f"데이터 디렉토리: {data_dir}")
     
     # 1. 3D 데이터셋 기본 검증
     print("\n[1단계] 3D 데이터셋 기본 검증")

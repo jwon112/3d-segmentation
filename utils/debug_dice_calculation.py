@@ -14,6 +14,7 @@ import os
 import torch
 import numpy as np
 from pathlib import Path
+import argparse
 
 # 프로젝트 루트를 경로에 추가
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -165,7 +166,7 @@ def test_dice_calculation_simple():
     return True
 
 
-def test_dice_with_real_data():
+def test_dice_with_real_data(data_dir=None):
     """실제 데이터로 Dice 계산 검증"""
     print(f"\n{'='*60}")
     print("실제 데이터 Dice 계산 검증")
@@ -174,7 +175,8 @@ def test_dice_with_real_data():
     # 데이터 로더 준비
     from data_loader import get_data_loaders
     
-    data_dir = 'data'
+    if data_dir is None:
+        data_dir = os.environ.get('BRATS_DATA_DIR', '/home/work/3D_/BT/BRATS2021')
     train_loader, val_loader, _, _, _, _ = get_data_loaders(
         data_dir, batch_size=1, num_workers=0, max_samples=3, dim='3d'
     )
@@ -311,9 +313,16 @@ def test_background_exclusion():
 
 def main():
     """메인 검증 함수"""
+    parser = argparse.ArgumentParser(description='Dice 계산 검증')
+    parser.add_argument('--data_dir', type=str, 
+                        default=os.environ.get('BRATS_DATA_DIR', '/home/work/3D_/BT/BRATS2021'),
+                        help='BraTS 데이터셋 루트 디렉토리 (기본값: 환경변수 BRATS_DATA_DIR 또는 /home/work/3D_/BT/BRATS2021)')
+    args = parser.parse_args()
+    
     print("="*60)
     print("Dice 계산 함수 종합 검증")
     print("="*60)
+    print(f"데이터 디렉토리: {args.data_dir}")
     
     # 1. 간단한 케이스 검증
     print("\n[1단계] 간단한 케이스 검증")
@@ -328,7 +337,7 @@ def main():
     # 3. 실제 데이터 검증
     print("\n[3단계] 실제 데이터 검증")
     try:
-        test_dice_with_real_data()
+        test_dice_with_real_data(args.data_dir)
     except Exception as e:
         print(f"⚠️  실제 데이터 검증 중 오류: {e}")
         import traceback

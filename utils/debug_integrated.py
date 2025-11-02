@@ -15,6 +15,7 @@ import torch
 import numpy as np
 from pathlib import Path
 import random
+import argparse
 
 # 프로젝트 루트를 경로에 추가
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -39,7 +40,7 @@ def set_seed(seed=42):
     torch.backends.cudnn.benchmark = False
 
 
-def test_single_sample_pipeline():
+def test_single_sample_pipeline(data_dir=None):
     """단일 샘플로 전체 파이프라인 테스트"""
     print(f"\n{'='*60}")
     print("단일 샘플 파이프라인 테스트")
@@ -50,7 +51,8 @@ def test_single_sample_pipeline():
     print(f"사용 디바이스: {device}")
     
     # 데이터 로더 준비 (최소한의 샘플)
-    data_dir = 'data'
+    if data_dir is None:
+        data_dir = os.environ.get('BRATS_DATA_DIR', '/home/work/3D_/BT/BRATS2021')
     train_loader, val_loader, test_loader, train_sampler, _, _ = get_data_loaders(
         data_dir, batch_size=1, num_workers=0, max_samples=3, dim='3d'
     )
@@ -194,7 +196,7 @@ def test_single_sample_pipeline():
     return True
 
 
-def test_full_training_loop():
+def test_full_training_loop(data_dir=None):
     """전체 학습 루프 테스트 (1 epoch만)"""
     print(f"\n{'='*60}")
     print("전체 학습 루프 테스트 (1 Epoch)")
@@ -204,7 +206,8 @@ def test_full_training_loop():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # 데이터 로더 준비
-    data_dir = 'data'
+    if data_dir is None:
+        data_dir = os.environ.get('BRATS_DATA_DIR', '/home/work/3D_/BT/BRATS2021')
     train_loader, val_loader, test_loader, train_sampler, _, _ = get_data_loaders(
         data_dir, batch_size=1, num_workers=0, max_samples=5, dim='3d'
     )
@@ -246,13 +249,14 @@ def test_full_training_loop():
         return False
 
 
-def test_train_val_distribution_difference():
+def test_train_val_distribution_difference(data_dir=None):
     """학습/검증 분포 차이 분석"""
     print(f"\n{'='*60}")
     print("학습/검증 분포 차이 분석")
     print(f"{'='*60}")
     
-    data_dir = 'data'
+    if data_dir is None:
+        data_dir = os.environ.get('BRATS_DATA_DIR', '/home/work/3D_/BT/BRATS2021')
     train_loader, val_loader, _, _, _, _ = get_data_loaders(
         data_dir, batch_size=1, num_workers=0, max_samples=10, dim='3d'
     )
@@ -320,14 +324,21 @@ def test_train_val_distribution_difference():
 
 def main():
     """메인 검증 함수"""
+    parser = argparse.ArgumentParser(description='전체 파이프라인 통합 테스트')
+    parser.add_argument('--data_dir', type=str, 
+                        default=os.environ.get('BRATS_DATA_DIR', '/home/work/3D_/BT/BRATS2021'),
+                        help='BraTS 데이터셋 루트 디렉토리 (기본값: 환경변수 BRATS_DATA_DIR 또는 /home/work/3D_/BT/BRATS2021)')
+    args = parser.parse_args()
+    
     print("="*60)
     print("전체 파이프라인 통합 테스트")
     print("="*60)
+    print(f"데이터 디렉토리: {args.data_dir}")
     
     # 1. 단일 샘플 파이프라인 테스트
     print("\n[1단계] 단일 샘플 파이프라인 테스트")
     try:
-        test_single_sample_pipeline()
+        test_single_sample_pipeline(args.data_dir)
     except Exception as e:
         print(f"❌ 단일 샘플 파이프라인 테스트 실패: {e}")
         import traceback
@@ -336,7 +347,7 @@ def main():
     # 2. 학습/검증 분포 차이 분석
     print("\n[2단계] 학습/검증 분포 차이 분석")
     try:
-        test_train_val_distribution_difference()
+        test_train_val_distribution_difference(args.data_dir)
     except Exception as e:
         print(f"⚠️  분포 차이 분석 실패: {e}")
         import traceback
@@ -345,7 +356,7 @@ def main():
     # 3. 전체 학습 루프 테스트 (선택적, 시간이 오래 걸림)
     print("\n[3단계] 전체 학습 루프 테스트 (1 Epoch)")
     try:
-        test_full_training_loop()
+        test_full_training_loop(args.data_dir)
     except Exception as e:
         print(f"⚠️  전체 학습 루프 테스트 실패: {e}")
         import traceback

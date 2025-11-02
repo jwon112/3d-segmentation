@@ -14,6 +14,7 @@ import os
 import torch
 import numpy as np
 from pathlib import Path
+import argparse
 
 # 프로젝트 루트를 경로에 추가
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -242,7 +243,7 @@ def check_sliding_window_with_small_volume():
     return True
 
 
-def check_sliding_window_with_real_data():
+def check_sliding_window_with_real_data(data_dir=None):
     """실제 데이터로 슬라이딩 윈도우 검증"""
     print(f"\n{'='*60}")
     print("실제 데이터 슬라이딩 윈도우 검증")
@@ -251,7 +252,8 @@ def check_sliding_window_with_real_data():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # 데이터 로더 준비
-    data_dir = 'data'
+    if data_dir is None:
+        data_dir = os.environ.get('BRATS_DATA_DIR', '/home/work/3D_/BT/BRATS2021')
     _, val_loader, _, _, _, _ = get_data_loaders(
         data_dir, batch_size=1, num_workers=0, max_samples=2, dim='3d'
     )
@@ -320,9 +322,16 @@ def check_sliding_window_with_real_data():
 
 def main():
     """메인 검증 함수"""
+    parser = argparse.ArgumentParser(description='슬라이딩 윈도우 검증')
+    parser.add_argument('--data_dir', type=str, 
+                        default=os.environ.get('BRATS_DATA_DIR', '/home/work/3D_/BT/BRATS2021'),
+                        help='BraTS 데이터셋 루트 디렉토리 (기본값: 환경변수 BRATS_DATA_DIR 또는 /home/work/3D_/BT/BRATS2021)')
+    args = parser.parse_args()
+    
     print("="*60)
     print("슬라이딩 윈도우 종합 검증")
     print("="*60)
+    print(f"데이터 디렉토리: {args.data_dir}")
     
     # 1. 출력 shape 검증
     print("\n[1단계] 출력 Shape 검증")
@@ -357,7 +366,7 @@ def main():
     # 5. 실제 데이터 검증
     print("\n[5단계] 실제 데이터 슬라이딩 윈도우 검증")
     try:
-        if not check_sliding_window_with_real_data():
+        if not check_sliding_window_with_real_data(args.data_dir):
             print("❌ 실제 데이터 검증 실패")
             return
     except Exception as e:
