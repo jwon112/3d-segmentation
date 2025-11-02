@@ -110,37 +110,39 @@ class BratsDataset3D(Dataset):
 
 
 class BratsPatchDataset3D(Dataset):
-    """3D BraTS 패치 데이터셋 (학습용)
+    """3D BraTS 패치 데이터셋 (학습용) - nnU-Net 스타일 샘플링
 
-    - 원본 볼륨에서 128x128x128 패치를 랜덤 샘플링
-    - 50%는 포그라운드 중심 샘플링, 50%는 완전 랜덤 샘플링
-    - 학습/검증 분포 차이를 줄이기 위해 혼합 전략 사용
-    - 패딩으로 경계 안전 처리
+    nnU-Net의 표준 패치 샘플링 전략을 따름:
+    1. 1/3 (33.3%): 포그라운드 오버샘플링 (Foreground Oversampling)
+       - 포그라운드 클래스 중 하나를 무작위 선택
+       - 해당 클래스의 복셀 중 하나를 무작위 선택하여 중심으로 패치 추출
+       - 포그라운드가 없으면 무작위 샘플링으로 대체
+    2. 2/3 (66.7%): 완전 무작위 샘플링 (Random Sampling)
+       - 케이스 내에서 위치에 상관없이 완전히 무작위로 패치 중심 선택
+    
+    이 전략은 포그라운드 학습을 보장하면서도 전체 데이터 분포를 유지합니다.
     """
     def __init__(self, base_dataset: BratsDataset3D, patch_size=(128, 128, 128),
-                 samples_per_volume: int = 16, min_fg_ratio: float = 0.03, 
-                 max_tries: int = 20, fg_sampling_ratio: float = 0.5):
+                 samples_per_volume: int = 16):
         self.base_dataset = base_dataset
         self.patch_size = patch_size
         self.samples_per_volume = samples_per_volume
-        self.min_fg_ratio = min_fg_ratio
-        self.max_tries = max_tries
-        self.fg_sampling_ratio = fg_sampling_ratio  # 포그라운드 중심 샘플링 비율
 
         # 인덱스 매핑: (volume_index, sample_idx, sampling_type)
-        # sampling_type: True=포그라운드 중심, False=완전 랜덤
+        # sampling_type: 0=포그라운드 오버샘플링, 1=완전 무작위
         self.index_map = []
         for vidx in range(len(self.base_dataset)):
             for s in range(self.samples_per_volume):
-                # 포그라운드 중심 샘플링 여부 결정
-                use_fg_centered = (s / self.samples_per_volume) < self.fg_sampling_ratio
-                self.index_map.append((vidx, s, use_fg_centered))
+                # nnU-Net 스타일: 1/3 포그라운드 오버샘플링, 2/3 완전 무작위
+                # s % 3 == 0이면 포그라운드 오버샘플링 (1/3)
+                sampling_type = 0 if (s % 3 == 0) else 1
+                self.index_map.append((vidx, s, sampling_type))
 
     def __len__(self):
         return len(self.index_map)
 
     def __getitem__(self, idx):
-        vidx, _, use_fg_centered = self.index_map[idx]
+        vidx, _, sampling_type = self.index_map[idx]
         image, mask = self.base_dataset[vidx]  # image: (2, H, W, D), mask: (H, W, D)
 
         C, H, W, D = image.shape
@@ -156,63 +158,49 @@ class BratsPatchDataset3D(Dataset):
             mask = F.pad(mask, (0, pad_d, 0, pad_w, 0, pad_h))
             C, H, W, D = image.shape
 
-        # 포그라운드 비율 조건을 만족하는 패치 시도
-        tries = 0
-        best_patch = None
-        best_ratio = -1.0
-        
-        while tries < self.max_tries:
-            # 샘플링 전략 선택
-            if use_fg_centered:
-                # 포그라운드 중심 샘플링
-                fg = (mask > 0).nonzero(as_tuple=False)
-                if fg.numel() > 0:
-                    # 포그라운드에서 랜덤 중심 선택
-                    ci = fg[torch.randint(0, fg.shape[0], (1,)).item()]
+        # nnU-Net 스타일 샘플링
+        if sampling_type == 0:
+            # 1. 포그라운드 오버샘플링 (Foreground Oversampling) - 33.3%
+            # 포그라운드 클래스(1, 2, 3) 중 하나를 무작위 선택
+            fg_classes = []
+            for cls in [1, 2, 3]:
+                if (mask == cls).any():
+                    fg_classes.append(cls)
+            
+            if len(fg_classes) > 0:
+                # 포그라운드 클래스 중 하나를 무작위 선택
+                selected_class = fg_classes[torch.randint(0, len(fg_classes), (1,)).item()]
+                # 해당 클래스의 복셀 중 하나를 무작위 선택
+                fg_coords = (mask == selected_class).nonzero(as_tuple=False)
+                if fg_coords.numel() > 0:
+                    ci = fg_coords[torch.randint(0, fg_coords.shape[0], (1,)).item()]
                     cy, cx, cz = ci.tolist()
                 else:
-                    # 포그라운드가 없다면 랜덤 중심
+                    # 포그라운드가 없으면 무작위 샘플링으로 대체
                     cy = torch.randint(0, H, (1,)).item()
                     cx = torch.randint(0, W, (1,)).item()
                     cz = torch.randint(0, D, (1,)).item()
             else:
-                # 완전 랜덤 샘플링 (전체 볼륨 분포에 가까움)
+                # 포그라운드가 전혀 없으면 무작위 샘플링으로 대체
                 cy = torch.randint(0, H, (1,)).item()
                 cx = torch.randint(0, W, (1,)).item()
                 cz = torch.randint(0, D, (1,)).item()
+        else:
+            # 2. 완전 무작위 샘플링 (Random Sampling) - 66.7%
+            # 케이스 내에서 위치에 상관없이 완전히 무작위로 패치 중심 선택
+            cy = torch.randint(0, H, (1,)).item()
+            cx = torch.randint(0, W, (1,)).item()
+            cz = torch.randint(0, D, (1,)).item()
 
-            sy = max(0, min(cy - ph // 2, H - ph))
-            sx = max(0, min(cx - pw // 2, W - pw))
-            sz = max(0, min(cz - pd // 2, D - pd))
+        # 패치 좌표 계산
+        sy = max(0, min(cy - ph // 2, H - ph))
+        sx = max(0, min(cx - pw // 2, W - pw))
+        sz = max(0, min(cz - pd // 2, D - pd))
 
-            img_patch = image[:, sy:sy+ph, sx:sx+pw, sz:sz+pd]
-            msk_patch = mask[sy:sy+ph, sx:sx+pw, sz:sz+pd]
+        img_patch = image[:, sy:sy+ph, sx:sx+pw, sz:sz+pd]
+        msk_patch = mask[sy:sy+ph, sx:sx+pw, sz:sz+pd]
 
-            fg_ratio = (msk_patch > 0).float().mean().item()
-            
-            # 포그라운드 중심 샘플링인 경우에만 min_fg_ratio 체크
-            if use_fg_centered:
-                if fg_ratio >= self.min_fg_ratio:
-                    return img_patch, msk_patch
-            else:
-                # 완전 랜덤 샘플링은 바로 반환 (전체 분포 유지)
-                return img_patch, msk_patch
-
-            if fg_ratio > best_ratio:
-                best_ratio = fg_ratio
-                best_patch = (img_patch, msk_patch)
-
-            tries += 1
-
-        # 조건 만족 실패 시 가장 좋은 패치 반환
-        if best_patch is not None:
-            return best_patch
-        
-        # 최후의 수단: 완전 랜덤 패치 반환
-        sy = torch.randint(0, max(1, H - ph + 1), (1,)).item()
-        sx = torch.randint(0, max(1, W - pw + 1), (1,)).item()
-        sz = torch.randint(0, max(1, D - pd + 1), (1,)).item()
-        return image[:, sy:sy+ph, sx:sx+pw, sz:sz+pd], mask[sy:sy+ph, sx:sx+pw, sz:sz+pd]
+        return img_patch, msk_patch
 
 
 class BratsDataset2D(Dataset):
@@ -358,15 +346,12 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
             full_dataset, [train_len, val_len, test_len]
         )
 
-    # 3D 학습은 패치 데이터셋으로 래핑 (128^3, 혼합 샘플링 전략)
+    # 3D 학습은 패치 데이터셋으로 래핑 (128^3, nnU-Net 스타일 샘플링)
     if dim == '3d':
         train_dataset = BratsPatchDataset3D(
             base_dataset=train_dataset.dataset if hasattr(train_dataset, 'dataset') else train_dataset,
             patch_size=(128, 128, 128),
             samples_per_volume=16,
-            min_fg_ratio=0.03,  # 낮춤: 0.10 → 0.03 (전체 분포에 더 가까움)
-            max_tries=20,
-            fg_sampling_ratio=0.5,  # 50%는 포그라운드 중심, 50%는 완전 랜덤
         )
     
     # Distributed samplers
