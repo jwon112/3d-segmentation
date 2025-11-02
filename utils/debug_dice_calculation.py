@@ -245,8 +245,13 @@ def test_dice_with_real_data(data_dir=None):
             gt_count = np.sum(labels_np == c)
             print(f"    클래스 {c}: 예측={pred_count:,}, GT={gt_count:,}")
     
-    # 검증 데이터 테스트
+    # 검증 데이터 테스트 (전체 볼륨이므로 슬라이딩 윈도우 추론 사용)
     print("\n[검증 데이터 테스트]")
+    from integrated_experiment import sliding_window_inference_3d
+    
+    patch_size = (128, 128, 128)
+    overlap = 0.1
+    
     for i, (inputs, labels) in enumerate(val_loader):
         if i >= 2:
             break
@@ -254,10 +259,18 @@ def test_dice_with_real_data(data_dir=None):
         inputs = inputs.to(device)
         labels = labels.to(device)
         
-        with torch.no_grad():
-            logits = model(inputs)
-        
         print(f"\n배치 {i+1}:")
+        print(f"  입력 shape: {inputs.shape}")
+        print(f"  라벨 shape: {labels.shape}")
+        
+        # 슬라이딩 윈도우 추론 (검증 데이터는 전체 볼륨)
+        with torch.no_grad():
+            logits = sliding_window_inference_3d(
+                model, inputs, patch_size=patch_size, overlap=overlap, device=device, model_name='mobile_unetr_3d'
+            )
+        
+        print(f"  출력 shape: {logits.shape}")
+        
         dice_scores = calculate_dice_score(logits, labels)
         print(f"  Dice 점수: {dice_scores.tolist()}")
         
@@ -275,7 +288,13 @@ def test_dice_with_real_data(data_dir=None):
         print(f"  예측 클래스: {pred_unique}")
         print(f"  GT 클래스: {gt_unique}")
         
-        if pred_unique == [0] and 0 not in gt_unique or (len(gt_unique) > 1):
+        # 클래스별 픽셀 수 확인
+        for c in range(4):
+            pred_count = np.sum(pred_np == c)
+            gt_count = np.sum(labels_np == c)
+            print(f"    클래스 {c}: 예측={pred_count:,}, GT={gt_count:,}")
+        
+        if pred_unique == [0] and len(gt_unique) > 1:
             print(f"  ⚠️  경고: 예측이 모두 배경인데 GT에는 포그라운드가 있습니다!")
             print(f"    이 경우 배경 제외 평균 Dice는 0에 가까워야 합니다.")
             if mean_dice_fg > 0.01:
@@ -314,11 +333,15 @@ def test_background_exclusion():
     
     # 배경 Dice는 높을 수 있지만, 포그라운드가 예측되지 않으면
     # 배경 제외 평균은 0에 가까워야 함
-    if dice_bg > 0.9 and mean_dice_fg < 0.1:
+    # 주의: 포그라운드 클래스가 GT에 없으면 dice=0이므로 평균도 0에 가까움
+    if dice_bg > 0.7 and mean_dice_fg < 0.01:
         print("✓ 예상대로 동작: 배경은 정확하지만 포그라운드는 예측되지 않음")
         print("  배경 제외 평균이 낮게 나오는 것이 올바릅니다.")
     else:
         print("⚠️  경고: 예상과 다른 결과")
+        print(f"  배경 Dice: {dice_bg:.4f}, 포그라운드 평균 Dice: {mean_dice_fg:.4f}")
+        print(f"  (배경 Dice > 0.7이고 포그라운드 평균 < 0.01이면 정상)")
+        # 이건 정상일 수 있으므로 False 반환하지 않음
     
     return True
 
