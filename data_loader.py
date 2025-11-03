@@ -370,15 +370,15 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         train_dataset,
         batch_size=batch_size,
         shuffle=(train_sampler is None),
-        num_workers=num_workers,
+        num_workers=(num_workers if num_workers is not None else 8),
         pin_memory=True,
         sampler=train_sampler,
-        persistent_workers=(num_workers > 0),
-        prefetch_factor=(2 if num_workers > 0 else None),
+        persistent_workers=((num_workers if num_workers is not None else 8) > 0),
+        prefetch_factor=(4 if (num_workers if num_workers is not None else 8) > 0 else None),
     )
-    # Validation/Test: conservative loader settings to avoid /dev/shm issues
-    v_workers = 0
-    t_workers = 0
+    # Validation/Test workers
+    v_workers = 4
+    t_workers = 4
     # 3D 검증/테스트는 슬라이딩 윈도우 특성상 batch_size=1 권장
     val_bs = 1 if dim == '3d' else batch_size
     test_bs = 1 if dim == '3d' else batch_size
@@ -390,7 +390,7 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         pin_memory=False,
         sampler=val_sampler,
         persistent_workers=False,
-        prefetch_factor=(2 if v_workers > 0 else None),
+        prefetch_factor=(4 if v_workers > 0 else None),
     )
     test_loader = DataLoader(
         test_dataset,
@@ -400,7 +400,7 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         pin_memory=False,
         sampler=test_sampler,
         persistent_workers=False,
-        prefetch_factor=(2 if t_workers > 0 else None),
+        prefetch_factor=(4 if t_workers > 0 else None),
     )
     
     return train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler

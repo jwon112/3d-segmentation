@@ -856,9 +856,9 @@ if __name__ == "__main__":
                        help='Use nnU-Net style loss (Soft Dice with Squared Pred, Dice 70%% + CE 30%%) (default: True)')
     parser.add_argument('--use_standard_loss', action='store_true', default=False,
                        help='Use standard combined loss (Dice 50%% + CE 50%%) instead of nnU-Net style')
-    parser.add_argument('--num_workers', type=int, default=2,
+    parser.add_argument('--num_workers', type=int, default=8,
                        help='Number of DataLoader workers for training (val/test use 0 by default). Default: 2 for 2GB /dev/shm')
-    parser.add_argument('--sharing_strategy', type=str, default='file_system', choices=['file_system', 'file_descriptor'],
+    parser.add_argument('--sharing_strategy', type=str, default='file_descriptor', choices=['file_system', 'file_descriptor'],
                        help='PyTorch tensor sharing strategy for DataLoader workers. file_system avoids /dev/shm pressure.')
     
     args = parser.parse_args()

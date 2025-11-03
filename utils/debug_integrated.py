@@ -466,7 +466,7 @@ def main():
                         help='전체 학습 루프 에포크 수 (기본값: 1)')
     parser.add_argument('--max_samples', type=int, default=5,
                         help='작은 셋업에서 사용할 최대 샘플 수 (Train/Val/Test 공통, 기본값: 5)')
-    parser.add_argument('--sharing_strategy', type=str, default='file_system', choices=['file_system', 'file_descriptor'],
+    parser.add_argument('--sharing_strategy', type=str, default='file_descriptor', choices=['file_system', 'file_descriptor'],
                         help='PyTorch tensor sharing strategy for DataLoader workers. file_system avoids /dev/shm pressure.')
     args = parser.parse_args()
     
