@@ -152,7 +152,7 @@ def test_single_sample_pipeline(data_dir=None, model_name='mobile_unetr_3d'):
         labels = labels.to(device)
         
         logits = sliding_window_inference_3d(
-            model, inputs, patch_size=(128, 128, 128), overlap=0.1, device=device
+            model, inputs, patch_size=(128, 128, 128), overlap=0.1, device=device, model_name=model_name
         )
         
         dice_scores = calculate_dice_score(logits, labels)
@@ -191,6 +191,127 @@ def test_single_sample_pipeline(data_dir=None, model_name='mobile_unetr_3d'):
             if train_fg_ratio > 0.5 and val_fg_ratio < 0.1:
                 print(f"    → 학습 데이터는 포그라운드가 많지만, 검증 데이터는 배경이 지배적입니다.")
                 print(f"    → 모델이 포그라운드에만 학습되어 배경이 많은 검증 데이터에서 실패했습니다.")
+    
+    # 4. 추가 검증: 슬라이딩 윈도우 vs 직접 forward, BatchNorm 동작 확인
+    print(f"\n[4단계] 상세 검증: 슬라이딩 윈도우 vs 직접 forward, BatchNorm 동작")
+    
+    # 4-1. 슬라이딩 윈도우 vs 직접 forward 비교 (패치 단위)
+    print(f"\n[4-1] 슬라이딩 윈도우 vs 직접 forward 비교")
+    with torch.no_grad():
+        # 검증 데이터에서 하나의 패치 추출 (128x128x128)
+        val_inputs, val_labels = next(iter(val_loader))
+        val_inputs = val_inputs.to(device)
+        val_labels = val_labels.to(device)
+        
+        # 패치 크기로 크롭 (처음 128x128x128 영역)
+        patch_inputs = val_inputs[:, :, :128, :128, :128]
+        patch_labels = val_labels[:, :128, :128, :128]
+        
+        # 직접 forward (eval 모드)
+        model.eval()
+        direct_logits = model(patch_inputs)
+        direct_pred = torch.argmax(direct_logits, dim=1)
+        direct_pred_counts = [(direct_pred == c).sum().item() for c in range(4)]
+        direct_dice = calculate_dice_score(direct_logits, patch_labels)
+        direct_mean_dice_fg = direct_dice[1:].mean()
+        
+        print(f"  직접 forward (패치 단위):")
+        print(f"    예측 클래스: {torch.unique(direct_pred).tolist()}")
+        print(f"    예측 픽셀 수: {direct_pred_counts}")
+        print(f"    배경 제외 평균 Dice: {direct_mean_dice_fg:.4f}")
+        
+        # 슬라이딩 윈도우 (동일한 패치에 대해)
+        sw_logits = sliding_window_inference_3d(
+            model, patch_inputs, patch_size=(128, 128, 128), overlap=0.1, device=device, model_name=model_name
+        )
+        sw_pred = torch.argmax(sw_logits, dim=1)
+        sw_pred_counts = [(sw_pred == c).sum().item() for c in range(4)]
+        sw_dice = calculate_dice_score(sw_logits, patch_labels)
+        sw_mean_dice_fg = sw_dice[1:].mean()
+        
+        print(f"  슬라이딩 윈도우 (동일 패치):")
+        print(f"    예측 클래스: {torch.unique(sw_pred).tolist()}")
+        print(f"    예측 픽셀 수: {sw_pred_counts}")
+        print(f"    배경 제외 평균 Dice: {sw_mean_dice_fg:.4f}")
+        
+        # 차이 분석
+        logits_diff = torch.abs(direct_logits - sw_logits).mean().item()
+        pred_agreement = (direct_pred == sw_pred).float().mean().item() * 100
+        print(f"  차이 분석:")
+        print(f"    Logits 평균 절대 차이: {logits_diff:.6f}")
+        print(f"    예측 일치율: {pred_agreement:.2f}%")
+        
+        if logits_diff > 0.1:
+            print(f"    ⚠️  슬라이딩 윈도우와 직접 forward 간 차이가 큽니다!")
+    
+    # 4-2. BatchNorm train/eval 모드 차이 확인
+    print(f"\n[4-2] BatchNorm train/eval 모드 차이 확인")
+    with torch.no_grad():
+        test_inputs = patch_inputs  # 위에서 사용한 패치 재사용
+        
+        # Train 모드
+        model.train()
+        train_logits = model(test_inputs)
+        train_pred = torch.argmax(train_logits, dim=1)
+        train_pred_counts = [(train_pred == c).sum().item() for c in range(4)]
+        train_dice = calculate_dice_score(train_logits, patch_labels)
+        train_mean_dice_fg = train_dice[1:].mean()
+        
+        # Eval 모드
+        model.eval()
+        eval_logits = model(test_inputs)
+        eval_pred = torch.argmax(eval_logits, dim=1)
+        eval_pred_counts = [(eval_pred == c).sum().item() for c in range(4)]
+        eval_dice = calculate_dice_score(eval_logits, patch_labels)
+        eval_mean_dice_fg = eval_dice[1:].mean()
+        
+        print(f"  Train 모드:")
+        print(f"    예측 클래스: {torch.unique(train_pred).tolist()}")
+        print(f"    예측 픽셀 수: {train_pred_counts}")
+        print(f"    배경 제외 평균 Dice: {train_mean_dice_fg:.4f}")
+        
+        print(f"  Eval 모드:")
+        print(f"    예측 클래스: {torch.unique(eval_pred).tolist()}")
+        print(f"    예측 픽셀 수: {eval_pred_counts}")
+        print(f"    배경 제외 평균 Dice: {eval_mean_dice_fg:.4f}")
+        
+        # 차이 분석
+        mode_logits_diff = torch.abs(train_logits - eval_logits)
+        max_diff = mode_logits_diff.max().item()
+        mean_diff = mode_logits_diff.mean().item()
+        mode_pred_agreement = (train_pred == eval_pred).float().mean().item() * 100
+        
+        print(f"  차이 분석:")
+        print(f"    Logits 최대 차이: {max_diff:.6f}")
+        print(f"    Logits 평균 차이: {mean_diff:.6f}")
+        print(f"    예측 일치율: {mode_pred_agreement:.2f}%")
+        
+        if max_diff > 1.0:
+            print(f"    ⚠️  Train/Eval 모드 간 차이가 매우 큽니다! (최대 {max_diff:.2f})")
+            print(f"    → BatchNorm의 running stats가 문제일 수 있습니다.")
+        elif mode_pred_agreement < 50:
+            print(f"    ⚠️  Train/Eval 모드 예측 일치율이 낮습니다! ({mode_pred_agreement:.2f}%)")
+    
+    # 4-3. BatchNorm running stats 확인
+    print(f"\n[4-3] BatchNorm running stats 상태 확인")
+    bn_layers = []
+    for name, module in model.named_modules():
+        if isinstance(module, (torch.nn.BatchNorm3d, torch.nn.BatchNorm2d, torch.nn.BatchNorm1d)):
+            bn_layers.append((name, module))
+    
+    if bn_layers:
+        print(f"  발견된 BatchNorm 레이어 수: {len(bn_layers)}")
+        # 처음 3개만 출력 (너무 많을 수 있음)
+        for i, (name, bn) in enumerate(bn_layers[:3]):
+            running_mean = bn.running_mean.detach().cpu().numpy()
+            running_var = bn.running_var.detach().cpu().numpy()
+            print(f"  {name}:")
+            print(f"    running_mean 범위: [{running_mean.min():.4f}, {running_mean.max():.4f}]")
+            print(f"    running_var 범위: [{running_var.min():.4f}, {running_var.max():.4f}]")
+            if running_var.max() < 1e-5:
+                print(f"    ⚠️  running_var가 매우 작습니다! (최대 {running_var.max():.6e})")
+    else:
+        print(f"  BatchNorm 레이어를 찾을 수 없습니다.")
     
     return True
 
