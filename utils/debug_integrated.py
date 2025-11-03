@@ -316,7 +316,7 @@ def test_single_sample_pipeline(data_dir=None, model_name='mobile_unetr_3d'):
     return True
 
 
-def test_full_training_loop(data_dir=None, model_name='mobile_unetr_3d'):
+def test_full_training_loop(data_dir=None, model_name='mobile_unetr_3d', sw_overlap=0.1, lr=0.001, use_nnunet_loss=True):
     """전체 학습 루프 테스트 (1 epoch만)"""
     print(f"\n{'='*60}")
     print("전체 학습 루프 테스트 (1 Epoch)")
@@ -346,7 +346,7 @@ def test_full_training_loop(data_dir=None, model_name='mobile_unetr_3d'):
             model, train_loader, val_loader, test_loader,
             epochs=1, device=device, model_name=model_name, seed=42,
             train_sampler=train_sampler, rank=0,
-            sw_patch_size=(128, 128, 128), sw_overlap=0.1, dim='3d'
+            sw_patch_size=(128, 128, 128), sw_overlap=sw_overlap, dim='3d', lr=lr, use_nnunet_loss=use_nnunet_loss
         )
         
         print(f"\n학습 결과:")
@@ -450,6 +450,14 @@ def main():
     parser.add_argument('--model_name', type=str, default='mobile_unetr_3d',
                         choices=['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d'],
                         help='테스트할 모델 이름 (기본값: mobile_unetr_3d)')
+    parser.add_argument('--sw_overlap', type=float, default=0.1,
+                        help='슬라이딩 윈도우 오버랩 비율 (기본값: 0.1)')
+    parser.add_argument('--lr', type=float, default=0.001,
+                        help='학습률 (기본값: 0.001)')
+    parser.add_argument('--use_nnunet_loss', action='store_true',
+                        help='nnU-Net 스타일 loss 사용 (기본 미사용, 지정 시 사용)')
+    parser.add_argument('--no_nnunet_loss', action='store_true',
+                        help='nnU-Net 스타일 loss 비활성화 플래그 (둘 다 미지정 시 기본 사용)')
     args = parser.parse_args()
     
     print("="*60)
@@ -479,7 +487,13 @@ def main():
     # 3. 전체 학습 루프 테스트 (선택적, 시간이 오래 걸림)
     print("\n[3단계] 전체 학습 루프 테스트 (1 Epoch)")
     try:
-        test_full_training_loop(args.data_dir, model_name=args.model_name)
+        # nnUNet loss 플래그 해석: 기본 True, --no_nnunet_loss가 있으면 False, --use_nnunet_loss가 있으면 True
+        use_nnunet_loss = True
+        if args.no_nnunet_loss:
+            use_nnunet_loss = False
+        if args.use_nnunet_loss:
+            use_nnunet_loss = True
+        test_full_training_loop(args.data_dir, model_name=args.model_name, sw_overlap=args.sw_overlap, lr=args.lr, use_nnunet_loss=use_nnunet_loss)
     except Exception as e:
         print(f"⚠️  전체 학습 루프 테스트 실패: {e}")
         import traceback
