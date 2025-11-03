@@ -40,7 +40,7 @@ def set_seed(seed=42):
     torch.backends.cudnn.benchmark = False
 
 
-def test_single_sample_pipeline(data_dir=None):
+def test_single_sample_pipeline(data_dir=None, model_name='mobile_unetr_3d'):
     """단일 샘플로 전체 파이프라인 테스트"""
     print(f"\n{'='*60}")
     print("단일 샘플 파이프라인 테스트")
@@ -62,7 +62,6 @@ def test_single_sample_pipeline(data_dir=None):
     print(f"테스트 배치 수: {len(test_loader)}")
     
     # 모델 준비
-    model_name = 'mobile_unetr_3d'
     model = get_model(model_name, n_channels=2, n_classes=4, dim='3d', use_pretrained=False)
     model = model.to(device)
     
@@ -81,7 +80,7 @@ def test_single_sample_pipeline(data_dir=None):
         
         # 슬라이딩 윈도우 추론
         logits = sliding_window_inference_3d(
-            model, inputs, patch_size=(128, 128, 128), overlap=0.1, device=device
+            model, inputs, patch_size=(128, 128, 128), overlap=0.1, device=device, model_name=model_name
         )
         
         print(f"출력 logits shape: {logits.shape}")
@@ -196,7 +195,7 @@ def test_single_sample_pipeline(data_dir=None):
     return True
 
 
-def test_full_training_loop(data_dir=None):
+def test_full_training_loop(data_dir=None, model_name='mobile_unetr_3d'):
     """전체 학습 루프 테스트 (1 epoch만)"""
     print(f"\n{'='*60}")
     print("전체 학습 루프 테스트 (1 Epoch)")
@@ -213,7 +212,6 @@ def test_full_training_loop(data_dir=None):
     )
     
     # 모델 준비
-    model_name = 'mobile_unetr_3d'
     model = get_model(model_name, n_channels=2, n_classes=4, dim='3d', use_pretrained=False)
     model = model.to(device)
     
@@ -328,17 +326,21 @@ def main():
     parser.add_argument('--data_dir', type=str, 
                         default=os.environ.get('BRATS_DATA_DIR', '/home/work/3D_/BT/BRATS2021'),
                         help='BraTS 데이터셋 루트 디렉토리 (기본값: 환경변수 BRATS_DATA_DIR 또는 /home/work/3D_/BT/BRATS2021)')
+    parser.add_argument('--model_name', type=str, default='mobile_unetr_3d',
+                        choices=['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d'],
+                        help='테스트할 모델 이름 (기본값: mobile_unetr_3d)')
     args = parser.parse_args()
     
     print("="*60)
     print("전체 파이프라인 통합 테스트")
     print("="*60)
     print(f"데이터 디렉토리: {args.data_dir}")
+    print(f"모델: {args.model_name}")
     
     # 1. 단일 샘플 파이프라인 테스트
     print("\n[1단계] 단일 샘플 파이프라인 테스트")
     try:
-        test_single_sample_pipeline(args.data_dir)
+        test_single_sample_pipeline(args.data_dir, model_name=args.model_name)
     except Exception as e:
         print(f"❌ 단일 샘플 파이프라인 테스트 실패: {e}")
         import traceback
@@ -356,7 +358,7 @@ def main():
     # 3. 전체 학습 루프 테스트 (선택적, 시간이 오래 걸림)
     print("\n[3단계] 전체 학습 루프 테스트 (1 Epoch)")
     try:
-        test_full_training_loop(args.data_dir)
+        test_full_training_loop(args.data_dir, model_name=args.model_name)
     except Exception as e:
         print(f"⚠️  전체 학습 루프 테스트 실패: {e}")
         import traceback
