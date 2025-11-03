@@ -15,23 +15,27 @@ from scipy import ndimage
 
 
 def _normalize_volume_np(vol):
-    """퍼센타일 클리핑 + Z-score 정규화 (비영점 마스크 기준)
+    """퍼센타일 클리핑 + Z-score 정규화 (비영점 마스크 기준, 배경은 0 유지)
 
-    Args:
-        vol (np.ndarray): (H, W, D) 또는 (H, W) 강도 볼륨
-    Returns:
-        np.ndarray: 정규화된 볼륨
+    - 퍼센타일 추정과 클리핑, 평균/표준편차 계산은 비영점(nz) 영역에서만 수행
+    - 정규화 후 배경(~nz)은 항상 0으로 유지
     """
     nz = vol > 0
     if nz.sum() == 0:
-        return vol
+        return vol.astype(np.float32)
+
     v = vol[nz]
     lo, hi = np.percentile(v, [0.5, 99.5])
-    vol = np.clip(vol, lo, hi)
-    m = v.mean()
-    s = v.std() + 1e-8
-    vol[nz] = (vol[nz] - m) / s
-    return vol
+    v_clipped = np.clip(v, lo, hi)
+    m = v_clipped.mean()
+    s = v_clipped.std()
+    if s < 1e-8:
+        s = 1e-8
+
+    out = np.zeros_like(vol, dtype=np.float32)
+    out[nz] = ((v_clipped - m) / s).astype(np.float32)
+    # 배경(~nz)은 0 유지
+    return out
 
 class BratsDataset3D(Dataset):
     """3D BraTS 데이터셋 (Depth, Height, Width)"""
