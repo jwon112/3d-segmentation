@@ -353,7 +353,10 @@ class MV3DDecoders(nn.Module):
         # Assuming we need to match the last skip connection
         last_skip = skip_connections[-1]
         B, C, D, H, W = last_skip.shape
-        x = x.reshape(B, C, D, H, W)
+        
+        # x is (B, D*H*W, C), need to reshape to (B, C, D, H, W)
+        # First permute to (B, C, D*H*W), then reshape to (B, C, D, H, W)
+        x = x.permute(0, 2, 1).reshape(B, C, D, H, W)
         
         # Process through decoders
         for i, decoder in enumerate(self.decoders):

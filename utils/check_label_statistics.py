@@ -5,11 +5,9 @@ BraTS 라벨 통계 직접 확인 스크립트
 NIfTI 파일을 직접 읽어서 라벨 분포를 확인합니다.
 """
 
-import sys
 import os
 import numpy as np
 import nibabel as nib
-from pathlib import Path
 import argparse
 
 def check_label_statistics(data_dir, max_samples=10):
@@ -91,23 +89,8 @@ def check_label_statistics(data_dir, max_samples=10):
         stats['fg_ratio'] = fg_ratio
         
         print(f"    포그라운드 합계 (1+2+4): {fg_count:,} 복셀 ({fg_ratio:.2f}%)")
-        
-        # 뇌 조직 마스크 추정 (배경이 아닌 부분)
-        # 일반적으로 MRI에서 0이 아닌 값을 가진 부분이 뇌 조직 영역
-        # 하지만 정확한 뇌 마스크는 별도로 필요
-        brain_region = seg > 0  # 라벨이 0보다 큰 모든 부분
-        brain_count = np.sum(brain_region)
-        brain_ratio = brain_count / total_voxels * 100
-        stats['brain_count'] = brain_count
-        stats['brain_ratio'] = brain_ratio
-        
-        print(f"    뇌 영역 (라벨 > 0): {brain_count:,} 복셀 ({brain_ratio:.2f}%)")
-        
-        # 종양 비율 (뇌 영역 대비)
-        if brain_count > 0:
-            tumor_ratio_in_brain = fg_count / brain_count * 100
-            stats['tumor_ratio_in_brain'] = tumor_ratio_in_brain
-            print(f"    종양 비율 (뇌 영역 대비): {tumor_ratio_in_brain:.2f}%")
+        print(f"    참고: BraTS 라벨에는 정상 뇌 조직이 라벨링되지 않음")
+        print(f"    참고: 라벨 0=배경, 라벨 1,2,4=종양 영역만 존재")
         
         all_stats.append(stats)
     
@@ -117,12 +100,8 @@ def check_label_statistics(data_dir, max_samples=10):
     print("="*80)
     
     avg_fg_ratio = np.mean([s['fg_ratio'] for s in all_stats])
-    avg_brain_ratio = np.mean([s['brain_ratio'] for s in all_stats])
-    avg_tumor_in_brain = np.mean([s.get('tumor_ratio_in_brain', 0) for s in all_stats])
     
     print(f"평균 포그라운드 비율 (전체 볼륨 대비): {avg_fg_ratio:.2f}%")
-    print(f"평균 뇌 영역 비율 (전체 볼륨 대비): {avg_brain_ratio:.2f}%")
-    print(f"평균 종양 비율 (뇌 영역 대비): {avg_tumor_in_brain:.2f}%")
     
     # 클래스별 평균
     print("\n클래스별 평균:")
@@ -143,15 +122,12 @@ def check_label_statistics(data_dir, max_samples=10):
     print(f"포그라운드 비율 범위: {min_fg:.2f}% ~ {max_fg:.2f}%")
     
     if avg_fg_ratio < 1.0:
-        print(f"\n⚠️  경고: 평균 포그라운드 비율이 매우 낮습니다 ({avg_fg_ratio:.2f}%)")
+        print(f"\n⚠️  참고: 평균 포그라운드 비율이 매우 낮습니다 ({avg_fg_ratio:.2f}%)")
         print("   가능한 원인:")
         print("   1. 전체 볼륨(240x240x155)에 배경이 대부분 포함됨")
         print("   2. 뇌 조직 자체가 볼륨의 일부분만 차지함")
         print("   3. 정상적인 현상일 수 있음 (BraTS 볼륨은 뇌 전체가 아닌 ROI 포함)")
-    
-    if avg_tumor_in_brain > 0 and avg_tumor_in_brain < 10:
-        print(f"\n✅ 뇌 영역 대비 종양 비율: {avg_tumor_in_brain:.2f}%")
-        print("   이것이 더 의미 있는 지표일 수 있습니다.")
+        print("   4. BraTS 라벨에는 정상 뇌 조직이 라벨링되지 않아 포그라운드 비율이 낮음")
 
 
 def main():
