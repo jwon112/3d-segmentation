@@ -40,7 +40,7 @@ def set_seed(seed=42):
     torch.backends.cudnn.benchmark = False
 
 
-def test_single_sample_pipeline(data_dir=None, model_name='mobile_unetr_3d', norm='bn'):
+def test_single_sample_pipeline(data_dir=None, model_name='mobile_unetr_3d', norm='bn', max_samples=3):
     """단일 샘플로 전체 파이프라인 테스트"""
     print(f"\n{'='*60}")
     print("단일 샘플 파이프라인 테스트")
@@ -54,7 +54,7 @@ def test_single_sample_pipeline(data_dir=None, model_name='mobile_unetr_3d', nor
     if data_dir is None:
         data_dir = os.environ.get('BRATS_DATA_DIR', '/home/work/3D_/BT/BRATS2021')
     train_loader, val_loader, test_loader, train_sampler, _, _ = get_data_loaders(
-        data_dir, batch_size=1, num_workers=0, max_samples=3, dim='3d'
+        data_dir, batch_size=1, num_workers=0, max_samples=max_samples, dim='3d'
     )
     
     print(f"학습 배치 수: {len(train_loader)}")
@@ -316,7 +316,7 @@ def test_single_sample_pipeline(data_dir=None, model_name='mobile_unetr_3d', nor
     return True
 
 
-def test_full_training_loop(data_dir=None, model_name='mobile_unetr_3d', sw_overlap=0.1, lr=0.001, use_nnunet_loss=True, norm='bn'):
+def test_full_training_loop(data_dir=None, model_name='mobile_unetr_3d', sw_overlap=0.1, lr=0.001, use_nnunet_loss=True, norm='bn', epochs=1, max_samples=5):
     """전체 학습 루프 테스트 (1 epoch만)"""
     print(f"\n{'='*60}")
     print("전체 학습 루프 테스트 (1 Epoch)")
@@ -329,7 +329,7 @@ def test_full_training_loop(data_dir=None, model_name='mobile_unetr_3d', sw_over
     if data_dir is None:
         data_dir = os.environ.get('BRATS_DATA_DIR', '/home/work/3D_/BT/BRATS2021')
     train_loader, val_loader, test_loader, train_sampler, _, _ = get_data_loaders(
-        data_dir, batch_size=1, num_workers=0, max_samples=5, dim='3d'
+        data_dir, batch_size=1, num_workers=0, max_samples=max_samples, dim='3d'
     )
     
     # 모델 준비
@@ -344,7 +344,7 @@ def test_full_training_loop(data_dir=None, model_name='mobile_unetr_3d', sw_over
     try:
         train_losses, val_dices, epoch_results, best_epoch, best_val_dice = train_model(
             model, train_loader, val_loader, test_loader,
-            epochs=1, device=device, model_name=model_name, seed=42,
+            epochs=epochs, device=device, model_name=model_name, seed=42,
             train_sampler=train_sampler, rank=0,
             sw_patch_size=(128, 128, 128), sw_overlap=sw_overlap, dim='3d', lr=lr, use_nnunet_loss=use_nnunet_loss
         )
@@ -460,6 +460,10 @@ def main():
                         help='nnU-Net 스타일 loss 비활성화 플래그 (둘 다 미지정 시 기본 사용)')
     parser.add_argument('--norm', type=str, default='bn', choices=['bn', 'in', 'gn'],
                         help='정규화 레이어 선택: bn(BatchNorm), in(InstanceNorm), gn(GroupNorm)')
+    parser.add_argument('--epochs', type=int, default=1,
+                        help='전체 학습 루프 에포크 수 (기본값: 1)')
+    parser.add_argument('--max_samples', type=int, default=5,
+                        help='작은 셋업에서 사용할 최대 샘플 수 (Train/Val/Test 공통, 기본값: 5)')
     args = parser.parse_args()
     
     print("="*60)
@@ -471,7 +475,7 @@ def main():
     # 1. 단일 샘플 파이프라인 테스트
     print("\n[1단계] 단일 샘플 파이프라인 테스트")
     try:
-        test_single_sample_pipeline(args.data_dir, model_name=args.model_name, norm=args.norm)
+        test_single_sample_pipeline(args.data_dir, model_name=args.model_name, norm=args.norm, max_samples=min(3, args.max_samples))
     except Exception as e:
         print(f"❌ 단일 샘플 파이프라인 테스트 실패: {e}")
         import traceback
@@ -495,7 +499,7 @@ def main():
             use_nnunet_loss = False
         if args.use_nnunet_loss:
             use_nnunet_loss = True
-        test_full_training_loop(args.data_dir, model_name=args.model_name, sw_overlap=args.sw_overlap, lr=args.lr, use_nnunet_loss=use_nnunet_loss, norm=args.norm)
+        test_full_training_loop(args.data_dir, model_name=args.model_name, sw_overlap=args.sw_overlap, lr=args.lr, use_nnunet_loss=use_nnunet_loss, norm=args.norm, epochs=args.epochs, max_samples=args.max_samples)
     except Exception as e:
         print(f"⚠️  전체 학습 루프 테스트 실패: {e}")
         import traceback
