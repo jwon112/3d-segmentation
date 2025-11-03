@@ -185,7 +185,7 @@ def calculate_flops(model, input_size=(1, 4, 64, 64, 64)):
         print(f"Error calculating FLOPs: {e}")
         return 0
 
-def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, use_pretrained=False):
+def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, use_pretrained=False, norm: str = 'bn'):
     """모델 생성 함수
     
     Args:
@@ -201,7 +201,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         if dim == '2d':
             # 2D 데이터는 depth 차원 추가가 필요
             pass
-        return UNet3D_Simplified(n_channels=n_channels, n_classes=n_classes)
+        return UNet3D_Simplified(n_channels=n_channels, n_classes=n_classes, norm=norm)
     elif model_name == 'unetr':
         # dim에 따라 img_size 설정
         if dim == '2d':

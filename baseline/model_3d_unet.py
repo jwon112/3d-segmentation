@@ -2,18 +2,30 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+def _make_norm3d(norm: str, num_features: int) -> nn.Module:
+    norm = (norm or 'bn').lower()
+    if norm in ('in', 'instancenorm', 'instance'):
+        return nn.InstanceNorm3d(num_features, affine=True, track_running_stats=False)
+    if norm in ('gn', 'groupnorm', 'group'):
+        # 기본 그룹 수 8 (채널 수가 8의 배수가 아닐 경우 4로 폴백)
+        num_groups = 8 if num_features % 8 == 0 else (4 if num_features % 4 == 0 else 1)
+        return nn.GroupNorm(num_groups=num_groups, num_channels=num_features)
+    # 기본값: BatchNorm3d
+    return nn.BatchNorm3d(num_features)
+
+
 class DoubleConv3D(nn.Module):
     """3D Double Convolution 블록"""
-    def __init__(self, in_channels, out_channels, mid_channels=None):
+    def __init__(self, in_channels, out_channels, mid_channels=None, norm: str = 'bn'):
         super().__init__()
         if not mid_channels:
             mid_channels = out_channels
         self.double_conv = nn.Sequential(
             nn.Conv3d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm3d(mid_channels),
+            _make_norm3d(norm, mid_channels),
             nn.ReLU(inplace=True),
             nn.Conv3d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm3d(out_channels),
+            _make_norm3d(norm, out_channels),
             nn.ReLU(inplace=True)
         )
 
@@ -22,11 +34,11 @@ class DoubleConv3D(nn.Module):
 
 class Down3D(nn.Module):
     """3D Downsampling 블록"""
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, norm: str = 'bn'):
         super().__init__()
         self.maxpool_conv = nn.Sequential(
             nn.MaxPool3d(2),
-            DoubleConv3D(in_channels, out_channels)
+            DoubleConv3D(in_channels, out_channels, norm=norm)
         )
 
     def forward(self, x):
@@ -34,19 +46,19 @@ class Down3D(nn.Module):
 
 class Up3D(nn.Module):
     """3D Upsampling 블록"""
-    def __init__(self, in_channels, out_channels, bilinear=True):
+    def __init__(self, in_channels, out_channels, bilinear=True, norm: str = 'bn'):
         super().__init__()
         
         if bilinear:
             self.up = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
-            self.conv = DoubleConv3D(in_channels, out_channels, in_channels // 2)
+            self.conv = DoubleConv3D(in_channels, out_channels, in_channels // 2, norm=norm)
         else:
             self.up = nn.ConvTranspose3d(in_channels, in_channels // 2, kernel_size=2, stride=2)
             # bilinear=False일 때는 upsampling 후 skip connection과 concat하므로
             # in_channels = (in_channels // 2) + skip_channels
             # 여기서는 skip_channels = in_channels // 2이므로
             # total_channels = (in_channels // 2) + (in_channels // 2) = in_channels
-            self.conv = DoubleConv3D(in_channels, out_channels)
+            self.conv = DoubleConv3D(in_channels, out_channels, norm=norm)
 
     def forward(self, x1, x2):
         x1 = self.up(x1)
@@ -109,25 +121,26 @@ class UNet3D(nn.Module):
 
 class UNet3D_Simplified(nn.Module):
     """간소화된 3D U-Net (메모리 효율성을 위해)"""
-    def __init__(self, n_channels=4, n_classes=4):
+    def __init__(self, n_channels=4, n_classes=4, norm: str = 'bn'):
         super(UNet3D_Simplified, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
+        self.norm = (norm or 'bn')
 
         # Encoder
-        self.enc1 = DoubleConv3D(n_channels, 32)
-        self.enc2 = Down3D(32, 64)
-        self.enc3 = Down3D(64, 128)
-        self.enc4 = Down3D(128, 256)
+        self.enc1 = DoubleConv3D(n_channels, 32, norm=self.norm)
+        self.enc2 = Down3D(32, 64, norm=self.norm)
+        self.enc3 = Down3D(64, 128, norm=self.norm)
+        self.enc4 = Down3D(128, 256, norm=self.norm)
         
         # Bottleneck
-        self.bottleneck = DoubleConv3D(256, 512)
+        self.bottleneck = DoubleConv3D(256, 512, norm=self.norm)
         
         # Decoder - bilinear=False로 설정하여 채널 수 문제 해결
-        self.dec4 = Up3D(512, 256, bilinear=False)
-        self.dec3 = Up3D(256, 128, bilinear=False)
-        self.dec2 = Up3D(128, 64, bilinear=False)
-        self.dec1 = Up3D(64, 32, bilinear=False)
+        self.dec4 = Up3D(512, 256, bilinear=False, norm=self.norm)
+        self.dec3 = Up3D(256, 128, bilinear=False, norm=self.norm)
+        self.dec2 = Up3D(128, 64, bilinear=False, norm=self.norm)
+        self.dec1 = Up3D(64, 32, bilinear=False, norm=self.norm)
         
         # Output
         self.outc = OutConv3D(32, n_classes)

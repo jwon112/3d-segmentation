@@ -40,7 +40,7 @@ def set_seed(seed=42):
     torch.backends.cudnn.benchmark = False
 
 
-def test_single_sample_pipeline(data_dir=None, model_name='mobile_unetr_3d'):
+def test_single_sample_pipeline(data_dir=None, model_name='mobile_unetr_3d', norm='bn'):
     """단일 샘플로 전체 파이프라인 테스트"""
     print(f"\n{'='*60}")
     print("단일 샘플 파이프라인 테스트")
@@ -62,7 +62,7 @@ def test_single_sample_pipeline(data_dir=None, model_name='mobile_unetr_3d'):
     print(f"테스트 배치 수: {len(test_loader)}")
     
     # 모델 준비
-    model = get_model(model_name, n_channels=2, n_classes=4, dim='3d', use_pretrained=False)
+    model = get_model(model_name, n_channels=2, n_classes=4, dim='3d', use_pretrained=False, norm=norm)
     model = model.to(device)
     
     print(f"\n모델: {model_name}")
@@ -316,7 +316,7 @@ def test_single_sample_pipeline(data_dir=None, model_name='mobile_unetr_3d'):
     return True
 
 
-def test_full_training_loop(data_dir=None, model_name='mobile_unetr_3d', sw_overlap=0.1, lr=0.001, use_nnunet_loss=True):
+def test_full_training_loop(data_dir=None, model_name='mobile_unetr_3d', sw_overlap=0.1, lr=0.001, use_nnunet_loss=True, norm='bn'):
     """전체 학습 루프 테스트 (1 epoch만)"""
     print(f"\n{'='*60}")
     print("전체 학습 루프 테스트 (1 Epoch)")
@@ -333,7 +333,7 @@ def test_full_training_loop(data_dir=None, model_name='mobile_unetr_3d', sw_over
     )
     
     # 모델 준비
-    model = get_model(model_name, n_channels=2, n_classes=4, dim='3d', use_pretrained=False)
+    model = get_model(model_name, n_channels=2, n_classes=4, dim='3d', use_pretrained=False, norm=norm)
     model = model.to(device)
     
     print(f"모델: {model_name}")
@@ -458,6 +458,8 @@ def main():
                         help='nnU-Net 스타일 loss 사용 (기본 미사용, 지정 시 사용)')
     parser.add_argument('--no_nnunet_loss', action='store_true',
                         help='nnU-Net 스타일 loss 비활성화 플래그 (둘 다 미지정 시 기본 사용)')
+    parser.add_argument('--norm', type=str, default='bn', choices=['bn', 'in', 'gn'],
+                        help='정규화 레이어 선택: bn(BatchNorm), in(InstanceNorm), gn(GroupNorm)')
     args = parser.parse_args()
     
     print("="*60)
@@ -469,7 +471,7 @@ def main():
     # 1. 단일 샘플 파이프라인 테스트
     print("\n[1단계] 단일 샘플 파이프라인 테스트")
     try:
-        test_single_sample_pipeline(args.data_dir, model_name=args.model_name)
+        test_single_sample_pipeline(args.data_dir, model_name=args.model_name, norm=args.norm)
     except Exception as e:
         print(f"❌ 단일 샘플 파이프라인 테스트 실패: {e}")
         import traceback
@@ -493,7 +495,7 @@ def main():
             use_nnunet_loss = False
         if args.use_nnunet_loss:
             use_nnunet_loss = True
-        test_full_training_loop(args.data_dir, model_name=args.model_name, sw_overlap=args.sw_overlap, lr=args.lr, use_nnunet_loss=use_nnunet_loss)
+        test_full_training_loop(args.data_dir, model_name=args.model_name, sw_overlap=args.sw_overlap, lr=args.lr, use_nnunet_loss=use_nnunet_loss, norm=args.norm)
     except Exception as e:
         print(f"⚠️  전체 학습 루프 테스트 실패: {e}")
         import traceback
