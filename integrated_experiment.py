@@ -300,6 +300,28 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     os.makedirs("baseline_results", exist_ok=True)
     ckpt_path = f"baseline_results/{model_name}_seed_{seed}_best.pth"
     
+    # BatchNorm Warmup: 초기 running stats를 실제 데이터 분포로 업데이트
+    # 검증 모드에서 잘못된 running stats 사용으로 인한 문제 해결
+    if is_main_process(rank):
+        print("\n[Warmup] Initializing BatchNorm running statistics...")
+    model.train()  # train 모드로 설정 (running stats 업데이트됨)
+    warmup_batches = 20
+    with torch.no_grad():  # gradient 계산 불필요, 메모리 절약
+        for i, (inputs, labels) in enumerate(train_loader):
+            if i >= warmup_batches:
+                break
+            inputs = inputs.to(device)
+            
+            # 모델 입력 shape 조정 (일부 모델은 depth 차원 추가 필요)
+            if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
+                inputs = inputs.unsqueeze(2)
+            
+            _ = model(inputs)  # forward만 수행하여 running stats 업데이트
+            # 각 forward마다: running_mean = 0.9 * running_mean + 0.1 * batch_mean
+            # 점진적으로 실제 데이터 분포로 수렴
+    if is_main_process(rank):
+        print(f"[Warmup] Processed {warmup_batches} batches. Running stats initialized.\n")
+    
     for epoch in range(epochs):
         # Training
         if train_sampler is not None:

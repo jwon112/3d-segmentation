@@ -309,7 +309,7 @@ class MV3DBottleneck(nn.Module):
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
     
     def forward(self, x):
-        """x: (B, C, D, H, W) -> (B, n_patches, dim)"""
+        """x: (B, C, D, H, W) -> (B, n_patches, dim), spatial_shape: (D, H, W)"""
         B, C, D, H, W = x.shape
         
         # Flatten spatial dimensions
@@ -318,7 +318,8 @@ class MV3DBottleneck(nn.Module):
         
         x = self.transformer(x)
         
-        return x
+        # Return both the transformed features and spatial shape for reshaping
+        return x, (D, H, W)
 
 
 class MV3DDecoders(nn.Module):
@@ -346,13 +347,18 @@ class MV3DDecoders(nn.Module):
         self.final = nn.Conv3d(in_c, num_classes, kernel_size=1, stride=1, padding=0, bias=True)
     
     def forward(self, x, skip_connections):
-        """x: (B, D*H*W, dim), skip_connections: list of (B, C, D, H, W)"""
-        B = x.shape[0]
+        """x: (B, D*H*W, dim) or tuple of (x, spatial_shape), skip_connections: list of (B, C, D, H, W)"""
+        # Handle both old interface (just x) and new interface (x, spatial_shape)
+        if isinstance(x, tuple):
+            x, spatial_shape = x
+            D, H, W = spatial_shape
+        else:
+            # Fallback to using last skip connection's spatial dimensions
+            last_skip = skip_connections[-1]
+            _, _, D, H, W = last_skip.shape
         
-        # Reshape transformer output to 3D
-        # Assuming we need to match the last skip connection
-        last_skip = skip_connections[-1]
-        B, C, D, H, W = last_skip.shape
+        B = x.shape[0]
+        C = x.shape[-1]  # dim from bottleneck output
         
         # x is (B, D*H*W, C), need to reshape to (B, C, D, H, W)
         # First permute to (B, C, D*H*W), then reshape to (B, C, D, H, W)
