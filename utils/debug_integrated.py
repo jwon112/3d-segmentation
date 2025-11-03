@@ -16,6 +16,8 @@ import numpy as np
 from pathlib import Path
 import random
 import argparse
+import os
+import torch.multiprocessing as mp
 
 # 프로젝트 루트를 경로에 추가
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -464,6 +466,8 @@ def main():
                         help='전체 학습 루프 에포크 수 (기본값: 1)')
     parser.add_argument('--max_samples', type=int, default=5,
                         help='작은 셋업에서 사용할 최대 샘플 수 (Train/Val/Test 공통, 기본값: 5)')
+    parser.add_argument('--sharing_strategy', type=str, default='file_system', choices=['file_system', 'file_descriptor'],
+                        help='PyTorch tensor sharing strategy for DataLoader workers. file_system avoids /dev/shm pressure.')
     args = parser.parse_args()
     
     print("="*60)
@@ -471,6 +475,14 @@ def main():
     print("="*60)
     print(f"데이터 디렉토리: {args.data_dir}")
     print(f"모델: {args.model_name}")
+    # Configure PyTorch sharing strategy early
+    try:
+        if args.sharing_strategy:
+            os.environ.setdefault('PYTORCH_SHARING_STRATEGY', args.sharing_strategy)
+            mp.set_sharing_strategy(args.sharing_strategy)
+            print(f"Sharing strategy: {mp.get_sharing_strategy()}")
+    except Exception as e:
+        print(f"Warning: Failed to set sharing strategy: {e}")
     
     # 1. 단일 샘플 파이프라인 테스트
     print("\n[1단계] 단일 샘플 파이프라인 테스트")

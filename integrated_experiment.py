@@ -29,6 +29,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import argparse
+import os
+import torch.multiprocessing as mp
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -561,7 +563,7 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
         'recall': avg_recall
     }
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2):
     """3D Segmentation 통합 실험 실행
     
     Args:
@@ -642,7 +644,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
             train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
                 data_dir=data_path,
                 batch_size=batch_size,
-                num_workers=4,  # /dev/shm 2GB에서 안전하게 동작
+                num_workers=num_workers,  # /dev/shm 2GB 환경에서 기본 2 권장
                 max_samples=None,  # 전체 데이터 사용
                 dim=dim,  # 2D 또는 3D
                 distributed=distributed,
@@ -854,6 +856,10 @@ if __name__ == "__main__":
                        help='Use nnU-Net style loss (Soft Dice with Squared Pred, Dice 70%% + CE 30%%) (default: True)')
     parser.add_argument('--use_standard_loss', action='store_true', default=False,
                        help='Use standard combined loss (Dice 50%% + CE 50%%) instead of nnU-Net style')
+    parser.add_argument('--num_workers', type=int, default=4,
+                       help='Number of DataLoader workers for training (val/test use 0 by default). Default: 2 for 2GB /dev/shm')
+    parser.add_argument('--sharing_strategy', type=str, default='file_system', choices=['file_system', 'file_descriptor'],
+                       help='PyTorch tensor sharing strategy for DataLoader workers. file_system avoids /dev/shm pressure.')
     
     args = parser.parse_args()
     
@@ -871,9 +877,18 @@ if __name__ == "__main__":
     print(f"Loss function: {'nnU-Net style (Soft Dice Squared + Dice 70%%/CE 30%%)' if use_nnunet_loss else 'Standard (Dice 50%%/CE 50%%)'}")
     print(f"Results will be saved in: baseline_results/ folder")
     
+    # Configure PyTorch sharing strategy to avoid /dev/shm pressure if requested
+    try:
+        if args.sharing_strategy:
+            os.environ.setdefault('PYTORCH_SHARING_STRATEGY', args.sharing_strategy)
+            mp.set_sharing_strategy(args.sharing_strategy)
+            print(f"Using PyTorch sharing strategy: {mp.get_sharing_strategy()}")
+    except Exception as _e:
+        print(f"Warning: Failed to set sharing strategy: {_e}")
+
     try:
         results_dir, results_df = run_integrated_experiment(
-            args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim, args.use_pretrained, use_nnunet_loss
+            args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim, args.use_pretrained, use_nnunet_loss, args.num_workers
         )
         
         if results_dir and results_df is not None:
