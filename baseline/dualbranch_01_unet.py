@@ -3,30 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # Reuse common UNet building blocks
-from .model_3d_unet import Down3D, Up3D, OutConv3D, _make_norm3d
-
-
-class StemDoubleConv3D(nn.Module):
-    """Double Conv block with grouped convolutions for modality-separated stem.
-
-    This keeps modalities independent by using groups=2 when in_channels==2.
-    """
-    def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn', groups: int = 1):
-        super().__init__()
-        if out_channels % groups != 0:
-            raise ValueError(f"out_channels ({out_channels}) must be divisible by groups ({groups})")
-        mid_channels = out_channels
-        self.block = nn.Sequential(
-            nn.Conv3d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False, groups=groups),
-            _make_norm3d(norm, mid_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False, groups=groups),
-            _make_norm3d(norm, out_channels),
-            nn.ReLU(inplace=True),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.block(x)
+from .model_3d_unet import DoubleConv3D, Down3D, Up3D, OutConv3D, _make_norm3d
 
 
 class DualBranchUNet3D(nn.Module):
@@ -46,8 +23,9 @@ class DualBranchUNet3D(nn.Module):
         self.norm = (norm or 'bn')
         self.bilinear = bilinear
 
-        # Stage 1: grouped stem (keeps two modalities independent)
-        self.stem = StemDoubleConv3D(in_channels=2, out_channels=64, norm=self.norm, groups=2)
+        # Stage 1: modality-specific stems (split channels, each 1->32), then concat -> 64ch
+        self.stem_flair = DoubleConv3D(1, 32, norm=self.norm)
+        self.stem_t1ce = DoubleConv3D(1, 32, norm=self.norm)
 
         # Stage 2: modality-specific symmetrical branches
         # Split 64 -> (32, 32) and process separately to 64 each, concat => 128
@@ -68,11 +46,12 @@ class DualBranchUNet3D(nn.Module):
         self.outc = OutConv3D(64, n_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Stage 1 (stem)
-        x1 = self.stem(x)  # (B,64,...)
+        # Stage 1 (modality-specific stems)
+        x1_flair = self.stem_flair(x[:, :1])
+        x1_t1ce  = self.stem_t1ce(x[:, 1:2])
+        x1 = torch.cat([x1_flair, x1_t1ce], dim=1)  # (B,64,...)
 
-        # Stage 2 branches: split into two modality-specific feature maps (32 each)
-        x1_flair, x1_t1ce = torch.split(x1, x1.size(1) // 2, dim=1)
+        # Stage 2 branches: process each modality branch independently then fuse
         b_flair = self.branch_flair(x1_flair)  # (B,64,.../2)
         b_t1ce = self.branch_t1ce(x1_t1ce)    # (B,64,.../2)
         x2 = torch.cat([b_flair, b_t1ce], dim=1)  # (B,128,.../2)
