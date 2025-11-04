@@ -3,8 +3,8 @@
 """
 
 from .model_3d_unet import (
-    UNet3D, 
-    UNet3D_Simplified, 
+    UNet3D_Medium, 
+    UNet3D_Small, 
     DoubleConv3D, 
     Down3D, 
     Up3D, 
@@ -32,8 +32,8 @@ from .mobileunetr import MobileUNETR
 
 __all__ = [
     # U-Net models
-    'UNet3D',
-    'UNet3D_Simplified',
+    'UNet3D_Medium',
+    'UNet3D_Small',
     'DoubleConv3D',
     'Down3D', 
     'Up3D',

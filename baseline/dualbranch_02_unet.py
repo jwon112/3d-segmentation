@@ -25,18 +25,18 @@ class Down3DStride(nn.Module):
         return self.block(x)
 
 
-class DualBranchUNet3D_Stride(nn.Module):
-    """Dual-branch 3D U-Net (v0.2 - stride downsampling)
+class DualBranchUNet3D_Stride_Small(nn.Module):
+    """Dual-branch 3D U-Net (v0.2 - stride downsampling) - Small channel version
 
     Differences from dualbranch_01_unet:
     - Replace MaxPool-based Down3D with stride-2 convolutional downsampling.
 
-    Width matches UNet3D_Simplified for fair comparison.
+    Width matches UNet3D_Small for fair comparison.
     """
 
     def __init__(self, n_channels: int = 2, n_classes: int = 4, norm: str = 'bn', bilinear: bool = False):
         super().__init__()
-        assert n_channels == 2, "DualBranchUNet3D_Stride expects exactly 2 input channels (FLAIR, t1ce)."
+        assert n_channels == 2, "DualBranchUNet3D_Stride_Small expects exactly 2 input channels (FLAIR, t1ce)."
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.norm = (norm or 'bn')
@@ -88,9 +88,72 @@ class DualBranchUNet3D_Stride(nn.Module):
         return logits
 
 
+class DualBranchUNet3D_Stride_Medium(nn.Module):
+    """Dual-branch 3D U-Net (v0.2 - stride downsampling) - Medium channel version
+
+    Differences from dualbranch_01_unet:
+    - Replace MaxPool-based Down3D with stride-2 convolutional downsampling.
+
+    Width matches UNet3D_Medium (64, 128, 256, 512, 1024) for fair comparison.
+    """
+
+    def __init__(self, n_channels: int = 2, n_classes: int = 4, norm: str = 'bn', bilinear: bool = False):
+        super().__init__()
+        assert n_channels == 2, "DualBranchUNet3D_Stride_Medium expects exactly 2 input channels (FLAIR, t1ce)."
+        self.n_channels = n_channels
+        self.n_classes = n_classes
+        self.norm = (norm or 'bn')
+        self.bilinear = bilinear
+
+        # Stage 1: modality-specific stems (1->32 each), then concat -> 64ch
+        self.stem_flair = DoubleConv3D(1, 32, norm=self.norm)
+        self.stem_t1ce = DoubleConv3D(1, 32, norm=self.norm)
+
+        # Stage 2: modality-specific branches (32->64 each), then concat -> 128ch
+        self.branch_flair = Down3DStride(32, 64, norm=self.norm)
+        self.branch_t1ce = Down3DStride(32, 64, norm=self.norm)
+
+        # Stages 3+: encoder (128->256->512->1024)
+        self.down2 = Down3DStride(128, 256, norm=self.norm)
+        self.down3 = Down3DStride(256, 512, norm=self.norm)
+        factor = 2 if self.bilinear else 1
+        self.down4 = Down3DStride(512, 1024 // factor, norm=self.norm)
+
+        # Decoder
+        self.up1 = Up3D(1024, 512 // factor, self.bilinear, norm=self.norm)
+        self.up2 = Up3D(512, 256 // factor, self.bilinear, norm=self.norm)
+        self.up3 = Up3D(256, 128 // factor, self.bilinear, norm=self.norm)
+        self.up4 = Up3D(128, 64, self.bilinear, norm=self.norm)
+        self.outc = OutConv3D(64, n_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Stage 1
+        x1_flair = self.stem_flair(x[:, :1])
+        x1_t1ce  = self.stem_t1ce(x[:, 1:2])
+        x1 = torch.cat([x1_flair, x1_t1ce], dim=1)  # (B,64,...)
+
+        # Stage 2 branches
+        b_flair = self.branch_flair(x1_flair)  # (B,64,.../2)
+        b_t1ce = self.branch_t1ce(x1_t1ce)    # (B,64,.../2)
+        x2 = torch.cat([b_flair, b_t1ce], dim=1)  # (B,128,.../2)
+
+        # Encoder (UNet3D_Medium: 128->256->512->1024)
+        x3 = self.down2(x2)   # 256
+        x4 = self.down3(x3)   # 512
+        x5 = self.down4(x4)   # 1024
+
+        # Decoder
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x = self.up4(x, x1)
+        logits = self.outc(x)
+        return logits
+
+
 if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = DualBranchUNet3D_Stride(n_channels=2, n_classes=4).to(device)
+    model = DualBranchUNet3D_Stride_Small(n_channels=2, n_classes=4).to(device)
     inp = torch.randn(1, 2, 64, 64, 64).to(device)
     with torch.no_grad():
         out = model(inp)

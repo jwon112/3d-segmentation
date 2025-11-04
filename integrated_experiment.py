@@ -69,7 +69,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import baseline models
 from baseline import (
-    UNet3D_Simplified, 
     UNETR_Simplified, 
     SwinUNETR_Simplified,
     MobileUNETR,
@@ -199,15 +198,26 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         use_pretrained: pretrained 가중치 사용 여부 (MobileUNETR의 경우)
     """
     # 2D 입력인 경우 3D로 확장 (unsqueeze depth dimension)
-    if model_name == 'unet3d':
+    if model_name == 'unet3d_s':
         if dim == '2d':
             # 2D 데이터는 depth 차원 추가가 필요
             pass
-        return UNet3D_Simplified(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'unet3d_stride':
-        # UNet3D variant with stride-2 conv downsampling
-        from baseline.model_3d_unet_stride import UNet3D_Simplified_Stride
-        return UNet3D_Simplified_Stride(n_channels=n_channels, n_classes=n_classes, norm=norm)
+        from baseline.model_3d_unet import UNet3D_Small
+        return UNet3D_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'unet3d_m':
+        if dim == '2d':
+            # 2D 데이터는 depth 차원 추가가 필요
+            pass
+        from baseline.model_3d_unet import UNet3D_Medium
+        return UNet3D_Medium(n_channels=n_channels, n_classes=n_classes, bilinear=False)
+    elif model_name == 'unet3d_stride_s':
+        # UNet3D variant with stride-2 conv downsampling (Small channels)
+        from baseline.model_3d_unet_stride import UNet3D_Stride_Small
+        return UNet3D_Stride_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'unet3d_stride_m':
+        # UNet3D variant with stride-2 conv downsampling (Medium channels)
+        from baseline.model_3d_unet_stride import UNet3D_Stride_Medium
+        return UNet3D_Stride_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False)
     elif model_name == 'unetr':
         # dim에 따라 img_size 설정
         if dim == '2d':
@@ -277,14 +287,22 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             in_channels=n_channels,
             out_channels=n_classes
         )
-    elif model_name == 'dualbranch_01_unet':
-        # Dual-branch 3D UNet (v0.1). Expect exactly 2 input channels (FLAIR, t1ce)
-        from baseline.dualbranch_01_unet import DualBranchUNet3D
-        return DualBranchUNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_02_unet':
-        # Dual-branch 3D UNet (v0.2) - stride-2 convolutional downsampling
-        from baseline.dualbranch_02_unet import DualBranchUNet3D_Stride
-        return DualBranchUNet3D_Stride(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_01_unet_s':
+        # Dual-branch 3D UNet (v0.1) - Small channels. Expect exactly 2 input channels (FLAIR, t1ce)
+        from baseline.dualbranch_01_unet import DualBranchUNet3D_Small
+        return DualBranchUNet3D_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_01_unet_m':
+        # Dual-branch 3D UNet (v0.1) - Medium channels. Expect exactly 2 input channels (FLAIR, t1ce)
+        from baseline.dualbranch_01_unet import DualBranchUNet3D_Medium
+        return DualBranchUNet3D_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_02_unet_s':
+        # Dual-branch 3D UNet (v0.2) - stride-2 convolutional downsampling (Small channels)
+        from baseline.dualbranch_02_unet import DualBranchUNet3D_Stride_Small
+        return DualBranchUNet3D_Stride_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_02_unet_m':
+        # Dual-branch 3D UNet (v0.2) - stride-2 convolutional downsampling (Medium channels)
+        from baseline.dualbranch_02_unet import DualBranchUNet3D_Stride_Medium
+        return DualBranchUNet3D_Stride_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -604,9 +622,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     
     # 사용 가능한 모델들
     if models is None:
-        available_models = ['unet3d', 'unet3d_stride', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet', 'dualbranch_02_unet']
+        available_models = ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m']
     else:
-        available_models = [m for m in models if m in ['unet3d', 'unet3d_stride', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet', 'dualbranch_02_unet']]
+        available_models = [m for m in models if m in ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m']]
     
     # 결과 저장용
     all_results = []
@@ -868,7 +886,7 @@ if __name__ == "__main__":
     parser.add_argument('--seeds', nargs='+', type=int, default=[24], 
                        help='Random seeds for experiments')
     parser.add_argument('--models', nargs='+', type=str, default=None,
-                       help='Specific models to train (default: unet3d,unet3d_stride,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_01_unet,dualbranch_02_unet)')
+                       help='Specific models to train (default: unet3d_s,unet3d_m,unet3d_stride_s,unet3d_stride_m,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_01_unet_s,dualbranch_01_unet_m,dualbranch_02_unet_s,dualbranch_02_unet_m)')
     parser.add_argument('--datasets', nargs='+', type=str, default=None,
                        help='Datasets to use: brats2021, auto (default: brats2021)')
     parser.add_argument('--dim', type=str, default='2d', choices=['2d', '3d'],
@@ -896,7 +914,7 @@ if __name__ == "__main__":
     print(f"Epochs: {args.epochs}")
     print(f"Batch size: {args.batch_size}")
     print(f"Seeds: {args.seeds}")
-    print(f"Models: {args.models if args.models else 'unet3d,unet3d_stride,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_01_unet,dualbranch_02_unet'}")
+    print(f"Models: {args.models if args.models else 'unet3d_s,unet3d_m,unet3d_stride_s,unet3d_stride_m,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_01_unet_s,dualbranch_01_unet_m,dualbranch_02_unet_s,dualbranch_02_unet_m'}")
     print(f"Datasets: {args.datasets if args.datasets else 'brats2021 (auto-detected)'}")
     print(f"Dataset version: {args.dataset_version}")
     print(f"Dimension: {args.dim}")
