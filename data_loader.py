@@ -5,10 +5,11 @@ BraTS 데이터 로더
 """
 
 import os
+import random
 import torch
 import torch.nn.functional as F
 import numpy as np
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader, random_split, Subset
 from torch.utils.data.distributed import DistributedSampler
 import nibabel as nib
 from scipy import ndimage
@@ -40,10 +41,11 @@ def _normalize_volume_np(vol):
 class BratsDataset3D(Dataset):
     """3D BraTS 데이터셋 (Depth, Height, Width)"""
     
-    def __init__(self, data_dir, split='train', max_samples=None):
+    def __init__(self, data_dir, split='train', max_samples=None, dataset_version='brats2021'):
         self.data_dir = data_dir
         self.split = split
         self.max_samples = max_samples
+        self.dataset_version = dataset_version
         
         # 데이터 파일 목록 수집
         self.samples = self._load_samples()
@@ -55,22 +57,62 @@ class BratsDataset3D(Dataset):
         """데이터 샘플 목록 로드"""
         samples = []
         
-        # BraTS2021 데이터셋 확인
-        brats2021_dir = os.path.join(self.data_dir, 'BraTS2021_Training_Data')
-        if not os.path.exists(brats2021_dir):
-            raise FileNotFoundError(
-                f"BraTS2021 dataset not found at {brats2021_dir}\n"
-                f"Please ensure the dataset is extracted in the correct directory."
-            )
+        if self.dataset_version == 'brats2021':
+            # BraTS2021 데이터셋 확인
+            # 공통 경로/data_dir에서 BRATS2021/BraTS2021_Training_Data 경로 구성
+            brats2021_dir = os.path.join(self.data_dir, 'BRATS2021', 'BraTS2021_Training_Data')
+            if not os.path.exists(brats2021_dir):
+                raise FileNotFoundError(
+                    f"BraTS2021 dataset not found at {brats2021_dir}\n"
+                    f"Please ensure the dataset is extracted in the correct directory."
+                )
+            
+            print(f"Loading BraTS2021 dataset from {brats2021_dir}")
+            for patient_dir in sorted(os.listdir(brats2021_dir)):
+                patient_path = os.path.join(brats2021_dir, patient_dir)
+                if os.path.isdir(patient_path):
+                    samples.append(patient_path)
+            
+            if not samples:
+                raise ValueError(f"No patient data found in {brats2021_dir}")
         
-        print(f"Loading BraTS2021 dataset from {brats2021_dir}")
-        for patient_dir in sorted(os.listdir(brats2021_dir)):
-            patient_path = os.path.join(brats2021_dir, patient_dir)
-            if os.path.isdir(patient_path):
-                samples.append(patient_path)
-        
-        if not samples:
-            raise ValueError(f"No patient data found in {brats2021_dir}")
+        elif self.dataset_version == 'brats2018':
+            # BraTS2018 데이터셋 확인 (HGG와 LGG 폴더 모두 확인)
+            # 공통 경로/data_dir에서 BRATS2018/MICCAI_BraTS_2018_Data_Training 경로 구성
+            brats2018_dir = os.path.join(self.data_dir, 'BRATS2018', 'MICCAI_BraTS_2018_Data_Training')
+            if not os.path.exists(brats2018_dir):
+                raise FileNotFoundError(
+                    f"BraTS2018 dataset not found at {brats2018_dir}\n"
+                    f"Please ensure the dataset is extracted in the correct directory."
+                )
+            
+            hgg_dir = os.path.join(brats2018_dir, 'HGG')
+            lgg_dir = os.path.join(brats2018_dir, 'LGG')
+            
+            print(f"Loading BraTS2018 dataset from {brats2018_dir}")
+            
+            # HGG 샘플 수집
+            if os.path.exists(hgg_dir):
+                for patient_dir in sorted(os.listdir(hgg_dir)):
+                    patient_path = os.path.join(hgg_dir, patient_dir)
+                    if os.path.isdir(patient_path):
+                        samples.append(patient_path)
+                print(f"  Found {len([s for s in samples if hgg_dir in s])} HGG samples")
+            
+            # LGG 샘플 수집
+            lgg_count = 0
+            if os.path.exists(lgg_dir):
+                for patient_dir in sorted(os.listdir(lgg_dir)):
+                    patient_path = os.path.join(lgg_dir, patient_dir)
+                    if os.path.isdir(patient_path):
+                        samples.append(patient_path)
+                        lgg_count += 1
+                print(f"  Found {lgg_count} LGG samples")
+            
+            if not samples:
+                raise ValueError(f"No patient data found in {brats2018_dir} (checked HGG and LGG folders)")
+        else:
+            raise ValueError(f"Unknown dataset_version: {self.dataset_version}. Must be 'brats2021' or 'brats2018'")
         
         return samples
     
@@ -210,10 +252,11 @@ class BratsPatchDataset3D(Dataset):
 class BratsDataset2D(Dataset):
     """2D BraTS 데이터셋 (Height, Width) - 슬라이스 단위"""
     
-    def __init__(self, data_dir, split='train', max_samples=None):
+    def __init__(self, data_dir, split='train', max_samples=None, dataset_version='brats2021'):
         self.data_dir = data_dir
         self.split = split
         self.max_samples = max_samples
+        self.dataset_version = dataset_version
         
         # 3D 볼륨 샘플 로드
         self.volumes = self._load_samples()
@@ -238,22 +281,62 @@ class BratsDataset2D(Dataset):
         """데이터 샘플 목록 로드 (3D 볼륨)"""
         samples = []
         
-        # BraTS2021 데이터셋 확인
-        brats2021_dir = os.path.join(self.data_dir, 'BraTS2021_Training_Data')
-        if not os.path.exists(brats2021_dir):
-            raise FileNotFoundError(
-                f"BraTS2021 dataset not found at {brats2021_dir}\n"
-                f"Please ensure the dataset is extracted in the correct directory."
-            )
+        if self.dataset_version == 'brats2021':
+            # BraTS2021 데이터셋 확인
+            # 공통 경로/data_dir에서 BRATS2021/BraTS2021_Training_Data 경로 구성
+            brats2021_dir = os.path.join(self.data_dir, 'BRATS2021', 'BraTS2021_Training_Data')
+            if not os.path.exists(brats2021_dir):
+                raise FileNotFoundError(
+                    f"BraTS2021 dataset not found at {brats2021_dir}\n"
+                    f"Please ensure the dataset is extracted in the correct directory."
+                )
+            
+            print(f"Loading BraTS2021 dataset for 2D slices from {brats2021_dir}")
+            for patient_dir in sorted(os.listdir(brats2021_dir)):
+                patient_path = os.path.join(brats2021_dir, patient_dir)
+                if os.path.isdir(patient_path):
+                    samples.append(patient_path)
+            
+            if not samples:
+                raise ValueError(f"No patient data found in {brats2021_dir}")
         
-        print(f"Loading BraTS2021 dataset for 2D slices from {brats2021_dir}")
-        for patient_dir in sorted(os.listdir(brats2021_dir)):
-            patient_path = os.path.join(brats2021_dir, patient_dir)
-            if os.path.isdir(patient_path):
-                samples.append(patient_path)
-        
-        if not samples:
-            raise ValueError(f"No patient data found in {brats2021_dir}")
+        elif self.dataset_version == 'brats2018':
+            # BraTS2018 데이터셋 확인 (HGG와 LGG 폴더 모두 확인)
+            # 공통 경로/data_dir에서 BRATS2018/MICCAI_BraTS_2018_Data_Training 경로 구성
+            brats2018_dir = os.path.join(self.data_dir, 'BRATS2018', 'MICCAI_BraTS_2018_Data_Training')
+            if not os.path.exists(brats2018_dir):
+                raise FileNotFoundError(
+                    f"BraTS2018 dataset not found at {brats2018_dir}\n"
+                    f"Please ensure the dataset is extracted in the correct directory."
+                )
+            
+            hgg_dir = os.path.join(brats2018_dir, 'HGG')
+            lgg_dir = os.path.join(brats2018_dir, 'LGG')
+            
+            print(f"Loading BraTS2018 dataset for 2D slices from {brats2018_dir}")
+            
+            # HGG 샘플 수집
+            if os.path.exists(hgg_dir):
+                for patient_dir in sorted(os.listdir(hgg_dir)):
+                    patient_path = os.path.join(hgg_dir, patient_dir)
+                    if os.path.isdir(patient_path):
+                        samples.append(patient_path)
+                print(f"  Found {len([s for s in samples if hgg_dir in s])} HGG samples")
+            
+            # LGG 샘플 수집
+            lgg_count = 0
+            if os.path.exists(lgg_dir):
+                for patient_dir in sorted(os.listdir(lgg_dir)):
+                    patient_path = os.path.join(lgg_dir, patient_dir)
+                    if os.path.isdir(patient_path):
+                        samples.append(patient_path)
+                        lgg_count += 1
+                print(f"  Found {lgg_count} LGG samples")
+            
+            if not samples:
+                raise ValueError(f"No patient data found in {brats2018_dir} (checked HGG and LGG folders)")
+        else:
+            raise ValueError(f"Unknown dataset_version: {self.dataset_version}. Must be 'brats2021' or 'brats2018'")
         
         return samples
     
@@ -309,7 +392,7 @@ class BratsDataset2D(Dataset):
 
 def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None, 
                      train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, dim='3d',
-                     distributed=False, world_size=None, rank=None):
+                     distributed=False, world_size=None, rank=None, dataset_version='brats2021'):
     """
     데이터 로더 생성
     
@@ -318,13 +401,14 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         batch_size: 배치 크기
         num_workers: 워커 수
         max_samples: 최대 샘플 수 (None이면 전체)
-        train_ratio: 훈련 세트 비율
-        val_ratio: 검증 세트 비율
-        test_ratio: 테스트 세트 비율
+        train_ratio: 훈련 세트 비율 (BRATS2021에서 사용, BRATS2018은 7:1.5:1.5 고정)
+        val_ratio: 검증 세트 비율 (BRATS2021에서 사용, BRATS2018은 7:1.5:1.5 고정)
+        test_ratio: 테스트 세트 비율 (BRATS2021에서 사용, BRATS2018은 7:1.5:1.5 고정)
         dim: '2d' 또는 '3d'
+        dataset_version: 'brats2021' 또는 'brats2018' (기본값: 'brats2021')
     
     Returns:
-        train_loader, val_loader, test_loader
+        train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler
     """
     # 데이터셋 선택
     if dim == '2d':
@@ -333,7 +417,7 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         dataset_class = BratsDataset3D
     
     # 전체 데이터셋 로드
-    full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples)
+    full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples, dataset_version=dataset_version)
     
     # 데이터셋 분할
     total_len = len(full_dataset)
@@ -342,13 +426,68 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
     if total_len <= 10:
         train_dataset, val_dataset, test_dataset = full_dataset, full_dataset, full_dataset
     else:
-        train_len = int(total_len * train_ratio)
-        val_len = int(total_len * val_ratio)
-        test_len = total_len - train_len - val_len
-        
-        train_dataset, val_dataset, test_dataset = random_split(
-            full_dataset, [train_len, val_len, test_len]
-        )
+        if dataset_version == 'brats2018':
+            # BRATS2018: HGG와 LGG를 각각 7:1.5:1.5 비율로 분할 후 섞기
+            # 샘플 경로에서 HGG/LGG 구분
+            hgg_indices = []
+            lgg_indices = []
+            
+            brats2018_dir = os.path.join(data_dir, 'BRATS2018', 'MICCAI_BraTS_2018_Data_Training')
+            hgg_dir = os.path.join(brats2018_dir, 'HGG')
+            lgg_dir = os.path.join(brats2018_dir, 'LGG')
+            
+            for idx in range(total_len):
+                sample_path = full_dataset.samples[idx]
+                if hgg_dir in sample_path:
+                    hgg_indices.append(idx)
+                elif lgg_dir in sample_path:
+                    lgg_indices.append(idx)
+            
+            # 각 그룹을 7:1.5:1.5 비율로 분할
+            def split_indices(indices, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15):
+                """인덱스 리스트를 비율에 맞게 분할"""
+                random.shuffle(indices)
+                n = len(indices)
+                train_len = int(n * train_ratio)
+                val_len = int(n * val_ratio)
+                test_len = n - train_len - val_len
+                
+                train_indices = indices[:train_len]
+                val_indices = indices[train_len:train_len + val_len]
+                test_indices = indices[train_len + val_len:]
+                
+                return train_indices, val_indices, test_indices
+            
+            # HGG와 LGG 각각 분할
+            hgg_train, hgg_val, hgg_test = split_indices(hgg_indices, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15)
+            lgg_train, lgg_val, lgg_test = split_indices(lgg_indices, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15)
+            
+            # 분할된 것을 섞어서 결합
+            train_indices = hgg_train + lgg_train
+            val_indices = hgg_val + lgg_val
+            test_indices = hgg_test + lgg_test
+            
+            random.shuffle(train_indices)
+            random.shuffle(val_indices)
+            random.shuffle(test_indices)
+            
+            # Subset으로 데이터셋 생성
+            train_dataset = Subset(full_dataset, train_indices)
+            val_dataset = Subset(full_dataset, val_indices)
+            test_dataset = Subset(full_dataset, test_indices)
+            
+            print(f"BRATS2018 split: Train={len(train_indices)} (HGG={len(hgg_train)}, LGG={len(lgg_train)}), "
+                  f"Val={len(val_indices)} (HGG={len(hgg_val)}, LGG={len(lgg_val)}), "
+                  f"Test={len(test_indices)} (HGG={len(hgg_test)}, LGG={len(lgg_test)})")
+        else:
+            # BRATS2021: 기존 로직 유지
+            train_len = int(total_len * train_ratio)
+            val_len = int(total_len * val_ratio)
+            test_len = total_len - train_len - val_len
+            
+            train_dataset, val_dataset, test_dataset = random_split(
+                full_dataset, [train_len, val_len, test_len]
+            )
 
     # 3D 학습은 패치 데이터셋으로 래핑 (128^3, nnU-Net 스타일 샘플링)
     if dim == '3d':

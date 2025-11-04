@@ -565,7 +565,7 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
         'recall': avg_recall
     }
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018'):
     """3D Segmentation 통합 실험 실행
     
     Args:
@@ -579,6 +579,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                   지원: 'brats2021', 'auto' (자동 선택)
         dim: 데이터 차원 '2d' 또는 '3d' (기본: '2d')
         use_pretrained: pretrained 가중치 사용 여부 (기본: False, scratch 학습)
+        dataset_version: 데이터셋 버전 'brats2021' 또는 'brats2018' (기본: 'brats2018')
     """
     
     # 실험 결과 저장 디렉토리
@@ -649,6 +650,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                 num_workers=num_workers,  # /dev/shm 2GB 환경에서 기본 2 권장
                 max_samples=None,  # 전체 데이터 사용
                 dim=dim,  # 2D 또는 3D
+                dataset_version=dataset_version,  # 데이터셋 버전
                 distributed=distributed,
                 world_size=world_size,
                 rank=rank
@@ -840,8 +842,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='3D Segmentation Integrated Experiment System')
-    parser.add_argument('--data_path', type=str, default='data', 
-                       help='Path to BraTS dataset root (default: data/)')
+    parser.add_argument('--data_path', type=str, default='/home/work/3D_/BT/', 
+                       help='Common path to BraTS dataset root (default: /home/work/3D_/BT/). Server: /home/work/3D_/BT/, Local: C:\\Users\\user\\Desktop\\성균관대\\3d_segmentation\\data')
     parser.add_argument('--epochs', type=int, default=10, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size')
     parser.add_argument('--seeds', nargs='+', type=int, default=[24], 
@@ -860,6 +862,8 @@ if __name__ == "__main__":
                        help='Use standard combined loss (Dice 50%% + CE 50%%) instead of nnU-Net style')
     parser.add_argument('--num_workers', type=int, default=8,
                        help='Number of DataLoader workers for training (val/test use 0 by default). Default: 2 for 2GB /dev/shm')
+    parser.add_argument('--dataset_version', type=str, default='brats2018', choices=['brats2021', 'brats2018'],
+                       help='Dataset version: brats2021 or brats2018 (default: brats2018)')
     parser.add_argument('--sharing_strategy', type=str, default='file_descriptor', choices=['file_system', 'file_descriptor'],
                        help='PyTorch tensor sharing strategy for DataLoader workers. file_system avoids /dev/shm pressure.')
     
@@ -875,6 +879,7 @@ if __name__ == "__main__":
     print(f"Seeds: {args.seeds}")
     print(f"Models: {args.models if args.models else 'unet3d,unetr,swin_unetr,mobile_unetr'}")
     print(f"Datasets: {args.datasets if args.datasets else 'brats2021 (auto-detected)'}")
+    print(f"Dataset version: {args.dataset_version}")
     print(f"Dimension: {args.dim}")
     print(f"Loss function: {'nnU-Net style (Soft Dice Squared + Dice 70%%/CE 30%%)' if use_nnunet_loss else 'Standard (Dice 50%%/CE 50%%)'}")
     print(f"Results will be saved in: baseline_results/ folder")
@@ -890,7 +895,7 @@ if __name__ == "__main__":
 
     try:
         results_dir, results_df = run_integrated_experiment(
-            args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim, args.use_pretrained, use_nnunet_loss, args.num_workers
+            args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim, args.use_pretrained, use_nnunet_loss, args.num_workers, args.dataset_version
         )
         
         if results_dir and results_df is not None:
