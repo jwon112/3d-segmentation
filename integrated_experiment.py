@@ -273,6 +273,10 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             in_channels=n_channels,
             out_channels=n_classes
         )
+    elif model_name == 'dualbranch_01_unet':
+        # Dual-branch 3D UNet (v0.1). Expect exactly 2 input channels (FLAIR, t1ce)
+        from baseline.dualbranch_01_unet import DualBranchUNet3D
+        return DualBranchUNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm)
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
