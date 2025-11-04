@@ -277,12 +277,13 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         raise ValueError(f"Unknown model: {model_name}")
 
 def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
-                sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True):
+                sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True, results_dir=None):
     """모델 훈련 함수
     
     Args:
         use_nnunet_loss: If True, use nnU-Net style loss (Soft Dice with Squared Pred, Dice 70% + CE 30%)
                         If False, use standard combined loss (Dice 50% + CE 50%)
+        results_dir: 실험 결과 저장 디렉토리 (체크포인트 저장 경로)
     """
     model = model.to(device)
     # nnU-Net style loss: Soft Dice with Squared Prediction, Dice 70% + CE 30%
@@ -298,9 +299,11 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     best_val_dice = 0.0
     best_epoch = 0
     
-    # 체크포인트 저장 경로
-    os.makedirs("baseline_results", exist_ok=True)
-    ckpt_path = f"baseline_results/{model_name}_seed_{seed}_best.pth"
+    # 체크포인트 저장 경로 (실험 결과 폴더 내부)
+    if results_dir is None:
+        results_dir = "baseline_results"
+    os.makedirs(results_dir, exist_ok=True)
+    ckpt_path = os.path.join(results_dir, f"{model_name}_seed_{seed}_best.pth")
     
     # BatchNorm Warmup: 초기 running stats를 실제 데이터 분포로 업데이트
     # 검증 모드에서 잘못된 running stats 사용으로 인한 문제 해결
@@ -683,7 +686,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                 train_losses, val_dices, epoch_results, best_epoch, best_val_dice = train_model(
                     model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
                     train_sampler=train_sampler, rank=rank,
-                    sw_patch_size=(128, 128, 128), sw_overlap=0.10, dim=dim, use_nnunet_loss=use_nnunet_loss
+                    sw_patch_size=(128, 128, 128), sw_overlap=0.10, dim=dim, use_nnunet_loss=use_nnunet_loss,
+                    results_dir=results_dir
                 )
                 
                 # FLOPs 계산 (모델이 device에 있는 상태에서)
@@ -697,14 +701,22 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                 # 최종 평가: Best 모델 로드 후 Test set 평가 (all ranks)
                 if is_main_process(rank):
                     print(f"\nLoading best model (epoch {best_epoch}, Val Dice: {best_val_dice:.4f}) for final test evaluation...")
-                # Best 체크포인트에서 모델 로드
-                ckpt_path = f"baseline_results/{model_name}_seed_{seed}_best.pth"
+                # Best 체크포인트에서 모델 로드 (실험 결과 폴더 내부에서)
+                ckpt_path = os.path.join(results_dir, f"{model_name}_seed_{seed}_best.pth")
                 if os.path.exists(ckpt_path):
-                    real_model = model.module if hasattr(model, 'module') else model
-                    state = torch.load(ckpt_path, map_location=device)
-                    real_model.load_state_dict(state, strict=False)
+                    try:
+                        real_model = model.module if hasattr(model, 'module') else model
+                        state = torch.load(ckpt_path, map_location=device)
+                        real_model.load_state_dict(state, strict=False)
+                        if is_main_process(rank):
+                            print(f"Loaded best checkpoint from {ckpt_path}")
+                    except Exception as e:
+                        if is_main_process(rank):
+                            print(f"Warning: Failed to load checkpoint from {ckpt_path}: {e}")
+                            print("Continuing with current model state...")
+                else:
                     if is_main_process(rank):
-                        print(f"Loaded best checkpoint from {ckpt_path}")
+                        print(f"Warning: Checkpoint not found at {ckpt_path}, using current model state...")
 
                 # Test set 평가 (모든 랭크 동일 경로)
                 metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size,
