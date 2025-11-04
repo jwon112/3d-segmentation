@@ -277,6 +277,10 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         # Dual-branch 3D UNet (v0.1). Expect exactly 2 input channels (FLAIR, t1ce)
         from baseline.dualbranch_01_unet import DualBranchUNet3D
         return DualBranchUNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_02_unet':
+        # Dual-branch 3D UNet (v0.2) - stride-2 convolutional downsampling
+        from baseline.dualbranch_02_unet import DualBranchUNet3D_Stride
+        return DualBranchUNet3D_Stride(n_channels=n_channels, n_classes=n_classes, norm=norm)
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -596,9 +600,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     
     # 사용 가능한 모델들
     if models is None:
-        available_models = ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet']
+        available_models = ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet', 'dualbranch_02_unet']
     else:
-        available_models = [m for m in models if m in ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet']]
+        available_models = [m for m in models if m in ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet', 'dualbranch_02_unet']]
     
     # 결과 저장용
     all_results = []
@@ -857,7 +861,7 @@ if __name__ == "__main__":
     parser.add_argument('--seeds', nargs='+', type=int, default=[24], 
                        help='Random seeds for experiments')
     parser.add_argument('--models', nargs='+', type=str, default=None,
-                       help='Specific models to train (default: unet3d,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_01_unet)')
+                       help='Specific models to train (default: unet3d,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_01_unet,dualbranch_02_unet)')
     parser.add_argument('--datasets', nargs='+', type=str, default=None,
                        help='Datasets to use: brats2021, auto (default: brats2021)')
     parser.add_argument('--dim', type=str, default='2d', choices=['2d', '3d'],
@@ -885,7 +889,7 @@ if __name__ == "__main__":
     print(f"Epochs: {args.epochs}")
     print(f"Batch size: {args.batch_size}")
     print(f"Seeds: {args.seeds}")
-    print(f"Models: {args.models if args.models else 'unet3d,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_01_unet'}")
+    print(f"Models: {args.models if args.models else 'unet3d,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_01_unet,dualbranch_02_unet'}")
     print(f"Datasets: {args.datasets if args.datasets else 'brats2021 (auto-detected)'}")
     print(f"Dataset version: {args.dataset_version}")
     print(f"Dimension: {args.dim}")
