@@ -392,7 +392,7 @@ class BratsDataset2D(Dataset):
 
 def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None, 
                      train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, dim='3d',
-                     distributed=False, world_size=None, rank=None, dataset_version='brats2021'):
+                     distributed=False, world_size=None, rank=None, dataset_version='brats2021', seed=None):
     """
     데이터 로더 생성
     
@@ -406,10 +406,20 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         test_ratio: 테스트 세트 비율 (BRATS2021에서 사용, BRATS2018은 7:1.5:1.5 고정)
         dim: '2d' 또는 '3d'
         dataset_version: 'brats2021' 또는 'brats2018' (기본값: 'brats2021')
+        seed: 데이터 분할 및 학습을 위한 랜덤 시드 (None이면 설정하지 않음)
     
     Returns:
         train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler
     """
+    # seed가 지정된 경우 전역 seed 설정
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed)
+            torch.cuda.manual_seed_all(seed)
+    
     # 데이터셋 선택
     if dim == '2d':
         dataset_class = BratsDataset2D
@@ -485,9 +495,16 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
             val_len = int(total_len * val_ratio)
             test_len = total_len - train_len - val_len
             
-            train_dataset, val_dataset, test_dataset = random_split(
-                full_dataset, [train_len, val_len, test_len]
-            )
+            # seed가 지정된 경우 generator를 생성하여 재현성 보장
+            if seed is not None:
+                generator = torch.Generator().manual_seed(seed)
+                train_dataset, val_dataset, test_dataset = random_split(
+                    full_dataset, [train_len, val_len, test_len], generator=generator
+                )
+            else:
+                train_dataset, val_dataset, test_dataset = random_split(
+                    full_dataset, [train_len, val_len, test_len]
+                )
 
     # 3D 학습은 패치 데이터셋으로 래핑 (128^3, nnU-Net 스타일 샘플링)
     if dim == '3d':

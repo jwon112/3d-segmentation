@@ -593,21 +593,6 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     else:
         available_models = [m for m in models if m in ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d']]
     
-    # 사용 가능한 데이터셋들
-    if datasets is None:
-        available_datasets = ['brats2021']  # 기본값
-    else:
-        available_datasets = []
-        for ds in datasets:
-            if ds == 'auto':
-                # 자동 감지: 데이터셋 존재 여부 확인
-                brats2021_path = os.path.join(data_path, 'BraTS2021_Training_Data')
-                
-                if os.path.exists(brats2021_path):
-                    available_datasets.append('brats2021')
-            elif ds in ['brats2021']:
-                available_datasets.append(ds)
-    
     # 결과 저장용
     all_results = []
     all_epochs_results = []
@@ -622,143 +607,148 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"\nUsing device: {device}")
     
-    # 각 데이터셋별로 실험
-    for dataset_name in available_datasets:
-        print(f"\n{'#'*80}")
-        print(f"Dataset: {dataset_name.upper()}")
-        print(f"{'#'*80}")
+    # 데이터셋 경로 확인 (dataset_version에 따라)
+    if dataset_version == 'brats2021':
+        dataset_dir = os.path.join(data_path, 'BRATS2021', 'BraTS2021_Training_Data')
+    elif dataset_version == 'brats2018':
+        dataset_dir = os.path.join(data_path, 'BRATS2018', 'MICCAI_BraTS_2018_Data_Training')
+    else:
+        raise ValueError(f"Unknown dataset_version: {dataset_version}")
+    
+    if not os.path.exists(dataset_dir):
+        print(f"Warning: Dataset {dataset_version} not found at {dataset_dir}. Skipping...")
+        return None, pd.DataFrame()
+    
+    print(f"\n{'#'*80}")
+    print(f"Dataset Version: {dataset_version.upper()}")
+    print(f"{'#'*80}")
         
-        # 데이터셋별 디렉토리 구조 설정
-        dataset_dir = os.path.join(data_path, 'BraTS2021_Training_Data')
+    # 각 시드별로 실험
+    for seed in seeds:
+        print(f"\n{'='*60}")
+        print(f"Training 3D Segmentation Models - Dataset Version: {dataset_version.upper()}, Seed: {seed}")
+        print(f"{'='*60}")
         
-        if not os.path.exists(dataset_dir):
-            print(f"Warning: Dataset {dataset_name} not found at {dataset_dir}. Skipping...")
-            continue
+        # 전역 seed 설정 (데이터 분할, 학습 모두에 적용)
+        set_seed(seed)
         
-        # 각 시드별로 실험
-        for seed in seeds:
-            print(f"\n{'='*60}")
-            print(f"Training 3D Segmentation Models - Dataset: {dataset_name.upper()}, Seed: {seed}")
-            print(f"{'='*60}")
-            
-            set_seed(seed)
-            
-            # 데이터 로더 생성
-            train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
-                data_dir=data_path,
-                batch_size=batch_size,
-                num_workers=num_workers,  # /dev/shm 2GB 환경에서 기본 2 권장
-                max_samples=None,  # 전체 데이터 사용
-                dim=dim,  # 2D 또는 3D
-                dataset_version=dataset_version,  # 데이터셋 버전
-                distributed=distributed,
-                world_size=world_size,
-                rank=rank
-            )
-            
-            # 각 모델별로 실험
-            for model_name in available_models:
-                try:
-                    print(f"\nTraining {model_name.upper()}...")
-                    
-                    # 모델 생성 (T1CE, FLAIR만 사용하므로 2 channels)
-                    model = get_model(model_name, n_channels=2, n_classes=4, dim=dim, use_pretrained=args.use_pretrained)
-                    # DDP wrap
-                    if distributed:
-                        from torch.nn.parallel import DistributedDataParallel as DDP
-                        model = model.to(device)
-                        model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False)
-                    
-                    # 모델 정보 출력
-                    print(f"\n=== {model_name.upper()} Model Information ===")
+        # 데이터 로더 생성 (seed 전달하여 데이터 분할 재현성 보장)
+        train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
+            data_dir=data_path,
+            batch_size=batch_size,
+            num_workers=num_workers,  # /dev/shm 2GB 환경에서 기본 2 권장
+            max_samples=None,  # 전체 데이터 사용
+            dim=dim,  # 2D 또는 3D
+            dataset_version=dataset_version,  # 데이터셋 버전
+            seed=seed,  # 데이터 분할을 위한 seed
+            distributed=distributed,
+            world_size=world_size,
+            rank=rank
+        )
+        
+        # 각 모델별로 실험
+        for model_name in available_models:
+            try:
+                print(f"\nTraining {model_name.upper()}...")
+                
+                # 모델 생성 (T1CE, FLAIR만 사용하므로 2 channels)
+                model = get_model(model_name, n_channels=2, n_classes=4, dim=dim, use_pretrained=use_pretrained)
+                # DDP wrap
+                if distributed:
+                    from torch.nn.parallel import DistributedDataParallel as DDP
+                    model = model.to(device)
+                    model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False)
+                
+                # 모델 정보 출력
+                print(f"\n=== {model_name.upper()} Model Information ===")
+                real_model = model.module if hasattr(model, 'module') else model
+                total_params = sum(p.numel() for p in real_model.parameters())
+                trainable_params = sum(p.numel() for p in real_model.parameters() if p.requires_grad)
+                print(f"Total parameters: {total_params:,}")
+                print(f"Trainable parameters: {trainable_params:,}")
+                
+                # 모델 크기 계산 (real_model 사용)
+                param_size = 0
+                buffer_size = 0
+                for param in real_model.parameters():
+                    param_size += param.nelement() * param.element_size()
+                for buffer in real_model.buffers():
+                    buffer_size += buffer.nelement() * buffer.element_size()
+                model_size_mb = (param_size + buffer_size) / 1024 / 1024
+                if is_main_process(rank):
+                    print(f"Model size: {model_size_mb:.2f} MB")
+                    print("=" * 50)
+                
+                # 훈련
+                train_losses, val_dices, epoch_results, best_epoch, best_val_dice = train_model(
+                    model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
+                    train_sampler=train_sampler, rank=rank,
+                    sw_patch_size=(128, 128, 128), sw_overlap=0.10, dim=dim, use_nnunet_loss=use_nnunet_loss
+                )
+                
+                # FLOPs 계산 (모델이 device에 있는 상태에서)
+                if dim == '2d':
+                    flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_2D))
+                else:
+                    flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_3D))
+                if is_main_process(rank):
+                    print(f"FLOPs: {flops:,}")
+                
+                # 최종 평가: Best 모델 로드 후 Test set 평가 (all ranks)
+                if is_main_process(rank):
+                    print(f"\nLoading best model (epoch {best_epoch}, Val Dice: {best_val_dice:.4f}) for final test evaluation...")
+                # Best 체크포인트에서 모델 로드
+                ckpt_path = f"baseline_results/{model_name}_seed_{seed}_best.pth"
+                if os.path.exists(ckpt_path):
                     real_model = model.module if hasattr(model, 'module') else model
-                    total_params = sum(p.numel() for p in real_model.parameters())
-                    trainable_params = sum(p.numel() for p in real_model.parameters() if p.requires_grad)
-                    print(f"Total parameters: {total_params:,}")
-                    print(f"Trainable parameters: {trainable_params:,}")
-                    
-                    # 모델 크기 계산 (real_model 사용)
-                    param_size = 0
-                    buffer_size = 0
-                    for param in real_model.parameters():
-                        param_size += param.nelement() * param.element_size()
-                    for buffer in real_model.buffers():
-                        buffer_size += buffer.nelement() * buffer.element_size()
-                    model_size_mb = (param_size + buffer_size) / 1024 / 1024
+                    state = torch.load(ckpt_path, map_location=device)
+                    real_model.load_state_dict(state, strict=False)
                     if is_main_process(rank):
-                        print(f"Model size: {model_size_mb:.2f} MB")
-                        print("=" * 50)
-                    
-                    # 훈련
-                    train_losses, val_dices, epoch_results, best_epoch, best_val_dice = train_model(
-                        model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
-                        train_sampler=train_sampler, rank=rank,
-                        sw_patch_size=(128, 128, 128), sw_overlap=0.10, dim=dim, use_nnunet_loss=use_nnunet_loss
-                    )
-                    
-                    # FLOPs 계산 (모델이 device에 있는 상태에서)
-                    if dim == '2d':
-                        flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_2D))
-                    else:
-                        flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_3D))
-                    if is_main_process(rank):
-                        print(f"FLOPs: {flops:,}")
-                    
-                    # 최종 평가: Best 모델 로드 후 Test set 평가 (all ranks)
-                    if is_main_process(rank):
-                        print(f"\nLoading best model (epoch {best_epoch}, Val Dice: {best_val_dice:.4f}) for final test evaluation...")
-                    # Best 체크포인트에서 모델 로드
-                    ckpt_path = f"baseline_results/{model_name}_seed_{seed}_best.pth"
-                    if os.path.exists(ckpt_path):
-                        real_model = model.module if hasattr(model, 'module') else model
-                        state = torch.load(ckpt_path, map_location=device)
-                        real_model.load_state_dict(state, strict=False)
-                        if is_main_process(rank):
-                            print(f"Loaded best checkpoint from {ckpt_path}")
+                        print(f"Loaded best checkpoint from {ckpt_path}")
 
-                    # Test set 평가 (모든 랭크 동일 경로)
-                    metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size,
-                                              sw_patch_size=(128, 128, 128), sw_overlap=0.10)
-                    
-                    # 결과 저장
-                    result = {
-                        'dataset': dataset_name,
+                # Test set 평가 (모든 랭크 동일 경로)
+                metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size,
+                                          sw_patch_size=(128, 128, 128), sw_overlap=0.10)
+                
+                # 결과 저장
+                result = {
+                    'dataset': dataset_version,
+                    'seed': seed,
+                    'model_name': model_name,
+                    'total_params': total_params,
+                    'flops': flops,
+                    'test_dice': metrics['dice'],
+                    'val_dice': best_val_dice,
+                    'precision': metrics['precision'],
+                    'recall': metrics['recall'],
+                    'best_epoch': best_epoch
+                }
+                if is_main_process(rank):
+                    all_results.append(result)
+                
+                # 모든 epoch 결과 저장 (test_dice는 최종 평가 값으로 업데이트)
+                for epoch_result in epoch_results:
+                    epoch_data = {
+                        'dataset': dataset_version,
                         'seed': seed,
                         'model_name': model_name,
-                        'total_params': total_params,
-                        'flops': flops,
-                        'test_dice': metrics['dice'],
-                        'val_dice': best_val_dice,
-                        'precision': metrics['precision'],
-                        'recall': metrics['recall'],
-                        'best_epoch': best_epoch
+                        'epoch': epoch_result['epoch'],
+                        'train_loss': epoch_result['train_loss'],
+                        'val_dice': epoch_result['val_dice'],
+                        'test_dice': metrics['dice'] if epoch_result['epoch'] == best_epoch else None  # Best epoch에만 최종 test dice 기록
                     }
                     if is_main_process(rank):
-                        all_results.append(result)
-                    
-                    # 모든 epoch 결과 저장 (test_dice는 최종 평가 값으로 업데이트)
-                    for epoch_result in epoch_results:
-                        epoch_data = {
-                            'dataset': dataset_name,
-                            'seed': seed,
-                            'model_name': model_name,
-                            'epoch': epoch_result['epoch'],
-                            'train_loss': epoch_result['train_loss'],
-                            'val_dice': epoch_result['val_dice'],
-                            'test_dice': metrics['dice'] if epoch_result['epoch'] == best_epoch else None  # Best epoch에만 최종 test dice 기록
-                        }
-                        if is_main_process(rank):
-                            all_epochs_results.append(epoch_data)
-                    
-                    if is_main_process(rank):
-                        print(f"Final Val Dice: {best_val_dice:.4f} (epoch {best_epoch}) | Test Dice: {metrics['dice']:.4f} | Test Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
-                    
-                except Exception as e:
-                    print(f"Error with {model_name}: {e}")
-                    import traceback
-                    print("Full traceback:")
-                    traceback.print_exc()
-                    continue
+                        all_epochs_results.append(epoch_data)
+                
+                if is_main_process(rank):
+                    print(f"Final Val Dice: {best_val_dice:.4f} (epoch {best_epoch}) | Test Dice: {metrics['dice']:.4f} | Test Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
+                
+            except Exception as e:
+                print(f"Error with {model_name}: {e}")
+                import traceback
+                print("Full traceback:")
+                traceback.print_exc()
+                continue
     
     # 결과를 DataFrame으로 변환
     results_df = pd.DataFrame(all_results)
