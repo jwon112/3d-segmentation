@@ -62,16 +62,31 @@ def create_learning_curves_chart(epochs_df, results_dir):
     
     # 1. Train Loss vs Val Loss (겹쳐서 표시)
     ax1 = axes[0]
+    has_loss_data = False
     for i, model in enumerate(models):
         model_data = epochs_df[epochs_df['model_name'] == model].copy()
         model_data = model_data.sort_values('epoch')
         
         # Train Loss와 Val Loss가 모두 있는 경우에만 플롯
         if 'train_loss' in model_data.columns and 'val_loss' in model_data.columns:
-            ax1.plot(model_data['epoch'], model_data['train_loss'], 
-                    label=f'{model.upper()} (Train)', color=colors[i], linewidth=2, linestyle='-', alpha=0.8)
-            ax1.plot(model_data['epoch'], model_data['val_loss'], 
-                    label=f'{model.upper()} (Val)', color=colors[i], linewidth=2, linestyle='--', alpha=0.8)
+            # NaN이 아닌 유효한 데이터가 있는지 확인
+            train_loss_valid = model_data['train_loss'].notna().any()
+            val_loss_valid = model_data['val_loss'].notna().any()
+            
+            if train_loss_valid:
+                ax1.plot(model_data['epoch'], model_data['train_loss'], 
+                        label=f'{model.upper()} (Train)', color=colors[i], linewidth=2, linestyle='-', alpha=0.8)
+                has_loss_data = True
+            if val_loss_valid:
+                ax1.plot(model_data['epoch'], model_data['val_loss'], 
+                        label=f'{model.upper()} (Val)', color=colors[i], linewidth=2, linestyle='--', alpha=0.8)
+                has_loss_data = True
+    
+    if not has_loss_data:
+        ax1.text(0.5, 0.5, 'No loss data available', 
+                horizontalalignment='center', verticalalignment='center',
+                transform=ax1.transAxes, fontsize=12, color='red')
+        print("⚠️  Warning: No valid loss data found for learning curves")
     
     ax1.set_title('Loss: Training vs Validation', fontsize=12, fontweight='bold')
     ax1.set_xlabel('Epoch', fontsize=11)
@@ -81,16 +96,31 @@ def create_learning_curves_chart(epochs_df, results_dir):
     
     # 2. Train Dice vs Val Dice (겹쳐서 표시)
     ax2 = axes[1]
+    has_dice_data = False
     for i, model in enumerate(models):
         model_data = epochs_df[epochs_df['model_name'] == model].copy()
         model_data = model_data.sort_values('epoch')
         
         # Train Dice와 Val Dice가 모두 있는 경우에만 플롯
         if 'train_dice' in model_data.columns and 'val_dice' in model_data.columns:
-            ax2.plot(model_data['epoch'], model_data['train_dice'], 
-                    label=f'{model.upper()} (Train)', color=colors[i], linewidth=2, linestyle='-', alpha=0.8)
-            ax2.plot(model_data['epoch'], model_data['val_dice'], 
-                    label=f'{model.upper()} (Val)', color=colors[i], linewidth=2, linestyle='--', alpha=0.8)
+            # NaN이 아닌 유효한 데이터가 있는지 확인
+            train_dice_valid = model_data['train_dice'].notna().any()
+            val_dice_valid = model_data['val_dice'].notna().any()
+            
+            if train_dice_valid:
+                ax2.plot(model_data['epoch'], model_data['train_dice'], 
+                        label=f'{model.upper()} (Train)', color=colors[i], linewidth=2, linestyle='-', alpha=0.8)
+                has_dice_data = True
+            if val_dice_valid:
+                ax2.plot(model_data['epoch'], model_data['val_dice'], 
+                        label=f'{model.upper()} (Val)', color=colors[i], linewidth=2, linestyle='--', alpha=0.8)
+                has_dice_data = True
+    
+    if not has_dice_data:
+        ax2.text(0.5, 0.5, 'No dice data available', 
+                horizontalalignment='center', verticalalignment='center',
+                transform=ax2.transAxes, fontsize=12, color='red')
+        print("⚠️  Warning: No valid dice data found for learning curves")
     
     ax2.set_title('Dice Score: Training vs Validation', fontsize=12, fontweight='bold')
     ax2.set_xlabel('Epoch', fontsize=11)

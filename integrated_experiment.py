@@ -750,6 +750,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         'model_name': model_name,
                         'epoch': epoch_result['epoch'],
                         'train_loss': epoch_result['train_loss'],
+                        'train_dice': epoch_result['train_dice'],
+                        'val_loss': epoch_result['val_loss'],
                         'val_dice': epoch_result['val_dice'],
                         'test_dice': metrics['dice'] if epoch_result['epoch'] == best_epoch else None  # Best epoch에만 최종 test dice 기록
                     }
