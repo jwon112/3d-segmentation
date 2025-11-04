@@ -435,8 +435,10 @@ def create_interactive_3d_plot(results_df, results_dir):
             colorscale='Viridis',
             opacity=0.8,
             colorbar=dict(
-                title="Test Dice Score",
-                titlefont=dict(size=12)
+                title=dict(
+                    text="Test Dice Score",
+                    font=dict(size=12)
+                )
             ),
             line=dict(width=2, color='DarkSlateGrey')
         ),
