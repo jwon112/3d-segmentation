@@ -521,6 +521,18 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=False)
         test_sampler = DistributedSampler(test_dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=False)
     
+    # 워커 RNG 고정 함수 (재현성)
+    def _worker_init_fn(worker_id):
+        base_seed = (seed if seed is not None else 0)
+        torch.manual_seed(base_seed + worker_id)
+        np.random.seed(base_seed + worker_id)
+        random.seed(base_seed + worker_id)
+
+    # 공통 generator (샘플링 결정성)
+    _generator = torch.Generator()
+    if seed is not None:
+        _generator = _generator.manual_seed(seed)
+
     # DataLoader 생성 (분산 시 shuffle=False, sampler 사용)
     train_loader = DataLoader(
         train_dataset,
@@ -531,6 +543,8 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         sampler=train_sampler,
         persistent_workers=((num_workers if num_workers is not None else 8) > 0),
         prefetch_factor=(4 if (num_workers if num_workers is not None else 8) > 0 else None),
+        worker_init_fn=_worker_init_fn,
+        generator=_generator,
     )
     # Validation/Test workers
     v_workers = 4
@@ -547,6 +561,8 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         sampler=val_sampler,
         persistent_workers=False,
         prefetch_factor=(4 if v_workers > 0 else None),
+        worker_init_fn=_worker_init_fn,
+        generator=_generator,
     )
     test_loader = DataLoader(
         test_dataset,
@@ -557,6 +573,8 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         sampler=test_sampler,
         persistent_workers=False,
         prefetch_factor=(4 if t_workers > 0 else None),
+        worker_init_fn=_worker_init_fn,
+        generator=_generator,
     )
     
     return train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler

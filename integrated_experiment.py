@@ -666,6 +666,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
             try:
                 print(f"\nTraining {model_name.upper()}...")
                 
+                # 모델별 결정성 보장: 모델 초기화/샘플링 RNG 고정
+                set_seed(seed)
+
                 # 모델 생성 (T1CE, FLAIR만 사용하므로 2 channels)
                 model = get_model(model_name, n_channels=2, n_classes=4, dim=dim, use_pretrained=use_pretrained)
                 # DDP wrap
