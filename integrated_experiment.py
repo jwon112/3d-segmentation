@@ -485,6 +485,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         epoch_results.append({
             'epoch': epoch + 1,
             'train_loss': tr_loss,
+            'train_dice': tr_dice,
+            'val_loss': va_loss,
             'val_dice': va_dice,
             'test_dice': None  # 최종 평가 시에만 설정
         })

@@ -45,7 +45,9 @@ def calculate_flops(model, input_size=(1, 4, 64, 64, 64)):
         return 0
 
 def create_learning_curves_chart(epochs_df, results_dir):
-    """학습 곡선 차트 생성"""
+    """학습 곡선 차트 생성
+    Train/Val Loss와 Train/Val Dice Score를 각각 겹쳐서 보여주는 2개의 서브플롯
+    """
     if epochs_df.empty:
         print("⚠️  No epoch data available for learning curves")
         return
@@ -54,63 +56,52 @@ def create_learning_curves_chart(epochs_df, results_dir):
     models = epochs_df['model_name'].unique()
     colors = plt.cm.Set3(np.linspace(0, 1, len(models)))
     
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-    fig.suptitle('3D Segmentation Learning Curves', fontsize=16)
+    # 2개의 서브플롯 (세로로 나열)
+    fig, axes = plt.subplots(2, 1, figsize=(12, 10))
+    fig.suptitle('Learning Curves: Model Convergence and Overfitting Analysis', fontsize=14, fontweight='bold')
     
-    # Train Loss
-    ax1 = axes[0, 0]
+    # 1. Train Loss vs Val Loss (겹쳐서 표시)
+    ax1 = axes[0]
     for i, model in enumerate(models):
-        model_data = epochs_df[epochs_df['model_name'] == model]
-        ax1.plot(model_data['epoch'], model_data['train_loss'], 
-                label=f'{model.upper()}', color=colors[i], linewidth=2)
-    ax1.set_title('Training Loss')
-    ax1.set_xlabel('Epoch')
-    ax1.set_ylabel('Loss')
-    ax1.legend()
+        model_data = epochs_df[epochs_df['model_name'] == model].copy()
+        model_data = model_data.sort_values('epoch')
+        
+        # Train Loss와 Val Loss가 모두 있는 경우에만 플롯
+        if 'train_loss' in model_data.columns and 'val_loss' in model_data.columns:
+            ax1.plot(model_data['epoch'], model_data['train_loss'], 
+                    label=f'{model.upper()} (Train)', color=colors[i], linewidth=2, linestyle='-', alpha=0.8)
+            ax1.plot(model_data['epoch'], model_data['val_loss'], 
+                    label=f'{model.upper()} (Val)', color=colors[i], linewidth=2, linestyle='--', alpha=0.8)
+    
+    ax1.set_title('Loss: Training vs Validation', fontsize=12, fontweight='bold')
+    ax1.set_xlabel('Epoch', fontsize=11)
+    ax1.set_ylabel('Loss', fontsize=11)
+    ax1.legend(loc='best', fontsize=9)
     ax1.grid(True, alpha=0.3)
     
-    # Validation Dice
-    ax2 = axes[0, 1]
+    # 2. Train Dice vs Val Dice (겹쳐서 표시)
+    ax2 = axes[1]
     for i, model in enumerate(models):
-        model_data = epochs_df[epochs_df['model_name'] == model]
-        ax2.plot(model_data['epoch'], model_data['val_dice'], 
-                label=f'{model.upper()}', color=colors[i], linewidth=2)
-    ax2.set_title('Validation Dice Score')
-    ax2.set_xlabel('Epoch')
-    ax2.set_ylabel('Dice Score')
-    ax2.legend()
+        model_data = epochs_df[epochs_df['model_name'] == model].copy()
+        model_data = model_data.sort_values('epoch')
+        
+        # Train Dice와 Val Dice가 모두 있는 경우에만 플롯
+        if 'train_dice' in model_data.columns and 'val_dice' in model_data.columns:
+            ax2.plot(model_data['epoch'], model_data['train_dice'], 
+                    label=f'{model.upper()} (Train)', color=colors[i], linewidth=2, linestyle='-', alpha=0.8)
+            ax2.plot(model_data['epoch'], model_data['val_dice'], 
+                    label=f'{model.upper()} (Val)', color=colors[i], linewidth=2, linestyle='--', alpha=0.8)
+    
+    ax2.set_title('Dice Score: Training vs Validation', fontsize=12, fontweight='bold')
+    ax2.set_xlabel('Epoch', fontsize=11)
+    ax2.set_ylabel('Dice Score', fontsize=11)
+    ax2.legend(loc='best', fontsize=9)
     ax2.grid(True, alpha=0.3)
-    
-    # Test Dice
-    ax3 = axes[1, 0]
-    for i, model in enumerate(models):
-        model_data = epochs_df[epochs_df['model_name'] == model]
-        ax3.plot(model_data['epoch'], model_data['test_dice'], 
-                label=f'{model.upper()}', color=colors[i], linewidth=2)
-    ax3.set_title('Test Dice Score')
-    ax3.set_xlabel('Epoch')
-    ax3.set_ylabel('Dice Score')
-    ax3.legend()
-    ax3.grid(True, alpha=0.3)
-    
-    # Combined Performance
-    ax4 = axes[1, 1]
-    for i, model in enumerate(models):
-        model_data = epochs_df[epochs_df['model_name'] == model]
-        ax4.plot(model_data['epoch'], model_data['val_dice'], 
-                label=f'{model.upper()} (Val)', color=colors[i], linewidth=2, linestyle='-')
-        ax4.plot(model_data['epoch'], model_data['test_dice'], 
-                label=f'{model.upper()} (Test)', color=colors[i], linewidth=2, linestyle='--')
-    ax4.set_title('Validation vs Test Dice Score')
-    ax4.set_xlabel('Epoch')
-    ax4.set_ylabel('Dice Score')
-    ax4.legend()
-    ax4.grid(True, alpha=0.3)
     
     plt.tight_layout()
     
-    # 저장
-    chart_path = os.path.join(results_dir, "learning_curves.png")
+    # 저장 (learning_curve.png로 저장)
+    chart_path = os.path.join(results_dir, "learning_curve.png")
     plt.savefig(chart_path, dpi=300, bbox_inches='tight')
     print(f"Learning curves chart saved to: {chart_path}")
     plt.close()
@@ -342,20 +333,65 @@ def create_comprehensive_analysis(results_df, epochs_df, results_dir):
     print("✅ Comprehensive analysis charts created successfully!")
 
 def create_interactive_3d_plot(results_df, results_dir):
-    """인터랙티브 3D 플롯 생성 (Plotly)"""
+    """인터랙티브 3D 플롯 생성 (Plotly)
+    
+    Parameters, FLOPs, Test Dice Score의 3D 관계를 시각화합니다.
+    """
     if results_df.empty:
         print("⚠️  No results data available for interactive plot")
         return
     
-    # 모델별 평균 성능 계산
-    model_stats = results_df.groupby('model_name').agg({
+    # 필수 컬럼 확인
+    required_cols = ['model_name', 'test_dice', 'total_params', 'flops']
+    missing_cols = [col for col in required_cols if col not in results_df.columns]
+    if missing_cols:
+        print(f"⚠️  Missing required columns for interactive plot: {missing_cols}")
+        print(f"   Available columns: {list(results_df.columns)}")
+        return
+    
+    # 모델별 평균 성능 계산 (필요한 컬럼만)
+    agg_dict = {
         'test_dice': 'mean',
-        'val_dice': 'mean',
-        'precision': 'mean',
-        'recall': 'mean',
         'total_params': 'mean',
         'flops': 'mean'
-    }).round(4)
+    }
+    
+    # 선택적 컬럼 추가
+    if 'val_dice' in results_df.columns:
+        agg_dict['val_dice'] = 'mean'
+    if 'precision' in results_df.columns:
+        agg_dict['precision'] = 'mean'
+    if 'recall' in results_df.columns:
+        agg_dict['recall'] = 'mean'
+    
+    model_stats = results_df.groupby('model_name').agg(agg_dict).round(4)
+    
+    # NaN 값 제거 (모델별로 하나 이상의 유효한 값이 있어야 함)
+    model_stats = model_stats.dropna(subset=['test_dice', 'total_params', 'flops'])
+    
+    if model_stats.empty:
+        print("⚠️  No valid data after grouping and cleaning for interactive plot")
+        return
+    
+    # 호버 텍스트 생성 (모든 메트릭 포함)
+    hover_texts = []
+    for model_name in model_stats.index:
+        row = model_stats.loc[model_name]
+        hover_parts = [
+            f"<b>{model_name.upper()}</b>",
+            f"Test Dice: {row['test_dice']:.4f}"
+        ]
+        if 'val_dice' in row:
+            hover_parts.append(f"Val Dice: {row['val_dice']:.4f}")
+        hover_parts.extend([
+            f"Parameters: {row['total_params']:,.0f}",
+            f"FLOPs: {row['flops']:,.0f}"
+        ])
+        if 'precision' in row:
+            hover_parts.append(f"Precision: {row['precision']:.4f}")
+        if 'recall' in row:
+            hover_parts.append(f"Recall: {row['recall']:.4f}")
+        hover_texts.append("<br>".join(hover_parts))
     
     # 3D 산점도 생성
     fig = go.Figure(data=go.Scatter3d(
@@ -364,31 +400,66 @@ def create_interactive_3d_plot(results_df, results_dir):
         z=model_stats['test_dice'],
         mode='markers+text',
         marker=dict(
-            size=20,
+            size=15,
             color=model_stats['test_dice'],
             colorscale='Viridis',
             opacity=0.8,
-            colorbar=dict(title="Test Dice Score")
+            colorbar=dict(
+                title="Test Dice Score",
+                titlefont=dict(size=12)
+            ),
+            line=dict(width=2, color='DarkSlateGrey')
         ),
         text=model_stats.index,
-        textposition="top center"
+        textposition="top center",
+        textfont=dict(size=10, color='black'),
+        hovertemplate='%{hovertext}<extra></extra>',
+        hovertext=hover_texts
     ))
     
+    # 레이아웃 설정
     fig.update_layout(
-        title='3D Model Performance Analysis',
+        title={
+            'text': '3D Model Performance Analysis: Parameters vs FLOPs vs Test Dice Score',
+            'x': 0.5,
+            'xanchor': 'center',
+            'font': {'size': 14, 'family': 'Arial Black'}
+        },
         scene=dict(
-            xaxis_title='Parameters',
-            yaxis_title='FLOPs',
-            zaxis_title='Test Dice Score'
+            xaxis_title=dict(text='Parameters', font=dict(size=12)),
+            yaxis_title=dict(text='FLOPs', font=dict(size=12)),
+            zaxis_title=dict(text='Test Dice Score', font=dict(size=12)),
+            xaxis=dict(
+                type='log' if model_stats['total_params'].max() / model_stats['total_params'].min() > 100 else 'linear',
+                showspikes=False
+            ),
+            yaxis=dict(
+                type='log' if model_stats['flops'].max() / model_stats['flops'].min() > 100 else 'linear',
+                showspikes=False
+            ),
+            zaxis=dict(
+                range=[max(0, model_stats['test_dice'].min() - 0.1), 
+                       min(1, model_stats['test_dice'].max() + 0.1)],
+                showspikes=False
+            ),
+            camera=dict(
+                eye=dict(x=1.5, y=1.5, z=1.5)
+            )
         ),
-        width=800,
-        height=600
+        width=900,
+        height=700,
+        margin=dict(l=0, r=0, t=50, b=0)
     )
     
     # 저장
     chart_path = os.path.join(results_dir, "interactive_3d_analysis.html")
-    fig.write_html(chart_path)
-    print(f"Interactive 3D analysis saved to: {chart_path}")
+    try:
+        fig.write_html(chart_path)
+        print(f"✅ Interactive 3D analysis saved to: {chart_path}")
+    except Exception as e:
+        print(f"⚠️  Error saving interactive 3D plot: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     # 테스트용 더미 데이터
