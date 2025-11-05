@@ -76,7 +76,7 @@ from baseline import (
 )
 from baseline.mobileunetr_3d import MobileUNETR_3D_Wrapper
 from losses import combined_loss, combined_loss_nnunet_style
-from metrics import calculate_dice_score
+from metrics import calculate_dice_score, calculate_wt_tc_et_dice
 
 # Import data loader and utilities
 from data_loader import get_data_loaders
@@ -310,6 +310,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     
     best_val_dice = 0.0
     best_epoch = 0
+    best_val_wt = best_val_tc = best_val_et = 0.0
     
     # 체크포인트 저장 경로 (실험 결과 폴더 내부)
     if results_dir is None:
@@ -388,9 +389,10 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 t_bwd = time.time()
                 bwd_times.append(t_bwd - t_fwd)
             
-            dice_scores = calculate_dice_score(logits.detach(), labels)
-            # 배경(클래스 0) 제외 평균 Dice
-            mean_dice = dice_scores[1:].mean()
+            # BraTS composite Dice (WT, TC, ET)
+            dice_scores = calculate_wt_tc_et_dice(logits.detach(), labels)
+            # 평균 Dice (WT/TC/ET 평균)
+            mean_dice = dice_scores.mean()
             bsz = inputs.size(0)
             tr_loss += loss.item() * bsz
             tr_dice_sum += mean_dice.item() * bsz
@@ -411,6 +413,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         # Validation (all ranks, simpler/robust)
         model.eval()
         va_loss = va_dice_sum = n_va = 0.0
+        va_wt_sum = va_tc_sum = va_et_sum = 0.0
         with torch.no_grad():
             debug_printed = False
             all_sample_dices = []  # 디버깅: 모든 샘플의 Dice 수집
@@ -432,9 +435,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 else:
                     logits = model(inputs)
                 loss = criterion(logits, labels)
-                dice_scores = calculate_dice_score(logits, labels)
-                # 배경(클래스 0) 제외 평균 Dice
-                mean_dice = dice_scores[1:].mean()
+                dice_scores = calculate_wt_tc_et_dice(logits, labels)
+                # WT/TC/ET 평균
+                mean_dice = dice_scores.mean()
                 all_sample_dices.append(mean_dice.item())  # 디버깅
                 
                 if not debug_printed:
@@ -447,12 +450,15 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                         except Exception:
                             dv = []
                         print(f"Val sample {idx+1} stats | pred counts: {pred_counts} | gt counts: {gt_counts}")
-                        print(f"Val sample {idx+1} per-class dice: {dv}")
+                        print(f"Val sample {idx+1} WT/TC/ET dice: {dice_scores.detach().cpu().tolist()}")
                         print(f"Val sample {idx+1} mean_dice (fg only): {mean_dice.item():.10f}")
                     debug_printed = True
                 bsz = inputs.size(0)
                 va_loss += loss.item() * bsz
                 va_dice_sum += mean_dice.item() * bsz
+                va_wt_sum += float(dice_scores[0].item()) * bsz
+                va_tc_sum += float(dice_scores[1].item()) * bsz
+                va_et_sum += float(dice_scores[2].item()) * bsz
                 n_va += bsz
             
             # 디버깅: 모든 샘플의 Dice 통계 출력
@@ -468,6 +474,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         
         va_loss /= max(1, n_va)
         va_dice = va_dice_sum / max(1, n_va)
+        va_wt = va_wt_sum / max(1, n_va)
+        va_tc = va_tc_sum / max(1, n_va)
+        va_et = va_et_sum / max(1, n_va)
         val_dices.append(va_dice)
         
         # Learning rate scheduling
@@ -478,6 +487,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         checkpoint_saved = False
         if va_dice > best_val_dice:
             best_val_dice = va_dice
+            best_val_wt = va_wt
+            best_val_tc = va_tc
+            best_val_et = va_et
             best_epoch = epoch + 1
             checkpoint_saved = True
             if is_main_process(rank):
@@ -503,20 +515,25 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             'train_dice': tr_dice,
             'val_loss': va_loss,
             'val_dice': va_dice,
+            'val_wt': va_wt,
+            'val_tc': va_tc,
+            'val_et': va_et,
             'test_dice': None  # 최종 평가 시에만 설정
         })
         
         if is_main_process(rank):
             checkpoint_msg = " [BEST]" if checkpoint_saved else ""
-            print(f"Epoch {epoch+1}/{epochs} | Train Loss {tr_loss:.4f} Dice {tr_dice:.4f} | Val Loss {va_loss:.4f} Dice {va_dice:.4f}{checkpoint_msg}")
+            print(f"Epoch {epoch+1}/{epochs} | Train Loss {tr_loss:.4f} Dice {tr_dice:.4f} | Val Loss {va_loss:.4f} Dice {va_dice:.4f} (WT {va_wt:.4f} | TC {va_tc:.4f} | ET {va_et:.4f}){checkpoint_msg}")
     
-    return train_losses, val_dices, epoch_results, best_epoch, best_val_dice
+    return train_losses, val_dices, epoch_results, best_epoch, best_val_dice, best_val_wt, best_val_tc, best_val_et
 
 def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model', distributed: bool = False, world_size: int = 1,
                    sw_patch_size=(128, 128, 128), sw_overlap=0.25):
     """모델 평가 함수"""
     model.eval()
     test_dice = 0.0
+    test_wt_sum = test_tc_sum = test_et_sum = 0.0
+    n_te = 0
     precision_scores = []
     recall_scores = []
     
@@ -538,11 +555,15 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             else:
                 logits = model(inputs)
             
-            # Dice score 계산
-            dice_scores = calculate_dice_score(logits, labels)
-            # 배경(클래스 0) 제외 평균 Dice
-            mean_dice = dice_scores[1:].mean()
-            test_dice += mean_dice.item()
+            # Dice score 계산 (WT/TC/ET)
+            dice_scores = calculate_wt_tc_et_dice(logits, labels)
+            mean_dice = dice_scores.mean()
+            bsz = inputs.size(0)
+            test_dice += mean_dice.item() * bsz
+            test_wt_sum += float(dice_scores[0].item()) * bsz
+            test_tc_sum += float(dice_scores[1].item()) * bsz
+            test_et_sum += float(dice_scores[2].item()) * bsz
+            n_te += bsz
             
             # Precision, Recall 계산 (클래스별)
             pred = torch.argmax(logits, dim=1)
@@ -562,13 +583,17 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                 precision_scores.append(precision)
                 recall_scores.append(recall)
     
-    test_dice /= len(test_loader)
+    test_dice /= max(1, n_te)
+    test_wt = test_wt_sum / max(1, n_te)
+    test_tc = test_tc_sum / max(1, n_te)
+    test_et = test_et_sum / max(1, n_te)
     # Reduce across processes if distributed
     if distributed and world_size > 1:
         import torch.distributed as dist
-        td = torch.tensor([test_dice], device=device)
+        td = torch.tensor([test_dice, test_wt, test_tc, test_et], device=device)
         dist.all_reduce(td, op=dist.ReduceOp.SUM)
-        test_dice = (td / world_size).item()
+        td = td / world_size
+        test_dice, test_wt, test_tc, test_et = td.tolist()
     
     # Background 제외한 평균 (클래스 1, 2, 3만)
     avg_precision = np.mean(precision_scores[1::4])  # 클래스별로 평균
@@ -576,6 +601,9 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     
     return {
         'dice': test_dice,
+        'wt': test_wt,
+        'tc': test_tc,
+        'et': test_et,
         'precision': avg_precision,
         'recall': avg_recall
     }
@@ -698,7 +726,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     print("=" * 50)
                 
                 # 훈련
-                train_losses, val_dices, epoch_results, best_epoch, best_val_dice = train_model(
+                train_losses, val_dices, epoch_results, best_epoch, best_val_dice, best_val_wt, best_val_tc, best_val_et = train_model(
                     model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
                     train_sampler=train_sampler, rank=rank,
                     sw_patch_size=(128, 128, 128), sw_overlap=0.10, dim=dim, use_nnunet_loss=use_nnunet_loss,
@@ -744,8 +772,14 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     'model_name': model_name,
                     'total_params': total_params,
                     'flops': flops,
-                    'test_dice': metrics['dice'],
-                    'val_dice': best_val_dice,
+                    'test_dice': metrics['dice'],  # WT/TC/ET 평균
+                    'test_wt': metrics.get('wt', None),
+                    'test_tc': metrics.get('tc', None),
+                    'test_et': metrics.get('et', None),
+                    'val_dice': best_val_dice,  # WT/TC/ET 평균
+                    'val_wt': best_val_wt,
+                    'val_tc': best_val_tc,
+                    'val_et': best_val_et,
                     'precision': metrics['precision'],
                     'recall': metrics['recall'],
                     'best_epoch': best_epoch
@@ -764,13 +798,17 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         'train_dice': epoch_result['train_dice'],
                         'val_loss': epoch_result['val_loss'],
                         'val_dice': epoch_result['val_dice'],
+                        'val_wt': epoch_result.get('val_wt', None),
+                        'val_tc': epoch_result.get('val_tc', None),
+                        'val_et': epoch_result.get('val_et', None),
                         'test_dice': metrics['dice'] if epoch_result['epoch'] == best_epoch else None  # Best epoch에만 최종 test dice 기록
                     }
                     if is_main_process(rank):
                         all_epochs_results.append(epoch_data)
                 
                 if is_main_process(rank):
-                    print(f"Final Val Dice: {best_val_dice:.4f} (epoch {best_epoch}) | Test Dice: {metrics['dice']:.4f} | Test Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
+                    print(f"Final Val Dice: {best_val_dice:.4f} (WT {best_val_wt:.4f} | TC {best_val_tc:.4f} | ET {best_val_et:.4f}) (epoch {best_epoch})")
+                    print(f"Final Test Dice: {metrics['dice']:.4f} (WT {metrics['wt']:.4f} | TC {metrics['tc']:.4f} | ET {metrics['et']:.4f}) | Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
                 
             except Exception as e:
                 print(f"Error with {model_name}: {e}")

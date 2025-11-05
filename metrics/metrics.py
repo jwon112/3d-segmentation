@@ -55,3 +55,43 @@ def calculate_dice_score(pred, target, smooth=1e-5, num_classes=4):
     return dice
 
 
+
+def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5):
+    """Compute BraTS composite region Dice: WT, TC, ET.
+
+    Assumes target labels are mapped to 0..3 with: 0=BG, 1=NCR/NET, 2=ED, 3=ET.
+    WT = 1 ∪ 2 ∪ 3, TC = 1 ∪ 3, ET = 3.
+
+    Returns: tensor of shape (3,) -> [WT, TC, ET]
+    """
+    # Argmax predictions
+    pred = torch.argmax(logits, dim=1)  # (B, H, W[, D])
+
+    # Binary masks for regions
+    def to_bool(x):
+        return x.to(dtype=torch.bool)
+
+    pred_wt = to_bool((pred == 1) | (pred == 2) | (pred == 3))
+    pred_tc = to_bool((pred == 1) | (pred == 3))
+    pred_et = to_bool(pred == 3)
+
+    tgt_wt = to_bool((target == 1) | (target == 2) | (target == 3))
+    tgt_tc = to_bool((target == 1) | (target == 3))
+    tgt_et = to_bool(target == 3)
+
+    def dice_bin(pb, tb):
+        # Compute per-sample dice then average over batch
+        spatial_dims = tuple(range(1, pb.dim()))
+        inter = (pb & tb).sum(dim=spatial_dims).float()
+        union = pb.sum(dim=spatial_dims).float() + tb.sum(dim=spatial_dims).float()
+        d = (2.0 * inter + smooth) / (union + smooth)
+        # If tb is empty across sample, set dice to 0 (exclude meaningless perfect)
+        has_t = (tb.sum(dim=spatial_dims) > 0)
+        d = torch.where(has_t, d, torch.zeros_like(d))
+        return d.mean()
+
+    wt = dice_bin(pred_wt, tgt_wt)
+    tc = dice_bin(pred_tc, tgt_tc)
+    et = dice_bin(pred_et, tgt_et)
+    return torch.stack([wt, tc, et])
+
