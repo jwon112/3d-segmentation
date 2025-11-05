@@ -84,10 +84,10 @@ class OutConv3D(nn.Module):
     def forward(self, x):
         return self.conv(x)
 
-class UNet3D(nn.Module):
-    """3D U-Net 모델"""
+class UNet3D_Medium(nn.Module):
+    """Medium 3D U-Net 모델 (표준 채널 수)"""
     def __init__(self, n_channels=4, n_classes=4, bilinear=False):
-        super(UNet3D, self).__init__()
+        super(UNet3D_Medium, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.bilinear = bilinear
@@ -119,10 +119,10 @@ class UNet3D(nn.Module):
         logits = self.outc(x)
         return logits
 
-class UNet3D_Simplified(nn.Module):
-    """간소화된 3D U-Net (메모리 효율성을 위해)"""
+class UNet3D_Small(nn.Module):
+    """Small 3D U-Net (메모리 효율성을 위해 - 채널 수 절반)"""
     def __init__(self, n_channels=4, n_classes=4, norm: str = 'bn'):
-        super(UNet3D_Simplified, self).__init__()
+        super(UNet3D_Small, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.norm = (norm or 'bn')
@@ -171,8 +171,8 @@ if __name__ == "__main__":
     # 모델 테스트
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
-    # 간소화된 모델 사용 (메모리 효율성)
-    model = UNet3D_Simplified(n_channels=4, n_classes=4).to(device)
+    # Small 모델 사용 (메모리 효율성)
+    model = UNet3D_Small(n_channels=4, n_classes=4).to(device)
     
     # 더미 입력 생성
     batch_size = 1

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Reuse common UNet building blocks (Down replaced with stride convs locally)
+# Reuse common UNet building blocks
 from .model_3d_unet import DoubleConv3D, Up3D, OutConv3D, _make_norm3d
 
 
@@ -25,18 +25,47 @@ class Down3DStride(nn.Module):
         return self.block(x)
 
 
-class DualBranchUNet3D_Stride_Small(nn.Module):
-    """Dual-branch 3D U-Net (v0.2 - stride downsampling) - Small channel version
+class Down3DStrideDilated(nn.Module):
+    """Downsampling with stride-2 Conv and dilated convolutions for wider ERF.
+    
+    Pattern: Conv(stride=2) -> Norm -> ReLU -> DilatedConv(rate=2) -> Norm -> ReLU -> DilatedConv(rate=3) -> Norm -> ReLU
+    Uses dilated convolutions instead of regular conv to capture wider context.
+    """
+    def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn'):
+        super().__init__()
+        # Padding for dilated conv: padding = dilation * (kernel_size - 1) / 2
+        # For kernel=3, dilation=2: padding = 2 * (3-1) / 2 = 2
+        # For kernel=3, dilation=3: padding = 3 * (3-1) / 2 = 3
+        self.block = nn.Sequential(
+            nn.Conv3d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, bias=False),
+            _make_norm3d(norm, out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(out_channels, out_channels, kernel_size=3, dilation=2, padding=2, bias=False),
+            _make_norm3d(norm, out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(out_channels, out_channels, kernel_size=3, dilation=3, padding=3, bias=False),
+            _make_norm3d(norm, out_channels),
+            nn.ReLU(inplace=True),
+        )
 
-    Differences from dualbranch_01_unet:
-    - Replace MaxPool-based Down3D with stride-2 convolutional downsampling.
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.block(x)
+
+
+class DualBranchUNet3D_StrideDilated_Small(nn.Module):
+    """Dual-branch 3D U-Net (v0.3 - dilated conv for FLAIR) - Small channel version
+
+    Differences from dualbranch_02_unet:
+    - FLAIR branch uses dilated convolutions (rate 2, rate 3) for wider ERF
+    - t1ce branch uses standard 3x3 convolutions (unchanged)
+    - This allows FLAIR to capture more contextual information while t1ce focuses on local details
 
     Width matches UNet3D_Small for fair comparison.
     """
 
     def __init__(self, n_channels: int = 2, n_classes: int = 4, norm: str = 'bn', bilinear: bool = False):
         super().__init__()
-        assert n_channels == 2, "DualBranchUNet3D_Stride_Small expects exactly 2 input channels (FLAIR, t1ce)."
+        assert n_channels == 2, "DualBranchUNet3D_StrideDilated_Small expects exactly 2 input channels (FLAIR, t1ce)."
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.norm = (norm or 'bn')
@@ -46,8 +75,9 @@ class DualBranchUNet3D_Stride_Small(nn.Module):
         self.stem_flair = DoubleConv3D(1, 16, norm=self.norm)
         self.stem_t1ce = DoubleConv3D(1, 16, norm=self.norm)
 
-        # Stage 2: modality-specific branches (16->32 each), then concat -> 64ch
-        self.branch_flair = Down3DStride(16, 32, norm=self.norm)
+        # Stage 2: modality-specific branches with different architectures
+        # FLAIR: dilated convs for wider ERF, t1ce: standard convs
+        self.branch_flair = Down3DStrideDilated(16, 32, norm=self.norm)
         self.branch_t1ce = Down3DStride(16, 32, norm=self.norm)
 
         # Stages 3+: encoder (64->128->256->512)
@@ -69,9 +99,9 @@ class DualBranchUNet3D_Stride_Small(nn.Module):
         x1_t1ce  = self.stem_t1ce(x[:, 1:2])
         x1 = torch.cat([x1_flair, x1_t1ce], dim=1)  # (B,32,...)
 
-        # Stage 2 branches
-        b_flair = self.branch_flair(x1_flair)  # (B,32,.../2)
-        b_t1ce = self.branch_t1ce(x1_t1ce)    # (B,32,.../2)
+        # Stage 2 branches: FLAIR uses dilated conv, t1ce uses standard conv
+        b_flair = self.branch_flair(x1_flair)  # (B,32,.../2) - wider ERF
+        b_t1ce = self.branch_t1ce(x1_t1ce)    # (B,32,.../2) - local details
         x2 = torch.cat([b_flair, b_t1ce], dim=1)  # (B,64,.../2)
 
         # Encoder
@@ -88,18 +118,20 @@ class DualBranchUNet3D_Stride_Small(nn.Module):
         return logits
 
 
-class DualBranchUNet3D_Stride_Medium(nn.Module):
-    """Dual-branch 3D U-Net (v0.2 - stride downsampling) - Medium channel version
+class DualBranchUNet3D_StrideDilated_Medium(nn.Module):
+    """Dual-branch 3D U-Net (v0.3 - dilated conv for FLAIR) - Medium channel version
 
-    Differences from dualbranch_01_unet:
-    - Replace MaxPool-based Down3D with stride-2 convolutional downsampling.
+    Differences from dualbranch_02_unet:
+    - FLAIR branch uses dilated convolutions (rate 2, rate 3) for wider ERF
+    - t1ce branch uses standard 3x3 convolutions (unchanged)
+    - This allows FLAIR to capture more contextual information while t1ce focuses on local details
 
     Width matches UNet3D_Medium (64, 128, 256, 512, 1024) for fair comparison.
     """
 
     def __init__(self, n_channels: int = 2, n_classes: int = 4, norm: str = 'bn', bilinear: bool = False):
         super().__init__()
-        assert n_channels == 2, "DualBranchUNet3D_Stride_Medium expects exactly 2 input channels (FLAIR, t1ce)."
+        assert n_channels == 2, "DualBranchUNet3D_StrideDilated_Medium expects exactly 2 input channels (FLAIR, t1ce)."
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.norm = (norm or 'bn')
@@ -109,8 +141,9 @@ class DualBranchUNet3D_Stride_Medium(nn.Module):
         self.stem_flair = DoubleConv3D(1, 32, norm=self.norm)
         self.stem_t1ce = DoubleConv3D(1, 32, norm=self.norm)
 
-        # Stage 2: modality-specific branches (32->64 each), then concat -> 128ch
-        self.branch_flair = Down3DStride(32, 64, norm=self.norm)
+        # Stage 2: modality-specific branches with different architectures
+        # FLAIR: dilated convs for wider ERF, t1ce: standard convs
+        self.branch_flair = Down3DStrideDilated(32, 64, norm=self.norm)
         self.branch_t1ce = Down3DStride(32, 64, norm=self.norm)
 
         # Stages 3+: encoder (128->256->512->1024)
@@ -132,9 +165,9 @@ class DualBranchUNet3D_Stride_Medium(nn.Module):
         x1_t1ce  = self.stem_t1ce(x[:, 1:2])
         x1 = torch.cat([x1_flair, x1_t1ce], dim=1)  # (B,64,...)
 
-        # Stage 2 branches
-        b_flair = self.branch_flair(x1_flair)  # (B,64,.../2)
-        b_t1ce = self.branch_t1ce(x1_t1ce)    # (B,64,.../2)
+        # Stage 2 branches: FLAIR uses dilated conv, t1ce uses standard conv
+        b_flair = self.branch_flair(x1_flair)  # (B,64,.../2) - wider ERF
+        b_t1ce = self.branch_t1ce(x1_t1ce)    # (B,64,.../2) - local details
         x2 = torch.cat([b_flair, b_t1ce], dim=1)  # (B,128,.../2)
 
         # Encoder (UNet3D_Medium: 128->256->512->1024)
@@ -153,7 +186,7 @@ class DualBranchUNet3D_Stride_Medium(nn.Module):
 
 if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = DualBranchUNet3D_Stride_Small(n_channels=2, n_classes=4).to(device)
+    model = DualBranchUNet3D_StrideDilated_Small(n_channels=2, n_classes=4).to(device)
     inp = torch.randn(1, 2, 64, 64, 64).to(device)
     with torch.no_grad():
         out = model(inp)
@@ -162,5 +195,4 @@ if __name__ == "__main__":
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
-
 

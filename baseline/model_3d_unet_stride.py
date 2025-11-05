@@ -25,10 +25,10 @@ class Down3DStride(nn.Module):
         return self.block(x)
 
 
-class UNet3D_Simplified_Stride(nn.Module):
-    """UNet3D_Simplified variant using stride-2 downsampling instead of MaxPool.
+class UNet3D_Stride_Small(nn.Module):
+    """UNet3D Small variant using stride-2 downsampling instead of MaxPool.
 
-    Channel widths match UNet3D_Simplified for fair comparison.
+    Channel widths match UNet3D_Small for fair comparison.
     """
 
     def __init__(self, n_channels: int = 4, n_classes: int = 4, norm: str = 'bn'):
@@ -76,9 +76,52 @@ class UNet3D_Simplified_Stride(nn.Module):
         return logits
 
 
+class UNet3D_Stride_Medium(nn.Module):
+    """UNet3D Medium variant using stride-2 downsampling instead of MaxPool.
+
+    Channel widths match UNet3D_Medium (64, 128, 256, 512, 1024) for fair comparison.
+    """
+
+    def __init__(self, n_channels: int = 4, n_classes: int = 4, norm: str = 'bn', bilinear: bool = False):
+        super().__init__()
+        self.n_channels = n_channels
+        self.n_classes = n_classes
+        self.norm = (norm or 'bn')
+        self.bilinear = bilinear
+
+        # Encoder (UNet3D standard channels)
+        self.inc = DoubleConv3D(n_channels, 64, norm=self.norm)
+        self.down1 = Down3DStride(64, 128, norm=self.norm)
+        self.down2 = Down3DStride(128, 256, norm=self.norm)
+        self.down3 = Down3DStride(256, 512, norm=self.norm)
+        factor = 2 if bilinear else 1
+        self.down4 = Down3DStride(512, 1024 // factor, norm=self.norm)
+
+        # Decoder
+        self.up1 = Up3D(1024, 512 // factor, bilinear, norm=self.norm)
+        self.up2 = Up3D(512, 256 // factor, bilinear, norm=self.norm)
+        self.up3 = Up3D(256, 128 // factor, bilinear, norm=self.norm)
+        self.up4 = Up3D(128, 64, bilinear, norm=self.norm)
+        self.outc = OutConv3D(64, n_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x1 = self.inc(x)
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x = self.up4(x, x1)
+        logits = self.outc(x)
+        return logits
+
+
 if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = UNet3D_Simplified_Stride(n_channels=4, n_classes=4).to(device)
+    model = UNet3D_Stride_Small(n_channels=4, n_classes=4).to(device)
     x = torch.randn(1, 4, 64, 64, 64).to(device)
     with torch.no_grad():
         y = model(x)
