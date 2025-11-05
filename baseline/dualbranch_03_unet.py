@@ -43,7 +43,7 @@ class Down3DStrideDilated(nn.Module):
             nn.Conv3d(out_channels, out_channels, kernel_size=3, dilation=2, padding=2, bias=False),
             _make_norm3d(norm, out_channels),
             nn.ReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, kernel_size=3, dilation=3, padding=3, bias=False),
+            nn.Conv3d(out_channels, out_channels, kernel_size=3, dilation=5, padding=5, bias=False),
             _make_norm3d(norm, out_channels),
             nn.ReLU(inplace=True),
         )
