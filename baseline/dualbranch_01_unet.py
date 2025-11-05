@@ -33,8 +33,12 @@ class DualBranchUNet3D_Small(nn.Module):
         self.branch_flair = Down3D(16, 32, norm=self.norm)
         self.branch_t1ce = Down3D(16, 32, norm=self.norm)
 
-        # Stages 3+: standard UNet encoder (match UNet3D_Small width)
-        self.down2 = Down3D(64, 128, norm=self.norm)
+        # Stage 3: extend the same dual-branch pattern
+        # Process each modality branch (32 -> 64), then concat => 128
+        self.branch_flair3 = Down3D(32, 64, norm=self.norm)
+        self.branch_t1ce3 = Down3D(32, 64, norm=self.norm)
+
+        # Stages 4+: standard UNet encoder (match UNet3D_Small width)
         self.down3 = Down3D(128, 256, norm=self.norm)
         factor = 2 if self.bilinear else 1
         self.down4 = Down3D(256, 512 // factor, norm=self.norm)
@@ -57,8 +61,12 @@ class DualBranchUNet3D_Small(nn.Module):
         b_t1ce = self.branch_t1ce(x1_t1ce)    # (B,32,.../2)
         x2 = torch.cat([b_flair, b_t1ce], dim=1)  # (B,64,.../2)
 
-        # Stages 3+ encoder
-        x3 = self.down2(x2)   # 128
+        # Stage 3 branches: process independently then fuse
+        b2_flair = self.branch_flair3(b_flair)  # (B,64,.../4)
+        b2_t1ce  = self.branch_t1ce3(b_t1ce)   # (B,64,.../4)
+        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)  # (B,128,.../4)
+
+        # Stages 4+ encoder
         x4 = self.down3(x3)   # 256
         x5 = self.down4(x4)   # 512
 

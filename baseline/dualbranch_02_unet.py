@@ -50,8 +50,11 @@ class DualBranchUNet3D_Stride_Small(nn.Module):
         self.branch_flair = Down3DStride(16, 32, norm=self.norm)
         self.branch_t1ce = Down3DStride(16, 32, norm=self.norm)
 
-        # Stages 3+: encoder (64->128->256->512)
-        self.down2 = Down3DStride(64, 128, norm=self.norm)
+        # Stage 3: extend the same dual-branch pattern (32->64 each), then concat -> 128ch
+        self.branch_flair3 = Down3DStride(32, 64, norm=self.norm)
+        self.branch_t1ce3 = Down3DStride(32, 64, norm=self.norm)
+
+        # Stages 4+: encoder (128->256->512)
         self.down3 = Down3DStride(128, 256, norm=self.norm)
         factor = 2 if self.bilinear else 1
         self.down4 = Down3DStride(256, 512 // factor, norm=self.norm)
@@ -74,8 +77,12 @@ class DualBranchUNet3D_Stride_Small(nn.Module):
         b_t1ce = self.branch_t1ce(x1_t1ce)    # (B,32,.../2)
         x2 = torch.cat([b_flair, b_t1ce], dim=1)  # (B,64,.../2)
 
+        # Stage 3 branches
+        b2_flair = self.branch_flair3(b_flair)  # (B,64,.../4)
+        b2_t1ce  = self.branch_t1ce3(b_t1ce)   # (B,64,.../4)
+        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)  # (B,128,.../4)
+
         # Encoder
-        x3 = self.down2(x2)   # 128
         x4 = self.down3(x3)   # 256
         x5 = self.down4(x4)   # 512
 
@@ -113,8 +120,11 @@ class DualBranchUNet3D_Stride_Medium(nn.Module):
         self.branch_flair = Down3DStride(32, 64, norm=self.norm)
         self.branch_t1ce = Down3DStride(32, 64, norm=self.norm)
 
-        # Stages 3+: encoder (128->256->512->1024)
-        self.down2 = Down3DStride(128, 256, norm=self.norm)
+        # Stage 3: extend the same dual-branch pattern (64->128 each), then concat -> 256ch
+        self.branch_flair3 = Down3DStride(64, 128, norm=self.norm)
+        self.branch_t1ce3 = Down3DStride(64, 128, norm=self.norm)
+
+        # Stages 4+: encoder (256->512->1024)
         self.down3 = Down3DStride(256, 512, norm=self.norm)
         factor = 2 if self.bilinear else 1
         self.down4 = Down3DStride(512, 1024 // factor, norm=self.norm)
@@ -137,8 +147,12 @@ class DualBranchUNet3D_Stride_Medium(nn.Module):
         b_t1ce = self.branch_t1ce(x1_t1ce)    # (B,64,.../2)
         x2 = torch.cat([b_flair, b_t1ce], dim=1)  # (B,128,.../2)
 
-        # Encoder (UNet3D_Medium: 128->256->512->1024)
-        x3 = self.down2(x2)   # 256
+        # Stage 3 branches
+        b2_flair = self.branch_flair3(b_flair)  # (B,128,.../4)
+        b2_t1ce  = self.branch_t1ce3(b_t1ce)   # (B,128,.../4)
+        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)  # (B,256,.../4)
+
+        # Encoder (UNet3D_Medium: 256->512->1024)
         x4 = self.down3(x3)   # 512
         x5 = self.down4(x4)   # 1024
 
