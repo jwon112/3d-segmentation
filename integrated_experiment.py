@@ -312,6 +312,18 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         from baseline.dualbranch_03_unet import DualBranchUNet3D_StrideDilated_Medium
         return DualBranchUNet3D_StrideDilated_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
     elif model_name == 'dualbranch_04_unet_s':
+        from baseline.dualbranch_04_unet import DualBranchUNet3D_StrideLK_Small
+        return DualBranchUNet3D_StrideLK_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_04_unet_m':
+        from baseline.dualbranch_04_unet import DualBranchUNet3D_StrideLK_Medium
+        return DualBranchUNet3D_StrideLK_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_05_unet_s':
+        from baseline.dualbranch_05_unet import DualBranchUNet3D_StrideLK_FFN2_Small
+        return DualBranchUNet3D_StrideLK_FFN2_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_05_unet_m':
+        from baseline.dualbranch_05_unet import DualBranchUNet3D_StrideLK_FFN2_Medium
+        return DualBranchUNet3D_StrideLK_FFN2_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_04_unet_s':
         # Dual-branch 3D UNet (v0.4) - LK conv (7x7x7 depthwise) for FLAIR branch (Small channels)
         from baseline.dualbranch_04_unet import DualBranchUNet3D_StrideLK_Small
         return DualBranchUNet3D_StrideLK_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
@@ -694,9 +706,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     
     # 사용 가능한 모델들
     if models is None:
-        available_models = ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m']
+        available_models = ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m']
     else:
-        available_models = [m for m in models if m in ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m']]
+        available_models = [m for m in models if m in ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m']]
     
     # 결과 저장용
     all_results = []
@@ -831,8 +843,18 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         if is_main_process(rank):
                             print(f"Switching RepLK blocks to deploy mode (fusing branches)...")
                         real_model.switch_to_deploy()
+                        # Recalculate parameters and FLOPs after deploy mode (fewer params/FLOPs due to fused branches)
+                        total_params = sum(p.numel() for p in real_model.parameters())
                         if is_main_process(rank):
                             print(f"RepLK blocks switched to deploy mode.")
+                            print(f"Parameters after deploy: {total_params:,} (branches fused)")
+                        # Recalculate FLOPs for deploy mode
+                        if dim == '2d':
+                            flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_2D))
+                        else:
+                            flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_3D))
+                        if is_main_process(rank):
+                            print(f"FLOPs after deploy: {flops:,}")
 
                 # Test set 평가 (모든 랭크 동일 경로)
                 metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size,
