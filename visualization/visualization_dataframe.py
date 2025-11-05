@@ -229,6 +229,106 @@ def create_model_comparison_chart(results_df, results_dir):
     print(f"Model comparison chart saved to: {chart_path}")
     plt.close()
 
+
+def create_wt_tc_et_learning_curves(epochs_df, results_dir):
+    """WT/TC/ET Validation Dice 학습 곡선(모델별)을 별도 이미지로 저장.
+    파일: learning_curve_wt_tc_et.png
+    """
+    if epochs_df.empty:
+        print("⚠️  No epoch data for WT/TC/ET curves")
+        return
+    needed = {'model_name', 'epoch', 'val_wt', 'val_tc', 'val_et'}
+    if not needed.issubset(set(epochs_df.columns)):
+        print("⚠️  epochs_df lacks WT/TC/ET columns; skipping WT/TC/ET curves")
+        return
+
+    models = epochs_df['model_name'].unique()
+    colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
+
+    fig, axes = plt.subplots(3, 1, figsize=(12, 12))
+    fig.suptitle('Validation Curves: WT / TC / ET', fontsize=14, fontweight='bold')
+    metrics = [('val_wt', 'WT'), ('val_tc', 'TC'), ('val_et', 'ET')]
+
+    for ax, (col, title) in zip(axes, metrics):
+        for i, m in enumerate(models):
+            dfm = epochs_df[epochs_df['model_name'] == m].sort_values('epoch')
+            if col in dfm.columns and dfm[col].notna().any():
+                ax.plot(dfm['epoch'], dfm[col], label=m.upper(), color=colors[i], linewidth=2)
+        ax.set_title(f'{title} (Validation)', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Epoch', fontsize=11)
+        ax.set_ylabel('Dice', fontsize=11)
+        ax.set_ylim(0, 1)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='best', fontsize=9)
+
+    plt.tight_layout()
+    out_path = os.path.join(results_dir, 'learning_curve_wt_tc_et.png')
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
+    print(f"WT/TC/ET learning curves saved to: {out_path}")
+    plt.close()
+
+
+def create_wt_tc_et_summary(results_df, results_dir):
+    """모델별 WT/TC/ET Test & Val Dice 요약 바차트.
+    파일: wt_tc_et_summary_test.png, wt_tc_et_summary_val.png
+    """
+    if results_df.empty:
+        print("⚠️  No results data for WT/TC/ET summary")
+        return
+
+    models = results_df['model_name'].unique()
+    colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
+
+    # Test summary
+    req_test = {'test_wt', 'test_tc', 'test_et'}
+    if req_test.issubset(set(results_df.columns)):
+        fig, ax = plt.subplots(1, 1, figsize=(14, 6))
+        x = np.arange(len(models))
+        width = 0.22
+        means_wt = [results_df[results_df['model_name'] == m]['test_wt'].mean() for m in models]
+        means_tc = [results_df[results_df['model_name'] == m]['test_tc'].mean() for m in models]
+        means_et = [results_df[results_df['model_name'] == m]['test_et'].mean() for m in models]
+        ax.bar(x - width, means_wt, width, label='WT')
+        ax.bar(x,         means_tc, width, label='TC')
+        ax.bar(x + width, means_et, width, label='ET')
+        ax.set_xticks(x)
+        ax.set_xticklabels([m.upper() for m in models], rotation=30)
+        ax.set_ylim(0, 1)
+        ax.set_ylabel('Dice')
+        ax.set_title('WT/TC/ET Test Dice Summary')
+        ax.grid(True, axis='y', alpha=0.3)
+        ax.legend()
+        outp = os.path.join(results_dir, 'wt_tc_et_summary_test.png')
+        plt.tight_layout()
+        plt.savefig(outp, dpi=300, bbox_inches='tight')
+        print(f"WT/TC/ET test summary saved to: {outp}")
+        plt.close()
+
+    # Val summary
+    req_val = {'val_wt', 'val_tc', 'val_et'}
+    if req_val.issubset(set(results_df.columns)):
+        fig, ax = plt.subplots(1, 1, figsize=(14, 6))
+        x = np.arange(len(models))
+        width = 0.22
+        means_wt = [results_df[results_df['model_name'] == m]['val_wt'].mean() for m in models]
+        means_tc = [results_df[results_df['model_name'] == m]['val_tc'].mean() for m in models]
+        means_et = [results_df[results_df['model_name'] == m]['val_et'].mean() for m in models]
+        ax.bar(x - width, means_wt, width, label='WT')
+        ax.bar(x,         means_tc, width, label='TC')
+        ax.bar(x + width, means_et, width, label='ET')
+        ax.set_xticks(x)
+        ax.set_xticklabels([m.upper() for m in models], rotation=30)
+        ax.set_ylim(0, 1)
+        ax.set_ylabel('Dice')
+        ax.set_title('WT/TC/ET Validation Dice Summary (Best Epoch)')
+        ax.grid(True, axis='y', alpha=0.3)
+        ax.legend()
+        outp = os.path.join(results_dir, 'wt_tc_et_summary_val.png')
+        plt.tight_layout()
+        plt.savefig(outp, dpi=300, bbox_inches='tight')
+        print(f"WT/TC/ET val summary saved to: {outp}")
+        plt.close()
+
 def create_parameter_efficiency_chart(results_df, results_dir):
     """파라미터 효율성 차트 생성"""
     if results_df.empty:
@@ -354,11 +454,15 @@ def create_comprehensive_analysis(results_df, epochs_df, results_dir):
     # 학습 곡선 차트
     if not epochs_df.empty:
         create_learning_curves_chart(epochs_df, results_dir)
+        # WT/TC/ET 전용 학습 곡선(별도 파일)
+        create_wt_tc_et_learning_curves(epochs_df, results_dir)
     
     # 모델 비교 차트
     if not results_df.empty:
         create_model_comparison_chart(results_df, results_dir)
         create_parameter_efficiency_chart(results_df, results_dir)
+        # WT/TC/ET 요약 바차트(별도 파일)
+        create_wt_tc_et_summary(results_df, results_dir)
     
     print("✅ Comprehensive analysis charts created successfully!")
 
