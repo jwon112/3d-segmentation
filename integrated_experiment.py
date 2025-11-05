@@ -554,7 +554,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     return train_losses, val_dices, epoch_results, best_epoch, best_val_dice, best_val_wt, best_val_tc, best_val_et
 
 def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model', distributed: bool = False, world_size: int = 1,
-                   sw_patch_size=(128, 128, 128), sw_overlap=0.25):
+                   sw_patch_size=(128, 128, 128), sw_overlap=0.25, results_dir: str = None):
     """모델 평가 함수"""
     model.eval()
     test_dice = 0.0
@@ -564,6 +564,11 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     recall_scores = []
     
     with torch.no_grad():
+        import numpy as np
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        from sklearn.metrics import confusion_matrix
+        cm_accum = np.zeros((4, 4), dtype=np.int64)
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
             
@@ -595,6 +600,9 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             pred = torch.argmax(logits, dim=1)
             pred_np = pred.cpu().numpy()
             labels_np = labels.cpu().numpy()
+            # Accumulate 4-class confusion matrix (0..3)
+            cm_batch = confusion_matrix(labels_np.flatten(), pred_np.flatten(), labels=list(range(4)))
+            cm_accum += cm_batch
             
             for class_id in range(4):
                 pred_class = (pred_np == class_id)
@@ -620,11 +628,31 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
         dist.all_reduce(td, op=dist.ReduceOp.SUM)
         td = td / world_size
         test_dice, test_wt, test_tc, test_et = td.tolist()
+        # Confusion matrix reduction is non-trivial without custom gather; skip CM plot on non-main ranks
     
     # Background 제외한 평균 (클래스 1, 2, 3만)
     avg_precision = np.mean(precision_scores[1::4])  # 클래스별로 평균
     avg_recall = np.mean(recall_scores[1::4])
     
+    # Save confusion matrix heatmap on main (or non-distributed)
+    try:
+        if (not distributed) or (distributed and world_size > 0):
+            fig, ax = plt.subplots(figsize=(6, 5))
+            sns.heatmap(cm_accum, annot=True, fmt='d', cmap='Blues',
+                        xticklabels=['BG', 'NCR/NET', 'ED', 'ET'],
+                        yticklabels=['BG', 'NCR/NET', 'ED', 'ET'], ax=ax)
+            ax.set_title(f'Confusion Matrix - {model_name}')
+            ax.set_xlabel('Predicted')
+            ax.set_ylabel('Actual')
+            plt.tight_layout()
+            cm_path = os.path.join(results_dir or '.', f'confusion_matrix_{model_name}.png')
+            plt.savefig(cm_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            if results_dir:
+                print(f"Confusion matrix saved to: {cm_path}")
+    except Exception as _e:
+        print(f"Warning: failed to save confusion matrix: {_e}")
+
     return {
         'dice': test_dice,
         'wt': test_wt,
@@ -789,7 +817,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
 
                 # Test set 평가 (모든 랭크 동일 경로)
                 metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size,
-                                          sw_patch_size=(128, 128, 128), sw_overlap=0.10)
+                                          sw_patch_size=(128, 128, 128), sw_overlap=0.10, results_dir=results_dir)
                 
                 # 결과 저장
                 result = {
