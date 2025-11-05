@@ -89,8 +89,10 @@ class ReparamLargeKernelConv3D(nn.Module):
             return
         k_eq, b_eq = self.get_equivalent_kernel_bias()
         ch = k_eq.size(0)
+        # ensure new conv is created on the same device as folded weights
+        device = k_eq.device
         self.lkb_reparam = nn.Conv3d(ch, ch, kernel_size=self.kernel_size, stride=1,
-                                      padding=self.kernel_size // 2, groups=ch, bias=True)
+                                      padding=self.kernel_size // 2, groups=ch, bias=True).to(device)
         self.lkb_reparam.weight.data.copy_(k_eq)
         self.lkb_reparam.bias.data.copy_(b_eq)
         # remove train branches
