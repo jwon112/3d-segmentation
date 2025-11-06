@@ -115,7 +115,7 @@ class RepLKBlock3D(nn.Module):
         expanded = max(1, int(round(channels * dw_ratio)))
         # pointwise expand then contract (inverted bottleneck)
         self.pw1 = _conv_bn_relu_3d(channels, expanded, kernel_size=1, stride=1, padding=0, groups=1, norm=self.norm)
-        self.lk = ReparamLargeKernelConv3D(expanded, kernel_size=7, small_kernel=3, norm=self.norm)
+        self.lk = ReparamLargeKernelConv3D(expanded, kernel_size=13, small_kernel=3, norm=self.norm)
         self.act = nn.ReLU(inplace=True)
         self.pw2 = _conv_bn_3d(expanded, channels, kernel_size=1, stride=1, padding=0, groups=1, norm=self.norm)
 
@@ -215,7 +215,7 @@ class ConvFFN3D(nn.Module):
 class DualBranchUNet3D_StrideLK_Small(nn.Module):
     """Dual-branch 3D U-Net (v0.4 - LK conv for FLAIR) - Small channel version
 
-    - FLAIR branch uses two depthwise 7x7x7 convs (RepLKNet-style large kernel) after stride downsampling
+    - FLAIR branch uses two depthwise 13x13x13 convs (RepLKNet-style large kernel) after stride downsampling
     - t1ce branch uses standard 3x3 convs (Down3DStride)
     - Applied at Stage 2 and Stage 3 (branching extended through Stage 3)
     - Width matches UNet3D_Small for fair comparison.
@@ -291,7 +291,7 @@ class DualBranchUNet3D_StrideLK_Small(nn.Module):
 class DualBranchUNet3D_StrideLK_Medium(nn.Module):
     """Dual-branch 3D U-Net (v0.4 - LK conv for FLAIR) - Medium channel version
 
-    - FLAIR branch uses two depthwise 7x7x7 convs after stride downsampling
+    - FLAIR branch uses two depthwise 13x13x13 convs after stride downsampling
     - t1ce branch uses standard 3x3 convs
     - Applied at Stage 2 and 3
     - Width matches UNet3D_Medium for fair comparison.
