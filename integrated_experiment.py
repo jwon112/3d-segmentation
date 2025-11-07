@@ -364,14 +364,6 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     elif model_name == 'dualbranch_09_unet_m':
         from baseline.dualbranch_09_unet import DualBranchUNet3D_DilatedMobile_Medium
         return DualBranchUNet3D_DilatedMobile_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_04_unet_s':
-        # Dual-branch 3D UNet (v0.4) - LK conv (7x7x7 depthwise) for FLAIR branch (Small channels)
-        from baseline.dualbranch_04_unet import DualBranchUNet3D_StrideLK_Small
-        return DualBranchUNet3D_StrideLK_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_04_unet_m':
-        # Dual-branch 3D UNet (v0.4) - LK conv (7x7x7 depthwise) for FLAIR branch (Medium channels)
-        from baseline.dualbranch_04_unet import DualBranchUNet3D_StrideLK_Medium
-        return DualBranchUNet3D_StrideLK_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
