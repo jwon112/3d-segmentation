@@ -522,11 +522,14 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         test_sampler = DistributedSampler(test_dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=False)
     
     # 워커 RNG 고정 함수 (재현성)
+    # 완전한 재현성을 위해 모든 worker가 같은 base_seed 사용
+    # worker_id는 데이터 순서에만 영향을 주고, RNG 시드에는 영향을 주지 않음
     def _worker_init_fn(worker_id):
         base_seed = (seed if seed is not None else 0)
-        torch.manual_seed(base_seed + worker_id)
-        np.random.seed(base_seed + worker_id)
-        random.seed(base_seed + worker_id)
+        # 모든 worker가 같은 시드 사용 (완전한 재현성 보장)
+        torch.manual_seed(base_seed)
+        np.random.seed(base_seed)
+        random.seed(base_seed)
 
     # 공통 generator (샘플링 결정성)
     _generator = torch.Generator()

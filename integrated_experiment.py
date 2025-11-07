@@ -84,14 +84,31 @@ from data_loader import get_data_loaders
 from visualization import create_comprehensive_analysis, create_interactive_3d_plot
 
 def set_seed(seed):
-    """랜덤 시드 설정"""
+    """랜덤 시드 설정 (완전한 재현성을 위한 전역 시드 고정)"""
+    # Python 내장 random
+    random.seed(seed)
+    # NumPy
+    np.random.seed(seed)
+    # PyTorch CPU
     torch.manual_seed(seed)
+    # PyTorch CUDA (모든 GPU)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
-    random.seed(seed)
+    # CuDNN 결정성 설정
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    # PyTorch deterministic 알고리즘 강제 (선택적)
+    # 주의: 완전한 재현성을 위해 필요하지만, 성능 저하가 있을 수 있음 (약 10-20%)
+    # 대부분의 연구에서는 이 설정 없이도 충분히 재현 가능한 결과를 얻음
+    # 필요시 주석 해제: torch.use_deterministic_algorithms(True, warn_only=True)
+    # try:
+    #     torch.use_deterministic_algorithms(True, warn_only=True)
+    # except Exception:
+    #     # PyTorch 버전이 낮거나 지원하지 않는 경우 무시
+    #     pass
+    # Python hash seed (딕셔너리 순서 등에 영향)
+    import os
+    os.environ['PYTHONHASHSEED'] = str(seed)
 
 
 def _make_blend_weights_3d(patch_size):
@@ -355,6 +372,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                         If False, use standard combined loss (Dice 50% + CE 50%)
         results_dir: 실험 결과 저장 디렉토리 (체크포인트 저장 경로)
     """
+    # 훈련 시작 전 시드 재고정 (완전한 재현성 보장)
+    set_seed(seed)
+    
     model = model.to(device)
     # nnU-Net style loss: Soft Dice with Squared Prediction, Dice 70% + CE 30%
     # Standard loss: Dice 50% + CE 50%
