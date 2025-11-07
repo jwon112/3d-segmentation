@@ -359,11 +359,23 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         from baseline.dualbranch_08_unet import DualBranchUNet3D_LK_MobileNet_MViT_Medium
         return DualBranchUNet3D_LK_MobileNet_MViT_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
     elif model_name == 'dualbranch_09_unet_s':
-        from baseline.dualbranch_09_unet import DualBranchUNet3D_DilatedMobile_Small
-        return DualBranchUNet3D_DilatedMobile_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+        from baseline.dualbranch_09_unet import DualBranchUNet3D_LK7x7_MobileNet_MViT_Small
+        return DualBranchUNet3D_LK7x7_MobileNet_MViT_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
     elif model_name == 'dualbranch_09_unet_m':
-        from baseline.dualbranch_09_unet import DualBranchUNet3D_DilatedMobile_Medium
+        from baseline.dualbranch_09_unet import DualBranchUNet3D_LK7x7_MobileNet_MViT_Medium
+        return DualBranchUNet3D_LK7x7_MobileNet_MViT_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_10_unet_s':
+        from baseline.dualbranch_10_unet import DualBranchUNet3D_DilatedMobile_Small
+        return DualBranchUNet3D_DilatedMobile_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_10_unet_m':
+        from baseline.dualbranch_10_unet import DualBranchUNet3D_DilatedMobile_Medium
         return DualBranchUNet3D_DilatedMobile_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_11_unet_s':
+        from baseline.dualbranch_11_unet import DualBranchUNet3D_Dilated123_Mobile_Small
+        return DualBranchUNet3D_Dilated123_Mobile_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_11_unet_m':
+        from baseline.dualbranch_11_unet import DualBranchUNet3D_Dilated123_Mobile_Medium
+        return DualBranchUNet3D_Dilated123_Mobile_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -742,9 +754,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     
     # 사용 가능한 모델들
     if models is None:
-        available_models = ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m']
+        available_models = ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m', 'dualbranch_10_unet_s', 'dualbranch_10_unet_m', 'dualbranch_11_unet_s', 'dualbranch_11_unet_m']
     else:
-        available_models = [m for m in models if m in ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m']]
+        available_models = [m for m in models if m in ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m', 'dualbranch_10_unet_s', 'dualbranch_10_unet_m', 'dualbranch_11_unet_s', 'dualbranch_11_unet_m']]
     
     # 결과 저장용
     all_results = []
@@ -873,7 +885,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
 
                 # Switch RepLK blocks to deploy mode (before final test evaluation)
                 # RepLK blocks are fused into single 7x7x7 depthwise conv for efficient inference
-                if model_name in ['dualbranch_04_unet_s', 'dualbranch_04_unet_m']:
+                if model_name in ['dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m']:
                     real_model = model.module if hasattr(model, 'module') else model
                     if hasattr(real_model, 'switch_to_deploy'):
                         if is_main_process(rank):
