@@ -41,11 +41,12 @@ def _normalize_volume_np(vol):
 class BratsDataset3D(Dataset):
     """3D BraTS 데이터셋 (Depth, Height, Width)"""
     
-    def __init__(self, data_dir, split='train', max_samples=None, dataset_version='brats2021'):
+    def __init__(self, data_dir, split='train', max_samples=None, dataset_version='brats2021', use_4modalities=False):
         self.data_dir = data_dir
         self.split = split
         self.max_samples = max_samples
         self.dataset_version = dataset_version
+        self.use_4modalities = use_4modalities  # True면 4개 모달리티 (t1, t1ce, t2, flair), False면 2개 (t1ce, flair)
         
         # 데이터 파일 목록 수집
         self.samples = self._load_samples()
@@ -125,10 +126,14 @@ class BratsDataset3D(Dataset):
     
     
     def _load_nifti_data(self, patient_dir):
-        """NIfTI 파일 로드 (T1CE, FLAIR만 사용)"""
+        """NIfTI 파일 로드
+        
+        use_4modalities=True: 4개 모달리티 (t1, t1ce, t2, flair)
+        use_4modalities=False: 2개 모달리티 (t1ce, flair)
+        """
         files = os.listdir(patient_dir)
         
-        # modality 파일 찾기 (T1CE, FLAIR만)
+        # modality 파일 찾기
         t1ce_file = [f for f in files if 't1ce' in f.lower()][0]
         flair_file = [f for f in files if 'flair.nii' in f.lower()][0]
         seg_file = [f for f in files if 'seg' in f.lower()][0]
@@ -141,12 +146,28 @@ class BratsDataset3D(Dataset):
         # 정규화 (채널별, 비영점 기준 퍼센타일 클리핑 + Z-score)
         t1ce = _normalize_volume_np(t1ce)
         flair = _normalize_volume_np(flair)
-
-        # (H, W, D) 형태로 결합 (T1CE, FLAIR만)
-        image = np.stack([t1ce, flair], axis=-1)  # (H, W, D, 2)
         
-        # 텐서로 변환
-        image = torch.from_numpy(np.transpose(image, (3, 0, 1, 2))).float()  # (2, H, W, D)
+        if self.use_4modalities:
+            # 4개 모달리티 로드 (t1, t1ce, t2, flair)
+            t1_file = [f for f in files if 't1.nii' in f.lower() and 't1ce' not in f.lower()][0]
+            t2_file = [f for f in files if 't2.nii' in f.lower()][0]
+            
+            t1 = nib.load(os.path.join(patient_dir, t1_file)).get_fdata()
+            t2 = nib.load(os.path.join(patient_dir, t2_file)).get_fdata()
+            
+            t1 = _normalize_volume_np(t1)
+            t2 = _normalize_volume_np(t2)
+            
+            # (H, W, D) 형태로 결합 (T1, T1CE, T2, FLAIR)
+            image = np.stack([t1, t1ce, t2, flair], axis=-1)  # (H, W, D, 4)
+            # 텐서로 변환
+            image = torch.from_numpy(np.transpose(image, (3, 0, 1, 2))).float()  # (4, H, W, D)
+        else:
+            # (H, W, D) 형태로 결합 (T1CE, FLAIR만)
+            image = np.stack([t1ce, flair], axis=-1)  # (H, W, D, 2)
+            # 텐서로 변환
+            image = torch.from_numpy(np.transpose(image, (3, 0, 1, 2))).float()  # (2, H, W, D)
+        
         mask = torch.from_numpy(seg).long()
         
         # BraTS label 매핑: 4 -> 3 (4는 전체 tumor이고, ET(3)로 매핑)
@@ -392,7 +413,8 @@ class BratsDataset2D(Dataset):
 
 def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None, 
                      train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, dim='3d',
-                     distributed=False, world_size=None, rank=None, dataset_version='brats2021', seed=None):
+                     distributed=False, world_size=None, rank=None, dataset_version='brats2021', seed=None,
+                     use_4modalities=False):
     """
     데이터 로더 생성
     
@@ -407,6 +429,7 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         dim: '2d' 또는 '3d'
         dataset_version: 'brats2021' 또는 'brats2018' (기본값: 'brats2021')
         seed: 데이터 분할 및 학습을 위한 랜덤 시드 (None이면 설정하지 않음)
+        use_4modalities: True면 4개 모달리티 (t1, t1ce, t2, flair), False면 2개 (t1ce, flair)
     
     Returns:
         train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler
@@ -423,11 +446,12 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
     # 데이터셋 선택
     if dim == '2d':
         dataset_class = BratsDataset2D
+        # 2D는 아직 4개 모달리티 지원 안함 (필요시 추가)
+        full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples, dataset_version=dataset_version)
     else:
         dataset_class = BratsDataset3D
-    
-    # 전체 데이터셋 로드
-    full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples, dataset_version=dataset_version)
+        # 전체 데이터셋 로드 (use_4modalities 파라미터 전달)
+        full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples, dataset_version=dataset_version, use_4modalities=use_4modalities)
     
     # 데이터셋 분할
     total_len = len(full_dataset)

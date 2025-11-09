@@ -388,6 +388,23 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     elif model_name == 'dualbranch_13_unet_m':
         from baseline.dualbranch_13_unet import DualBranchUNet3D_MViT_Extended_Medium
         return DualBranchUNet3D_MViT_Extended_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    # 모달리티 비교 실험 모델들
+    elif model_name == 'unet3d_2modal_s':
+        # 단일 분기, 2채널 (t1ce, flair) concat
+        from baseline.model_3d_unet_modal_comparison import UNet3D_2Modal_Small
+        return UNet3D_2Modal_Small(n_classes=n_classes, norm=norm)
+    elif model_name == 'unet3d_4modal_s':
+        # 단일 분기, 4채널 (t1, t1ce, t2, flair) concat
+        from baseline.model_3d_unet_modal_comparison import UNet3D_4Modal_Small
+        return UNet3D_4Modal_Small(n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_2modal_unet_s':
+        # 2개 분기 (t1ce, flair) - dualbranch_01_unet_s와 동일 (MaxPool 기반)
+        from baseline.dualbranch_01_unet import DualBranchUNet3D_Small
+        return DualBranchUNet3D_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'quadbranch_4modal_unet_s':
+        # 4개 분기 (t1, t1ce, t2, flair)
+        from baseline.model_3d_unet_modal_comparison import QuadBranchUNet3D_4Modal_Small
+        return QuadBranchUNet3D_4Modal_Small(n_classes=n_classes, norm=norm)
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -766,9 +783,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     
     # 사용 가능한 모델들
     if models is None:
-        available_models = ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m', 'dualbranch_10_unet_s', 'dualbranch_10_unet_m', 'dualbranch_11_unet_s', 'dualbranch_11_unet_m', 'dualbranch_12_unet_s', 'dualbranch_12_unet_m', 'dualbranch_13_unet_s', 'dualbranch_13_unet_m']
+        available_models = ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m', 'dualbranch_10_unet_s', 'dualbranch_10_unet_m', 'dualbranch_11_unet_s', 'dualbranch_11_unet_m', 'dualbranch_12_unet_s', 'dualbranch_12_unet_m', 'dualbranch_13_unet_s', 'dualbranch_13_unet_m', 'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s', 'quadbranch_4modal_unet_s']
     else:
-        available_models = [m for m in models if m in ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m', 'dualbranch_10_unet_s', 'dualbranch_10_unet_m', 'dualbranch_11_unet_s', 'dualbranch_11_unet_m', 'dualbranch_12_unet_s', 'dualbranch_12_unet_m', 'dualbranch_13_unet_s', 'dualbranch_13_unet_m']]
+        available_models = [m for m in models if m in ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m', 'dualbranch_10_unet_s', 'dualbranch_10_unet_m', 'dualbranch_11_unet_s', 'dualbranch_11_unet_m', 'dualbranch_12_unet_s', 'dualbranch_12_unet_m', 'dualbranch_13_unet_s', 'dualbranch_13_unet_m', 'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s', 'quadbranch_4modal_unet_s']]
     
     # 결과 저장용
     all_results = []
@@ -809,20 +826,6 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         # 전역 seed 설정 (데이터 분할, 학습 모두에 적용)
         set_seed(seed)
         
-        # 데이터 로더 생성 (seed 전달하여 데이터 분할 재현성 보장)
-        train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
-            data_dir=data_path,
-            batch_size=batch_size,
-            num_workers=num_workers,  # /dev/shm 2GB 환경에서 기본 2 권장
-            max_samples=None,  # 전체 데이터 사용
-            dim=dim,  # 2D 또는 3D
-            dataset_version=dataset_version,  # 데이터셋 버전
-            seed=seed,  # 데이터 분할을 위한 seed
-            distributed=distributed,
-            world_size=world_size,
-            rank=rank
-        )
-        
         # 각 모델별로 실험
         for model_name in available_models:
             try:
@@ -830,9 +833,31 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                 
                 # 모델별 결정성 보장: 모델 초기화/샘플링 RNG 고정
                 set_seed(seed)
+                
+                # 모델에 따라 use_4modalities 및 n_channels 결정
+                use_4modalities = model_name in ['unet3d_4modal_s', 'quadbranch_4modal_unet_s']
+                if use_4modalities:
+                    n_channels = 4
+                else:
+                    n_channels = 2
+                
+                # 데이터 로더 생성 (모델별로 use_4modalities 설정)
+                train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
+                    data_dir=data_path,
+                    batch_size=batch_size,
+                    num_workers=num_workers,  # /dev/shm 2GB 환경에서 기본 2 권장
+                    max_samples=None,  # 전체 데이터 사용
+                    dim=dim,  # 2D 또는 3D
+                    dataset_version=dataset_version,  # 데이터셋 버전
+                    seed=seed,  # 데이터 분할을 위한 seed
+                    distributed=distributed,
+                    world_size=world_size,
+                    rank=rank,
+                    use_4modalities=use_4modalities  # 모델에 따라 설정
+                )
 
-                # 모델 생성 (T1CE, FLAIR만 사용하므로 2 channels)
-                model = get_model(model_name, n_channels=2, n_classes=4, dim=dim, use_pretrained=use_pretrained)
+                # 모델 생성
+                model = get_model(model_name, n_channels=n_channels, n_classes=4, dim=dim, use_pretrained=use_pretrained)
                 # DDP wrap
                 if distributed:
                     from torch.nn.parallel import DistributedDataParallel as DDP
