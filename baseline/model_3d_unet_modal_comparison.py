@@ -118,12 +118,12 @@ class UNet3D_4Modal_Small(nn.Module):
 
 
 class QuadBranchUNet3D_4Modal_Small(nn.Module):
-    """4개 분기 UNet - 4개 모달리티 각각 분기 처리
+    """4개 분기 UNet - 4개 모달리티 각각 분기 처리 (채널 수 절반으로 조정)
     
     Input: (B, 4, D, H, W) - [t1, t1ce, t2, flair]
-    - Stage 1: 각 모달리티별 stem (1->16 each), concat -> 64ch
-    - Stage 2: 각 모달리티별 branch (16->32 each), concat -> 128ch
-    - Stage 3: 각 모달리티별 branch (32->64 each), concat -> 256ch
+    - Stage 1: 각 모달리티별 stem (1->8 each), concat -> 32ch (다른 모델과 동일)
+    - Stage 2: 각 모달리티별 branch (8->16 each), concat -> 64ch (다른 모델과 동일)
+    - Stage 3: 각 모달리티별 branch (16->32 each), concat -> 128ch (다른 모델과 동일)
     - Stage 4+: 단일 융합 분기
     """
     def __init__(self, n_classes=4, norm: str = 'bn', bilinear: bool = False):
@@ -133,63 +133,63 @@ class QuadBranchUNet3D_4Modal_Small(nn.Module):
         self.norm = (norm or 'bn')
         self.bilinear = bilinear
 
-        # Stage 1: modality-specific stems (1->16 each), then concat -> 64ch
-        self.stem_t1 = DoubleConv3D(1, 16, norm=self.norm)
-        self.stem_t1ce = DoubleConv3D(1, 16, norm=self.norm)
-        self.stem_t2 = DoubleConv3D(1, 16, norm=self.norm)
-        self.stem_flair = DoubleConv3D(1, 16, norm=self.norm)
+        # Stage 1: modality-specific stems (1->8 each), then concat -> 32ch (다른 모델과 동일)
+        self.stem_t1 = DoubleConv3D(1, 8, norm=self.norm)
+        self.stem_t1ce = DoubleConv3D(1, 8, norm=self.norm)
+        self.stem_t2 = DoubleConv3D(1, 8, norm=self.norm)
+        self.stem_flair = DoubleConv3D(1, 8, norm=self.norm)
 
-        # Stage 2: modality-specific branches (16->32 each), then concat -> 128ch
-        self.branch_t1 = Down3D(16, 32, norm=self.norm)
-        self.branch_t1ce = Down3D(16, 32, norm=self.norm)
-        self.branch_t2 = Down3D(16, 32, norm=self.norm)
-        self.branch_flair = Down3D(16, 32, norm=self.norm)
+        # Stage 2: modality-specific branches (8->16 each), then concat -> 64ch (다른 모델과 동일)
+        self.branch_t1 = Down3D(8, 16, norm=self.norm)
+        self.branch_t1ce = Down3D(8, 16, norm=self.norm)
+        self.branch_t2 = Down3D(8, 16, norm=self.norm)
+        self.branch_flair = Down3D(8, 16, norm=self.norm)
 
-        # Stage 3: modality-specific branches (32->64 each), then concat -> 256ch
-        self.branch_t1_3 = Down3D(32, 64, norm=self.norm)
-        self.branch_t1ce_3 = Down3D(32, 64, norm=self.norm)
-        self.branch_t2_3 = Down3D(32, 64, norm=self.norm)
-        self.branch_flair_3 = Down3D(32, 64, norm=self.norm)
+        # Stage 3: modality-specific branches (16->32 each), then concat -> 128ch (다른 모델과 동일)
+        self.branch_t1_3 = Down3D(16, 32, norm=self.norm)
+        self.branch_t1ce_3 = Down3D(16, 32, norm=self.norm)
+        self.branch_t2_3 = Down3D(16, 32, norm=self.norm)
+        self.branch_flair_3 = Down3D(16, 32, norm=self.norm)
 
-        # Stage 4+: 단일 융합 분기
-        self.down4 = Down3D(256, 512, norm=self.norm)
+        # Stage 4+: 단일 융합 분기 (다른 모델과 동일)
+        self.down4 = Down3D(128, 256, norm=self.norm)
         factor = 2 if self.bilinear else 1
-        self.down5 = Down3D(512, 1024 // factor, norm=self.norm)
+        self.down5 = Down3D(256, 512 // factor, norm=self.norm)
 
-        # Decoder
-        self.up1 = Up3D(1024, 512 // factor, self.bilinear, norm=self.norm)
-        self.up2 = Up3D(512, 256 // factor, self.bilinear, norm=self.norm)
-        self.up3 = Up3D(256, 128 // factor, self.bilinear, norm=self.norm)
-        self.up4 = Up3D(128, 64, self.bilinear, norm=self.norm)
-        self.outc = OutConv3D(64, n_classes)
+        # Decoder (다른 모델과 동일)
+        self.up1 = Up3D(512, 256 // factor, self.bilinear, norm=self.norm)
+        self.up2 = Up3D(256, 128 // factor, self.bilinear, norm=self.norm)
+        self.up3 = Up3D(128, 64 // factor, self.bilinear, norm=self.norm)
+        self.up4 = Up3D(64, 32, self.bilinear, norm=self.norm)
+        self.outc = OutConv3D(32, n_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, 4, D, H, W) - [t1, t1ce, t2, flair]
         
         # Stage 1: modality-specific stems
-        x1_t1 = self.stem_t1(x[:, 0:1])      # (B, 16, ...)
-        x1_t1ce = self.stem_t1ce(x[:, 1:2])  # (B, 16, ...)
-        x1_t2 = self.stem_t2(x[:, 2:3])      # (B, 16, ...)
-        x1_flair = self.stem_flair(x[:, 3:4]) # (B, 16, ...)
-        x1 = torch.cat([x1_t1, x1_t1ce, x1_t2, x1_flair], dim=1)  # (B, 64, ...)
+        x1_t1 = self.stem_t1(x[:, 0:1])      # (B, 8, ...)
+        x1_t1ce = self.stem_t1ce(x[:, 1:2])  # (B, 8, ...)
+        x1_t2 = self.stem_t2(x[:, 2:3])      # (B, 8, ...)
+        x1_flair = self.stem_flair(x[:, 3:4]) # (B, 8, ...)
+        x1 = torch.cat([x1_t1, x1_t1ce, x1_t2, x1_flair], dim=1)  # (B, 32, ...)
 
         # Stage 2: modality-specific branches
-        b_t1 = self.branch_t1(x1_t1)      # (B, 32, .../2)
-        b_t1ce = self.branch_t1ce(x1_t1ce)  # (B, 32, .../2)
-        b_t2 = self.branch_t2(x1_t2)      # (B, 32, .../2)
-        b_flair = self.branch_flair(x1_flair)  # (B, 32, .../2)
-        x2 = torch.cat([b_t1, b_t1ce, b_t2, b_flair], dim=1)  # (B, 128, .../2)
+        b_t1 = self.branch_t1(x1_t1)      # (B, 16, .../2)
+        b_t1ce = self.branch_t1ce(x1_t1ce)  # (B, 16, .../2)
+        b_t2 = self.branch_t2(x1_t2)      # (B, 16, .../2)
+        b_flair = self.branch_flair(x1_flair)  # (B, 16, .../2)
+        x2 = torch.cat([b_t1, b_t1ce, b_t2, b_flair], dim=1)  # (B, 64, .../2)
 
         # Stage 3: modality-specific branches
-        b2_t1 = self.branch_t1_3(b_t1)      # (B, 64, .../4)
-        b2_t1ce = self.branch_t1ce_3(b_t1ce)  # (B, 64, .../4)
-        b2_t2 = self.branch_t2_3(b_t2)      # (B, 64, .../4)
-        b2_flair = self.branch_flair_3(b_flair)  # (B, 64, .../4)
-        x3 = torch.cat([b2_t1, b2_t1ce, b2_t2, b2_flair], dim=1)  # (B, 256, .../4)
+        b2_t1 = self.branch_t1_3(b_t1)      # (B, 32, .../4)
+        b2_t1ce = self.branch_t1ce_3(b_t1ce)  # (B, 32, .../4)
+        b2_t2 = self.branch_t2_3(b_t2)      # (B, 32, .../4)
+        b2_flair = self.branch_flair_3(b_flair)  # (B, 32, .../4)
+        x3 = torch.cat([b2_t1, b2_t1ce, b2_t2, b2_flair], dim=1)  # (B, 128, .../4)
 
         # Stage 4+: 단일 융합 분기
-        x4 = self.down4(x3)   # (B, 512, .../8)
-        x5 = self.down5(x4)   # (B, 1024, .../16)
+        x4 = self.down4(x3)   # (B, 256, .../8)
+        x5 = self.down5(x4)   # (B, 512, .../16)
 
         # Decoder
         x = self.up1(x5, x4)

@@ -31,7 +31,7 @@ from torch.utils.data import DataLoader
 import argparse
 import os
 import torch.multiprocessing as mp
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
@@ -51,7 +51,14 @@ def setup_distributed():
         rank = int(os.environ['RANK'])
         world_size = int(os.environ['WORLD_SIZE'])
         local_rank = int(os.environ.get('LOCAL_RANK', 0))
-        dist.init_process_group(backend='nccl', init_method='env://')
+        
+        # NCCL timeout 설정 (기본 10분 -> 30분으로 증가)
+        timeout = os.environ.get('NCCL_TIMEOUT', '1800')  # 30분 (초 단위)
+        dist.init_process_group(
+            backend='nccl', 
+            init_method='env://',
+            timeout=datetime.timedelta(seconds=int(timeout))
+        )
         torch.cuda.set_device(local_rank)
         return True, rank, local_rank, world_size
     return False, 0, 0, 1
