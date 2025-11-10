@@ -57,7 +57,7 @@ def setup_distributed():
         dist.init_process_group(
             backend='nccl', 
             init_method='env://',
-            timeout=datetime.timedelta(seconds=int(timeout))
+            timeout=timedelta(seconds=int(timeout))
         )
         torch.cuda.set_device(local_rank)
         return True, rank, local_rank, world_size
