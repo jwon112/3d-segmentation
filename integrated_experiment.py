@@ -894,9 +894,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                 
                 # FLOPs 계산 (모델이 device에 있는 상태에서)
                 if dim == '2d':
-                    flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_2D))
+                    flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_2D))
                 else:
-                    flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_3D))
+                    flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
                 if is_main_process(rank):
                     print(f"FLOPs: {flops:,}")
                 
@@ -935,9 +935,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             print(f"Parameters after deploy: {total_params:,} (branches fused)")
                         # Recalculate FLOPs for deploy mode
                         if dim == '2d':
-                            flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_2D))
+                            flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_2D))
                         else:
-                            flops = calculate_flops(model, input_size=(1, 2, *INPUT_SIZE_3D))
+                            flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
                         if is_main_process(rank):
                             print(f"FLOPs after deploy: {flops:,}")
 
