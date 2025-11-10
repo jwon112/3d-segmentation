@@ -15,6 +15,67 @@ import torch.nn.functional as F
 from .model_3d_unet import DoubleConv3D, Down3D, Up3D, OutConv3D, _make_norm3d
 
 
+class ModalityAttention3D(nn.Module):
+    """모달리티별 어텐션 (SE-Net 스타일)
+    
+    각 모달리티 브랜치의 출력에 가중치를 부여하여 모달리티별 기여도를 학습.
+    Global Average Pooling + FC를 통해 모달리티별 어텐션 가중치를 생성.
+    
+    Returns:
+        weighted_features: 가중치가 적용된 모달리티별 feature list
+        attention_weights: [B, num_modalities] 형태의 어텐션 가중치
+    """
+    def __init__(self, num_modalities=4, channels_per_modality=32, reduction=4):
+        super(ModalityAttention3D, self).__init__()
+        self.num_modalities = num_modalities
+        self.channels_per_modality = channels_per_modality
+        
+        # Global Average Pooling
+        self.gap = nn.AdaptiveAvgPool3d(1)
+        
+        # FC layers for attention weights
+        # 입력: 각 모달리티의 GAP feature (num_modalities * channels_per_modality)
+        # 출력: 각 모달리티별 가중치 (num_modalities)
+        bottleneck_dim = (channels_per_modality * num_modalities) // reduction
+        self.fc = nn.Sequential(
+            nn.Linear(channels_per_modality * num_modalities, bottleneck_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(bottleneck_dim, num_modalities),
+            nn.Sigmoid()  # 0~1 사이의 가중치
+        )
+    
+    def forward(self, modality_features):
+        """
+        Args:
+            modality_features: list of [B, C, D, H, W] tensors (각 모달리티별 feature)
+        
+        Returns:
+            weighted_features: 가중치가 적용된 feature list
+            attention_weights: [B, num_modalities] 형태의 어텐션 가중치
+        """
+        # 각 모달리티별로 Global Average Pooling
+        gap_features = []
+        for feat in modality_features:
+            # [B, C, D, H, W] -> [B, C, 1, 1, 1] -> [B, C]
+            gap_feat = self.gap(feat).squeeze(-1).squeeze(-1).squeeze(-1)
+            gap_features.append(gap_feat)
+        
+        # Concat all modality features: [B, C*num_modalities]
+        concat_gap = torch.cat(gap_features, dim=1)
+        
+        # Get attention weights: [B, num_modalities]
+        attention_weights = self.fc(concat_gap)
+        
+        # Apply attention to each modality feature
+        weighted_features = []
+        for i, feat in enumerate(modality_features):
+            # [B, num_modalities] -> [B, 1, 1, 1, 1] for broadcasting
+            weight = attention_weights[:, i].view(-1, 1, 1, 1, 1)
+            weighted_features.append(feat * weight)
+        
+        return weighted_features, attention_weights
+
+
 class UNet3D_2Modal_Small(nn.Module):
     """단일 분기 UNet - 2개 모달리티 (t1ce, flair) 채널 concat
     
@@ -151,6 +212,10 @@ class QuadBranchUNet3D_4Modal_Small(nn.Module):
         self.branch_t2_3 = Down3D(16, 32, norm=self.norm)
         self.branch_flair_3 = Down3D(16, 32, norm=self.norm)
 
+        # Modality attention modules (Stage 2, 3에서 concat 전에 적용)
+        self.modality_attn2 = ModalityAttention3D(num_modalities=4, channels_per_modality=16, reduction=4)
+        self.modality_attn3 = ModalityAttention3D(num_modalities=4, channels_per_modality=32, reduction=4)
+
         # Stage 4+: 단일 융합 분기 (다른 모델과 동일)
         self.down4 = Down3D(128, 256, norm=self.norm)
         factor = 2 if self.bilinear else 1
@@ -163,7 +228,16 @@ class QuadBranchUNet3D_4Modal_Small(nn.Module):
         self.up4 = Up3D(64, 32, self.bilinear, norm=self.norm)
         self.outc = OutConv3D(32, n_classes)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_attention=False):
+        """
+        Args:
+            x: (B, 4, D, H, W) - [t1, t1ce, t2, flair]
+            return_attention: True면 어텐션 가중치도 반환
+        
+        Returns:
+            logits: (B, n_classes, D, H, W)
+            attention_weights: (optional) dict with 'stage2' and 'stage3' attention weights
+        """
         # x: (B, 4, D, H, W) - [t1, t1ce, t2, flair]
         
         # Stage 1: modality-specific stems
@@ -178,6 +252,10 @@ class QuadBranchUNet3D_4Modal_Small(nn.Module):
         b_t1ce = self.branch_t1ce(x1_t1ce)  # (B, 16, .../2)
         b_t2 = self.branch_t2(x1_t2)      # (B, 16, .../2)
         b_flair = self.branch_flair(x1_flair)  # (B, 16, .../2)
+        
+        # Modality attention at Stage 2
+        weighted_features2, attn_weights2 = self.modality_attn2([b_t1, b_t1ce, b_t2, b_flair])
+        b_t1, b_t1ce, b_t2, b_flair = weighted_features2
         x2 = torch.cat([b_t1, b_t1ce, b_t2, b_flair], dim=1)  # (B, 64, .../2)
 
         # Stage 3: modality-specific branches
@@ -185,6 +263,10 @@ class QuadBranchUNet3D_4Modal_Small(nn.Module):
         b2_t1ce = self.branch_t1ce_3(b_t1ce)  # (B, 32, .../4)
         b2_t2 = self.branch_t2_3(b_t2)      # (B, 32, .../4)
         b2_flair = self.branch_flair_3(b_flair)  # (B, 32, .../4)
+        
+        # Modality attention at Stage 3
+        weighted_features3, attn_weights3 = self.modality_attn3([b2_t1, b2_t1ce, b2_t2, b2_flair])
+        b2_t1, b2_t1ce, b2_t2, b2_flair = weighted_features3
         x3 = torch.cat([b2_t1, b2_t1ce, b2_t2, b2_flair], dim=1)  # (B, 128, .../4)
 
         # Stage 4+: 단일 융합 분기
@@ -197,6 +279,15 @@ class QuadBranchUNet3D_4Modal_Small(nn.Module):
         x = self.up3(x, x2)
         x = self.up4(x, x1)
         logits = self.outc(x)
+        
+        if return_attention:
+            # attention_weights: [B, 4] -> 각 모달리티별 가중치 [t1, t1ce, t2, flair]
+            attention_dict = {
+                'stage2': attn_weights2,  # [B, 4]
+                'stage3': attn_weights3,  # [B, 4]
+                'average': (attn_weights2 + attn_weights3) / 2.0  # 평균 기여도
+            }
+            return logits, attention_dict
         return logits
 
 
