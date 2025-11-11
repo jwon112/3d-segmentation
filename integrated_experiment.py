@@ -409,9 +409,13 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         from baseline.dualbranch_01_unet import DualBranchUNet3D_Small
         return DualBranchUNet3D_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
     elif model_name == 'quadbranch_4modal_unet_s':
-        # 4개 분기 (t1, t1ce, t2, flair)
+        # 4개 분기 (t1, t1ce, t2, flair) - 어텐션 없음
         from baseline.model_3d_unet_modal_comparison import QuadBranchUNet3D_4Modal_Small
         return QuadBranchUNet3D_4Modal_Small(n_classes=n_classes, norm=norm)
+    elif model_name == 'quadbranch_4modal_attention_unet_s':
+        # 4개 분기 (t1, t1ce, t2, flair) - 채널 어텐션 포함
+        from baseline.model_3d_unet_modal_comparison import QuadBranchUNet3D_4Modal_Attention_Small
+        return QuadBranchUNet3D_4Modal_Attention_Small(n_classes=n_classes, norm=norm)
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -667,6 +671,10 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     precision_scores = []
     recall_scores = []
     
+    # 모달리티별 어텐션 가중치 수집 (quadbranch_4modal_attention_unet_s만)
+    collect_attention = (model_name == 'quadbranch_4modal_attention_unet_s')
+    all_attention_weights = []  # 각 샘플별 어텐션 가중치 저장
+    
     with torch.no_grad():
         import numpy as np
         import matplotlib.pyplot as plt
@@ -684,11 +692,48 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             # 3D 테스트: 슬라이딩 윈도우 추론
             # 모든 3D 모델은 전체 볼륨을 처리하기 위해 슬라이딩 윈도우 사용
             if inputs.dim() == 5 and inputs.size(0) == 1:  # 3D 볼륨
-                logits = sliding_window_inference_3d(
-                    model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
-                )
+                if collect_attention:
+                    # 어텐션 가중치 수집을 위해 슬라이딩 윈도우에서 직접 호출
+                    # 슬라이딩 윈도우는 어텐션 가중치를 평균내야 하므로, 여기서는 전체 볼륨에 대해 직접 호출
+                    real_model = model.module if hasattr(model, 'module') else model
+                    if hasattr(real_model, 'forward') and 'return_attention' in real_model.forward.__code__.co_varnames:
+                        # 전체 볼륨에 대해 직접 forward (슬라이딩 윈도우 없이, 메모리 허용 시)
+                        # 실제로는 슬라이딩 윈도우를 사용하되, 각 패치의 어텐션을 평균내야 함
+                        # 간단하게 전체 볼륨에 대해 직접 호출 (메모리 허용 시)
+                        try:
+                            logits, attention_dict = real_model(inputs, return_attention=True)
+                            # 어텐션 가중치 저장 (평균 가중치 사용)
+                            avg_weights = attention_dict['average'].cpu().numpy()  # [B, 4]
+                            all_attention_weights.append(avg_weights[0])  # 첫 번째 샘플 (batch_size=1)
+                        except RuntimeError as e:
+                            # 메모리 부족 시 슬라이딩 윈도우 사용 (어텐션 수집 불가)
+                            if "out of memory" in str(e).lower():
+                                print(f"Warning: OOM during attention collection, using sliding window without attention")
+                                logits = sliding_window_inference_3d(
+                                    model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
+                                )
+                            else:
+                                raise
+                    else:
+                        logits = sliding_window_inference_3d(
+                            model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
+                        )
+                else:
+                    logits = sliding_window_inference_3d(
+                        model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
+                    )
             else:
-                logits = model(inputs)
+                if collect_attention:
+                    real_model = model.module if hasattr(model, 'module') else model
+                    if hasattr(real_model, 'forward') and 'return_attention' in real_model.forward.__code__.co_varnames:
+                        logits, attention_dict = real_model(inputs, return_attention=True)
+                        avg_weights = attention_dict['average'].cpu().numpy()  # [B, 4]
+                        for i in range(avg_weights.shape[0]):
+                            all_attention_weights.append(avg_weights[i])
+                    else:
+                        logits = model(inputs)
+                else:
+                    logits = model(inputs)
             
             # Dice score 계산 (WT/TC/ET)
             dice_scores = calculate_wt_tc_et_dice(logits, labels)
@@ -737,6 +782,50 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     # Background 제외한 평균 (클래스 1, 2, 3만)
     avg_precision = np.mean(precision_scores[1::4])  # 클래스별로 평균
     avg_recall = np.mean(recall_scores[1::4])
+    
+    # 모달리티별 어텐션 가중치 분석 및 저장
+    if collect_attention and len(all_attention_weights) > 0:
+        try:
+            attention_array = np.array(all_attention_weights)  # [n_samples, 4]
+            modality_names = ['T1', 'T1CE', 'T2', 'FLAIR']
+            
+            # 평균 기여도 계산
+            mean_contributions = attention_array.mean(axis=0)  # [4]
+            std_contributions = attention_array.std(axis=0)  # [4]
+            
+            # 결과 출력
+            print(f"\n{'='*60}")
+            print(f"Modality Attention Analysis - {model_name}")
+            print(f"{'='*60}")
+            print(f"Total samples analyzed: {len(all_attention_weights)}")
+            print(f"\nAverage Modality Contributions:")
+            for i, mod_name in enumerate(modality_names):
+                print(f"  {mod_name:6s}: {mean_contributions[i]:.4f} ± {std_contributions[i]:.4f}")
+            
+            # CSV 저장
+            if results_dir:
+                import pandas as pd
+                attention_df = pd.DataFrame(attention_array, columns=modality_names)
+                attention_df['sample_id'] = range(len(attention_array))
+                attention_df = attention_df[['sample_id'] + modality_names]
+                
+                csv_path = os.path.join(results_dir, f'modality_attention_{model_name}.csv')
+                attention_df.to_csv(csv_path, index=False)
+                print(f"\nAttention weights saved to: {csv_path}")
+                
+                # 요약 통계 저장
+                summary_df = pd.DataFrame({
+                    'modality': modality_names,
+                    'mean_contribution': mean_contributions,
+                    'std_contribution': std_contributions
+                })
+                summary_path = os.path.join(results_dir, f'modality_attention_summary_{model_name}.csv')
+                summary_df.to_csv(summary_path, index=False)
+                print(f"Attention summary saved to: {summary_path}")
+            
+            print(f"{'='*60}\n")
+        except Exception as e:
+            print(f"Warning: Failed to analyze/save attention weights: {e}")
     
     # Save confusion matrix heatmap on main (or non-distributed)
     try:
@@ -790,9 +879,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     
     # 사용 가능한 모델들
     if models is None:
-        available_models = ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m', 'dualbranch_10_unet_s', 'dualbranch_10_unet_m', 'dualbranch_11_unet_s', 'dualbranch_11_unet_m', 'dualbranch_12_unet_s', 'dualbranch_12_unet_m', 'dualbranch_13_unet_s', 'dualbranch_13_unet_m', 'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s', 'quadbranch_4modal_unet_s']
+        available_models = ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m', 'dualbranch_10_unet_s', 'dualbranch_10_unet_m', 'dualbranch_11_unet_s', 'dualbranch_11_unet_m', 'dualbranch_12_unet_s', 'dualbranch_12_unet_m', 'dualbranch_13_unet_s', 'dualbranch_13_unet_m', 'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s']
     else:
-        available_models = [m for m in models if m in ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m', 'dualbranch_10_unet_s', 'dualbranch_10_unet_m', 'dualbranch_11_unet_s', 'dualbranch_11_unet_m', 'dualbranch_12_unet_s', 'dualbranch_12_unet_m', 'dualbranch_13_unet_s', 'dualbranch_13_unet_m', 'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s', 'quadbranch_4modal_unet_s']]
+        available_models = [m for m in models if m in ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m', 'dualbranch_10_unet_s', 'dualbranch_10_unet_m', 'dualbranch_11_unet_s', 'dualbranch_11_unet_m', 'dualbranch_12_unet_s', 'dualbranch_12_unet_m', 'dualbranch_13_unet_s', 'dualbranch_13_unet_m', 'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s']]
     
     # 결과 저장용
     all_results = []
@@ -842,7 +931,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                 set_seed(seed)
                 
                 # 모델에 따라 use_4modalities 및 n_channels 결정
-                use_4modalities = model_name in ['unet3d_4modal_s', 'quadbranch_4modal_unet_s']
+                use_4modalities = model_name in ['unet3d_4modal_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s']
                 if use_4modalities:
                     n_channels = 4
                 else:
