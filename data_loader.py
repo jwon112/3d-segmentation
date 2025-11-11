@@ -414,7 +414,7 @@ class BratsDataset2D(Dataset):
 def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None, 
                      train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, dim='3d',
                      distributed=False, world_size=None, rank=None, dataset_version='brats2021', seed=None,
-                     use_4modalities=False):
+                     use_4modalities=False, use_5fold=False, fold_idx=None):
     """
     데이터 로더 생성
     
@@ -423,13 +423,15 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         batch_size: 배치 크기
         num_workers: 워커 수
         max_samples: 최대 샘플 수 (None이면 전체)
-        train_ratio: 훈련 세트 비율 (BRATS2021에서 사용, BRATS2018은 7:1.5:1.5 고정)
-        val_ratio: 검증 세트 비율 (BRATS2021에서 사용, BRATS2018은 7:1.5:1.5 고정)
-        test_ratio: 테스트 세트 비율 (BRATS2021에서 사용, BRATS2018은 7:1.5:1.5 고정)
+        train_ratio: 훈련 세트 비율 (BRATS2021에서 사용, BRATS2018은 7:1.5:1.5 고정, use_5fold=True일 때 무시)
+        val_ratio: 검증 세트 비율 (BRATS2021에서 사용, BRATS2018은 7:1.5:1.5 고정, use_5fold=True일 때 무시)
+        test_ratio: 테스트 세트 비율 (BRATS2021에서 사용, BRATS2018은 7:1.5:1.5 고정, use_5fold=True일 때 무시)
         dim: '2d' 또는 '3d'
         dataset_version: 'brats2021' 또는 'brats2018' (기본값: 'brats2021')
         seed: 데이터 분할 및 학습을 위한 랜덤 시드 (None이면 설정하지 않음)
         use_4modalities: True면 4개 모달리티 (t1, t1ce, t2, flair), False면 2개 (t1ce, flair)
+        use_5fold: True면 5-fold cross-validation 사용 (기본값: False)
+        fold_idx: 5-fold CV 사용 시 fold 인덱스 (0-4, None이면 모든 fold 실행)
     
     Returns:
         train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler
@@ -459,6 +461,59 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
     # 샘플이 너무 적으면 모든 데이터를 train으로 사용
     if total_len <= 10:
         train_dataset, val_dataset, test_dataset = full_dataset, full_dataset, full_dataset
+    elif use_5fold:
+        # 5-fold Cross-Validation
+        if fold_idx is None or fold_idx < 0 or fold_idx >= 5:
+            raise ValueError("use_5fold=True일 때 fold_idx는 0-4 사이의 정수여야 합니다.")
+        
+        # 전체 인덱스를 5개 fold로 나눔
+        indices = list(range(total_len))
+        if seed is not None:
+            # 재현성을 위해 seed로 shuffle
+            random.seed(seed)
+            random.shuffle(indices)
+        else:
+            random.shuffle(indices)
+        
+        # 5개 fold로 분할
+        fold_size = total_len // 5
+        fold_sizes = [fold_size] * 5
+        # 나머지 샘플을 앞의 fold들에 분배
+        remainder = total_len % 5
+        for i in range(remainder):
+            fold_sizes[i] += 1
+        
+        # 각 fold의 시작/끝 인덱스 계산
+        fold_starts = [0]
+        for i in range(5):
+            fold_starts.append(fold_starts[i] + fold_sizes[i])
+        
+        # 현재 fold의 test 인덱스
+        test_start = fold_starts[fold_idx]
+        test_end = fold_starts[fold_idx + 1]
+        test_indices = indices[test_start:test_end]
+        
+        # 나머지 4개 fold 중 1개를 val로, 3개를 train으로
+        # val fold는 (fold_idx + 1) % 5로 선택 (순환)
+        val_fold_idx = (fold_idx + 1) % 5
+        val_start = fold_starts[val_fold_idx]
+        val_end = fold_starts[val_fold_idx + 1]
+        val_indices = indices[val_start:val_end]
+        
+        # train은 나머지 3개 fold
+        train_indices = []
+        for i in range(5):
+            if i != fold_idx and i != val_fold_idx:
+                train_start = fold_starts[i]
+                train_end = fold_starts[i + 1]
+                train_indices.extend(indices[train_start:train_end])
+        
+        # Subset으로 데이터셋 생성
+        train_dataset = Subset(full_dataset, train_indices)
+        val_dataset = Subset(full_dataset, val_indices)
+        test_dataset = Subset(full_dataset, test_indices)
+        
+        print(f"5-Fold CV (Fold {fold_idx}): Train={len(train_indices)}, Val={len(val_indices)}, Test={len(test_indices)}")
     else:
         if dataset_version == 'brats2018':
             # BRATS2018: HGG와 LGG를 각각 7:1.5:1.5 비율로 분할 후 섞기

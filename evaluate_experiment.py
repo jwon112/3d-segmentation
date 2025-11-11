@@ -19,12 +19,13 @@ from datetime import datetime
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import from integrated_experiment
-from integrated_experiment import (
-    get_model, evaluate_model, calculate_flops, 
+# Import from refactored modules
+from utils.experiment_utils import (
+    get_model, calculate_flops, 
     setup_distributed, cleanup_distributed, is_main_process,
-    INPUT_SIZE_2D, INPUT_SIZE_3D, sliding_window_inference_3d
+    INPUT_SIZE_2D, INPUT_SIZE_3D
 )
+from experiment_runner import evaluate_model
 from data_loader import get_data_loaders
 from visualization import create_comprehensive_analysis, create_interactive_3d_plot
 
