@@ -478,6 +478,22 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     elif model_name == 'dualbranch_13_unet_m':
         from baseline.dualbranch_13_unet import DualBranchUNet3D_MViT_Extended_Medium
         return DualBranchUNet3D_MViT_Extended_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    # PAM comparison experiments - different backbones
+    elif model_name == 'dualbranch_14_mobilenetv2_expand2_s':
+        from baseline.dualbranch_14_unet import DualBranchUNet3D_MobileNetV2_Expand2_Small
+        return DualBranchUNet3D_MobileNetV2_Expand2_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_14_ghostnet_s':
+        from baseline.dualbranch_14_unet import DualBranchUNet3D_GhostNet_Small
+        return DualBranchUNet3D_GhostNet_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_14_depthwise_separable_s':
+        from baseline.dualbranch_14_unet import DualBranchUNet3D_DepthwiseSeparable_Small
+        return DualBranchUNet3D_DepthwiseSeparable_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_14_dilated_s':
+        from baseline.dualbranch_14_unet import DualBranchUNet3D_Dilated_Small
+        return DualBranchUNet3D_Dilated_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_14_convnext_s':
+        from baseline.dualbranch_14_unet import DualBranchUNet3D_ConvNeXt_Small
+        return DualBranchUNet3D_ConvNeXt_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
     # 모달리티 비교 실험 모델들
     elif model_name == 'unet3d_2modal_s':
         # 단일 분기, 2채널 (t1ce, flair) concat
