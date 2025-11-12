@@ -6,22 +6,51 @@
 
 ```
 3d_segmentation/
-├── baseline/                    # Baseline 모델들
+├── baseline/                           # Baseline 모델들
 │   ├── __init__.py
-│   ├── model_3d_unet.py        # 3D U-Net 모델
-│   ├── model_unetr.py          # UNETR 모델
-│   └── model_swin_unetr.py     # Swin UNETR 모델
-├── train/                      # 훈련 스크립트
-│   └── train_baseline.py       # Baseline 모델 훈련
-├── visualization/              # 시각화 모듈
+│   ├── model_3d_unet.py               # 3D U-Net 모델 (기본, Small/Medium)
+│   ├── model_3d_unet_stride.py        # 3D U-Net (Stride Conv 버전)
+│   ├── model_3d_unet_modal_comparison.py  # 모달리티 비교 모델 (2modal, 4modal, quadbranch)
+│   ├── model_unetr.py                 # UNETR 모델
+│   ├── model_swin_unetr.py            # Swin UNETR 모델
+│   ├── mobileunetr.py                 # Mobile UNETR (2D)
+│   ├── mobileunetr_3d.py              # Mobile UNETR 3D
+│   ├── dualbranch_01_unet.py          # Dual-Branch U-Net (기본, MaxPool)
+│   ├── dualbranch_02_unet.py          # Dual-Branch (Stride Conv)
+│   ├── dualbranch_03_unet.py          # Dual-Branch (Dilated Conv)
+│   ├── dualbranch_04_unet.py          # Dual-Branch (RepLK 13x13)
+│   ├── dualbranch_05_unet.py          # Dual-Branch (RepLK + FFN2)
+│   ├── dualbranch_06_unet.py          # Dual-Branch (RepLK + MViT Stage 4,5)
+│   ├── dualbranch_07_unet.py          # Dual-Branch (RepLK + MViT Stage 5)
+│   ├── dualbranch_08_unet.py          # Dual-Branch (RepLK + MobileNetV2 + MViT)
+│   ├── dualbranch_09_unet.py          # Dual-Branch (RepLK 7x7 + MobileNetV2 + MViT)
+│   ├── dualbranch_10_unet.py          # Dual-Branch (Dilated + MobileNetV2 + MViT)
+│   ├── dualbranch_11_unet.py          # Dual-Branch (Dilated 1,2,3 + MobileNetV2 + MViT)
+│   ├── dualbranch_12_unet.py          # Dual-Branch (MobileNetV2 Both + MViT)
+│   ├── dualbranch_13_unet.py          # Dual-Branch (MobileViT Extended)
+│   └── dualbranch_14_unet.py          # Dual-Branch (Backbone 비교: MobileNetV2, GhostNet, Depthwise, Dilated, ConvNeXt)
+├── utils/                              # 유틸리티 함수
 │   ├── __init__.py
-│   ├── visualization_3d.py     # 3D 시각화 (다중 모델 지원)
-│   └── visualization_dataframe.py # DataFrame 기반 시각화
-├── baseline_results/           # 실험 결과 저장
-├── data/                       # 데이터셋
-├── integrated_experiment.py    # 통합 실험 스크립트
-├── data_loader_kaggle.py      # 데이터 로더
-└── requirements.txt            # 의존성 패키지
+│   ├── experiment_utils.py            # 실험 유틸리티 (모델 생성, PAM 계산, 슬라이딩 윈도우 등)
+│   ├── debug_*.py                     # 디버깅 스크립트들
+│   └── *.md                           # 문서화 파일들
+├── losses/                             # Loss 함수
+│   ├── __init__.py
+│   └── losses.py                      # Combined Loss, nnU-Net Style Loss
+├── metrics/                            # 평가 메트릭
+│   ├── __init__.py
+│   └── metrics.py                     # Dice Score, WT/TC/ET 계산
+├── visualization/                      # 시각화 모듈
+│   ├── __init__.py
+│   ├── visualization_3d.py            # 3D 시각화 (다중 모델 지원)
+│   └── visualization_dataframe.py     # DataFrame 기반 시각화 및 차트 생성
+├── baseline_results/                   # 실험 결과 저장
+├── data/                               # 데이터셋
+├── integrated_experiment.py            # 통합 실험 스크립트 (CLI 진입점)
+├── experiment_runner.py                # 실험 실행 로직 (train_model, evaluate_model, run_integrated_experiment)
+├── evaluate_experiment.py              # 체크포인트 평가 스크립트
+├── data_loader.py                      # 데이터 로더 (BraTS 데이터셋)
+└── requirements.txt                    # 의존성 패키지
 ```
 
 ## 🚀 빠른 시작
@@ -81,7 +110,7 @@ python integrated_experiment.py --epochs 10 --batch_size 1 --seeds 24 42 123
 
 #### 특정 모델만 실험
 ```bash
-python integrated_experiment.py --epochs 10 --models unet3d unetr
+python integrated_experiment.py --epochs 10 --models unet3d_s dualbranch_01_unet_s
 ```
 
 #### BRATS2018 데이터셋 사용
@@ -97,6 +126,11 @@ python integrated_experiment.py --dataset_version brats2021 --epochs 10
 #### 3D 모델 학습 (3D 데이터 사용)
 ```bash
 python integrated_experiment.py --dim 3d --epochs 10 --batch_size 1
+```
+
+#### 5-Fold Cross-Validation
+```bash
+python integrated_experiment.py --use_5fold --epochs 10 --seeds 24
 ```
 
 #### 분산 학습 (Multi-GPU)
@@ -132,15 +166,49 @@ torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> -
 | `--use_standard_loss` | flag | `False` | 표준 loss 사용 (Dice 50% + CE 50%) |
 | `--num_workers` | int | `8` | DataLoader 워커 수 |
 | `--sharing_strategy` | str | `file_descriptor` | PyTorch tensor sharing 전략: `file_descriptor` 또는 `file_system` |
+| `--use_5fold` | flag | `False` | 5-fold cross-validation 사용 |
 
 ### 모델 선택 옵션
 
-지원되는 모델:
-- `unet3d`: 3D U-Net
+#### 기본 U-Net 모델
+- `unet3d_s`: 3D U-Net Small
+- `unet3d_m`: 3D U-Net Medium
+- `unet3d_stride_s`: 3D U-Net Stride Small (Stride Conv downsampling)
+- `unet3d_stride_m`: 3D U-Net Stride Medium
+
+#### Transformer 기반 모델
 - `unetr`: UNETR
 - `swin_unetr`: Swin UNETR
-- `mobile_unetr`: Mobile UNETR
+- `mobile_unetr`: Mobile UNETR (2D 전용)
 - `mobile_unetr_3d`: Mobile UNETR 3D
+
+#### Dual-Branch 모델 (T1ce, FLAIR 이중 분기)
+- `dualbranch_01_unet_s`: 기본 Dual-Branch (MaxPool)
+- `dualbranch_01_unet_m`: 기본 Dual-Branch Medium
+- `dualbranch_02_unet_s`: Stride Conv 버전
+- `dualbranch_03_unet_s`: Dilated Conv (FLAIR만)
+- `dualbranch_04_unet_s`: RepLK 13x13x13 (FLAIR만)
+- `dualbranch_05_unet_s`: RepLK + FFN2
+- `dualbranch_06_unet_s`: RepLK + MViT Stage 4,5
+- `dualbranch_07_unet_s`: RepLK + MViT Stage 5만
+- `dualbranch_08_unet_s`: RepLK + MobileNetV2 + MViT
+- `dualbranch_09_unet_s`: RepLK 7x7 + MobileNetV2 + MViT
+- `dualbranch_10_unet_s`: Dilated + MobileNetV2 + MViT
+- `dualbranch_11_unet_s`: Dilated 1,2,3 + MobileNetV2 + MViT
+- `dualbranch_12_unet_s`: MobileNetV2 Both + MViT
+- `dualbranch_13_unet_s`: MobileViT Extended
+- `dualbranch_14_mobilenetv2_expand2_s`: MobileNetV2 (expand_ratio=2)
+- `dualbranch_14_ghostnet_s`: GhostNet
+- `dualbranch_14_depthwise_separable_s`: Depth-wise Separable Conv
+- `dualbranch_14_dilated_s`: Dilated Conv (rate 1,2,5)
+- `dualbranch_14_convnext_s`: ConvNeXt
+
+#### 모달리티 비교 모델
+- `unet3d_2modal_s`: 단일 분기, 2채널 (T1ce, FLAIR) concat
+- `unet3d_4modal_s`: 단일 분기, 4채널 (T1, T1ce, T2, FLAIR) concat
+- `dualbranch_2modal_unet_s`: 2개 분기 (T1ce, FLAIR)
+- `quadbranch_4modal_unet_s`: 4개 분기 (T1, T1ce, T2, FLAIR) - 어텐션 없음
+- `quadbranch_4modal_attention_unet_s`: 4개 분기 + 채널 어텐션
 
 ### 데이터셋 경로 설정
 
@@ -161,6 +229,138 @@ python integrated_experiment.py --data_path "C:\Users\user\Desktop\성균관대\
 # Linux/Mac
 python integrated_experiment.py --data_path /path/to/data --epochs 10
 ```
+
+## 🔄 전처리/후처리 파이프라인
+
+### 전처리
+
+1. **NIfTI 파일 로드**: BraTS 데이터셋에서 모달리티별 파일 자동 감지
+2. **정규화**: 
+   - 비영점 영역만 추출 (vol > 0)
+   - 퍼센타일 클리핑: [0.5%, 99.5%]
+   - Z-score 정규화: (clipped - mean) / std
+   - 배경 영역은 0으로 유지
+3. **라벨 매핑**: BraTS 원본 라벨 4 → 모델 라벨 3 (ET)
+4. **데이터 분할**: 
+   - 일반: train 80% / val 10% / test 10%
+   - 5-Fold CV: 5개 fold로 분할 (각 fold 20%)
+5. **패치 샘플링** (3D 학습 시):
+   - 33.3%: 포그라운드 오버샘플링 (클래스 1,2,3 중심)
+   - 66.7%: 완전 무작위 샘플링
+
+### 후처리
+
+1. **슬라이딩 윈도우 추론** (3D 평가 시):
+   - 패치 크기: (128, 128, 128)
+   - Overlap: 0.10 (검증/테스트)
+   - Cosine blending으로 패치 경계 부드럽게 융합
+2. **예측 생성**: Logits → Softmax → Argmax
+3. **메트릭 계산**:
+   - Dice Score (WT/TC/ET)
+   - Precision/Recall (클래스별)
+   - Confusion Matrix
+
+## 🧠 지원 모델
+
+### 1. 3D U-Net
+- **기본 버전**: MaxPool 기반 downsampling
+- **Stride 버전**: Stride-2 Conv 기반 downsampling
+- **크기**: Small (16→32→64→128→256→512), Medium (32→64→128→256→512→1024)
+
+### 2. UNETR
+- **특징**: Vision Transformer 기반 3D 세그멘테이션
+- **장점**: 긴 거리 의존성 학습 가능
+- **단점**: 높은 계산 비용
+
+### 3. Swin UNETR
+- **특징**: Swin Transformer 기반 계층적 구조
+- **장점**: 효율적인 계산과 좋은 성능
+
+### 4. Mobile UNETR
+- **2D 버전**: Mobile UNETR (2D 전용)
+- **3D 버전**: Mobile UNETR 3D
+
+### 5. Dual-Branch U-Net
+- **구조**: T1ce와 FLAIR를 각각 독립적으로 처리 후 융합
+- **Stage 1-4**: Dual-branch 구조 유지
+- **Stage 5**: 융합된 branch (MobileViT 또는 표준 UNet)
+- **변형**: 다양한 backbone (RepLK, MobileNetV2, Dilated Conv, MobileViT 등)
+
+### 6. Quad-Branch U-Net
+- **구조**: T1, T1ce, T2, FLAIR를 각각 독립적으로 처리 후 융합
+- **어텐션 버전**: 채널 어텐션으로 모달리티별 기여도 측정 가능
+
+## 📊 실험 결과
+
+실험 결과는 `baseline_results/` 폴더에 저장됩니다:
+
+- `integrated_experiment_results_YYYYMMDD_HHMMSS/`
+  - `integrated_experiment_results.csv`: 모델별 성능 요약 (PAM 포함)
+  - `all_epochs_results.csv`: 에포크별 상세 결과
+  - `model_comparison.csv`: 모델 비교 분석 (평균/표준편차, PAM 포함)
+  - `learning_curves.png`: 학습 곡선 차트
+  - `model_comparison_chart.png`: 모델 성능 비교 차트 (PAM Train/Inference 포함)
+  - `parameter_efficiency.png`: 파라미터 효율성 분석
+  - `interactive_3d_analysis.html`: 인터랙티브 3D 분석
+  - `{model_name}_seed_{seed}_best.pth`: 각 모델별 최적 체크포인트
+  - `{model_name}_seed_{seed}_fold_{fold}_best.pth`: 5-fold CV 시 fold별 체크포인트
+
+## 🔧 주요 기능
+
+### 1. 다중 모델 비교
+- 다양한 아키텍처 동시 훈련 및 비교
+- 모델별 성능 메트릭 비교 (Dice Score, Precision, Recall)
+- 파라미터 수, FLOPs, PAM 효율성 분석
+
+### 2. 다중 시드 실험
+- 재현 가능한 실험을 위한 시드 설정
+- 통계적 유의성 검증을 위한 다중 시드 평균
+- 시드별 성능 분포 분석
+
+### 3. 5-Fold Cross-Validation
+- 신뢰성 향상을 위한 5-fold CV 지원
+- 각 fold별 결과 저장 및 평균 계산
+
+### 4. PAM (Peak Activation Memory) 측정
+- Train/Inference 단계별 VRAM 사용량 측정
+- 5회 측정 후 평균/표준편차 계산
+- 모델별 메모리 효율성 비교
+
+### 5. 모달리티별 기여도 분석
+- Quad-Branch 모델에서 채널 어텐션으로 모달리티별 기여도 측정
+- 어텐션 가중치 시각화 및 저장
+
+### 6. 3D 시각화
+- 슬라이스별 세그멘테이션 결과 시각화 (다중 모델 지원)
+- 학습 곡선 및 성능 비교 차트
+- 인터랙티브 3D 분석 플롯
+- DataFrame 기반 실험 결과 분석
+
+### 7. 자동화된 실험 관리
+- 체크포인트 자동 저장
+- 실험 결과 자동 정리
+- 시각화 차트 자동 생성
+
+## 📈 성능 메트릭
+
+### 1. Dice Score
+- 세그멘테이션 정확도 측정
+- BraTS 표준 평가 지표:
+  - **WT (Whole Tumor)**: 클래스 1 ∪ 2 ∪ 3
+  - **TC (Tumor Core)**: 클래스 1 ∪ 3
+  - **ET (Enhancing Tumor)**: 클래스 3
+- 클래스별 Dice Score 계산
+- 평균 Dice Score로 전체 성능 평가
+
+### 2. Precision & Recall
+- 클래스별 정밀도와 재현율
+- Background 클래스 제외한 평균
+- 세그멘테이션 품질 상세 분석
+
+### 3. 모델 효율성
+- **파라미터 수** (Parameters)
+- **연산량** (FLOPs)
+- **PAM** (Peak Activation Memory): Train/Inference 단계별 VRAM 사용량
 
 ## 🚀 분산 학습 설정
 
@@ -197,19 +397,6 @@ $env:USE_LIBUV=0; torchrun --nproc_per_node=4 integrated_experiment.py --epochs 
 ```
 
 **참고**: Windows에서는 `torchrun`이 완전히 지원되지 않을 수 있습니다. Linux/서버 환경에서 분산 학습을 권장합니다.
-
-#### 환경 변수 직접 설정
-```bash
-# 4개 GPU 사용
-export MASTER_ADDR=localhost
-export MASTER_PORT=29500
-export WORLD_SIZE=4
-export RANK=0
-export LOCAL_RANK=0
-
-# 각 GPU별로 실행 (스크립트로 자동화 권장)
-python integrated_experiment.py --epochs 10
-```
 
 ### 2. 멀티 노드 (Multi-Node)
 
@@ -281,83 +468,12 @@ torch.distributed.DistStoreError: use_libuv was requested but PyTorch was built 
 - 멀티 노드 분산 학습은 Linux 환경에서만 지원
 - 단일 노드 멀티 GPU는 가능하지만, Linux 환경을 권장
 
-## 🧠 지원 모델
-
-### 1. 3D U-Net (UNet3D_Simplified)
-- **특징**: 전통적인 U-Net 아키텍처의 3D 버전
-- **장점**: 안정적이고 검증된 구조
-- **단점**: 메모리 사용량이 높음
-
-### 2. UNETR (UNETR_Simplified)
-- **특징**: Vision Transformer 기반 3D 세그멘테이션
-- **장점**: 긴 거리 의존성 학습 가능
-- **단점**: 복잡한 구조로 인한 높은 계산 비용
-
-### 3. Swin UNETR (SwinUNETR_Simplified)
-- **특징**: Swin Transformer 기반 계층적 구조
-- **장점**: 효율적인 계산과 좋은 성능
-- **단점**: 구현 복잡도가 높음
-
-## 📊 실험 결과
-
-실험 결과는 `baseline_results/` 폴더에 저장됩니다:
-
-- `integrated_experiment_results_YYYYMMDD_HHMMSS/`
-  - `integrated_experiment_results.csv`: 모델별 성능 요약
-  - `all_epochs_results.csv`: 에포크별 상세 결과
-  - `model_comparison.csv`: 모델 비교 분석
-  - `learning_curves.png`: 학습 곡선 차트
-  - `model_comparison_chart.png`: 모델 성능 비교 차트
-  - `parameter_efficiency.png`: 파라미터 효율성 분석
-  - `interactive_3d_analysis.html`: 인터랙티브 3D 분석
-  - `{model_name}_seed_{seed}_best.pth`: 각 모델별 최적 체크포인트 (실험 폴더 내부 저장)
-
-## 🔧 주요 기능
-
-### 1. 다중 모델 비교
-- 3D U-Net, UNETR, Swin UNETR 모델 동시 훈련
-- 모델별 성능 메트릭 비교 (Dice Score, Precision, Recall)
-- 파라미터 수 및 FLOPs 효율성 분석
-
-### 2. 다중 시드 실험
-- 재현 가능한 실험을 위한 시드 설정
-- 통계적 유의성 검증을 위한 다중 시드 평균
-- 시드별 성능 분포 분석
-
-### 3. 3D 시각화
-- 슬라이스별 세그멘테이션 결과 시각화 (다중 모델 지원)
-- 학습 곡선 및 성능 비교 차트
-- 인터랙티브 3D 분석 플롯
-- DataFrame 기반 실험 결과 분석
-
-### 4. 자동화된 실험 관리
-- 체크포인트 자동 저장
-- 실험 결과 자동 정리
-- 시각화 차트 자동 생성
-
-## 📈 성능 메트릭
-
-### 1. Dice Score
-- 세그멘테이션 정확도 측정
-- 클래스별 Dice Score 계산
-- 평균 Dice Score로 전체 성능 평가
-
-### 2. Precision & Recall
-- 클래스별 정밀도와 재현율
-- Background 클래스 제외한 평균
-- 세그멘테이션 품질 상세 분석
-
-### 3. 모델 효율성
-- 파라미터 수 (Parameters)
-- 연산량 (FLOPs)
-- 모델 크기 (MB)
-
 ## 🛠️ 커스터마이징
 
 ### 새로운 모델 추가
 1. `baseline/` 폴더에 새 모델 파일 생성
 2. `baseline/__init__.py`에 모델 import 추가
-3. `get_model()` 함수에 모델 케이스 추가
+3. `utils/experiment_utils.py`의 `get_model()` 함수에 모델 케이스 추가
 
 ### 실험 설정 변경
 - `integrated_experiment.py`의 기본 파라미터 수정
@@ -387,13 +503,15 @@ torch.distributed.DistStoreError: use_libuv was requested but PyTorch was built 
 - plotly
 - tqdm
 - thop (FLOPs 계산용)
+- nibabel (NIfTI 파일 처리)
 
 ## 🐛 문제 해결
 
 ### 메모리 부족 오류
 - `batch_size`를 1로 설정
 - `max_samples` 파라미터로 데이터 크기 제한
-- 모델 크기 축소 (Simplified 버전 사용)
+- 모델 크기 축소 (Small 버전 사용)
+- 슬라이딩 윈도우 overlap 줄이기
 
 ### CUDA 오류
 - CUDA 버전과 PyTorch 버전 호환성 확인
@@ -401,14 +519,20 @@ torch.distributed.DistStoreError: use_libuv was requested but PyTorch was built 
 
 ### 데이터 로딩 오류
 - 데이터 경로 확인
-- H5 파일 형식 확인
-- 메타데이터 CSV 파일 존재 확인
+- NIfTI 파일 형식 확인
+- 파일명 패턴 확인 (t1ce, flair, seg)
+
+### NCCL Timeout 오류
+- NCCL timeout 증가: `export NCCL_TIMEOUT=1800`
+- 네트워크 연결 확인
+- GPU 간 통신 속도 확인
 
 ## 📚 참고 문헌
 
 1. **3D U-Net**: Çiçek, Ö., et al. "3D U-Net: learning dense volumetric segmentation from sparse annotation."
 2. **UNETR**: Hatamizadeh, A., et al. "UNETR: Transformers for 3D Medical Image Segmentation."
 3. **Swin UNETR**: Hatamizadeh, A., et al. "Swin UNETR: Swin Transformers for Semantic Segmentation of Brain Tumors in MRI Images."
+4. **nnU-Net**: Isensee, F., et al. "nnU-Net: a self-configuring method for deep learning-based biomedical image segmentation."
 
 ## 📞 지원
 
