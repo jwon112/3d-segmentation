@@ -98,27 +98,31 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
         input_size = (1, n_channels, *INPUT_SIZE_3D)
     
-    # PAM 계산 (rank 0에서만, batch_size=1로 고정)
-    pam_train = 0
-    pam_inference = 0
+    # PAM 계산 (rank 0에서만, batch_size=1로 고정, 여러 번 측정)
+    pam_train_list = []
+    pam_inference_list = []
     if is_main_process(rank):
         try:
-            pam_train, _ = calculate_pam(
+            pam_train_list, _ = calculate_pam(
                 model, input_size=input_size, mode='train', stage_wise=False, device=device
             )
-            pam_inference, _ = calculate_pam(
+            pam_inference_list, _ = calculate_pam(
                 model, input_size=input_size, mode='inference', stage_wise=False, device=device
             )
         except Exception as e:
             print(f"Warning: Failed to calculate PAM: {e}")
-            pam_train = 0
-            pam_inference = 0
+            pam_train_list = []
+            pam_inference_list = []
     
     if is_main_process(rank):
         print(f"Parameters: {total_params:,}")
         print(f"FLOPs: {flops:,}")
-        print(f"PAM (Train, batch_size=1): {pam_train / 1024**2:.2f} MB")
-        print(f"PAM (Inference, batch_size=1): {pam_inference / 1024**2:.2f} MB")
+        if pam_train_list:
+            pam_train_mean = sum(pam_train_list) / len(pam_train_list)
+            print(f"PAM (Train, batch_size=1): {pam_train_mean / 1024**2:.2f} MB (mean of {len(pam_train_list)} runs)")
+        if pam_inference_list:
+            pam_inference_mean = sum(pam_inference_list) / len(pam_inference_list)
+            print(f"PAM (Inference, batch_size=1): {pam_inference_mean / 1024**2:.2f} MB (mean of {len(pam_inference_list)} runs)")
     
     # Test set 평가
     metrics = evaluate_model(
@@ -128,33 +132,62 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         results_dir=results_dir
     )
     
-    # 결과 반환
-    result = {
-        'dataset': dataset_version,
-        'seed': seed,
-        'model_name': model_name,
-        'total_params': total_params,
-        'flops': flops,
-        'pam_train': pam_train,  # bytes, batch_size=1 기준
-        'pam_inference': pam_inference,  # bytes, batch_size=1 기준
-        'test_dice': metrics['dice'],
-        'test_wt': metrics.get('wt', None),
-        'test_tc': metrics.get('tc', None),
-        'test_et': metrics.get('et', None),
-        'val_dice': None,  # 평가 전용이므로 val_dice는 없음
-        'val_wt': None,
-        'val_tc': None,
-        'val_et': None,
-        'precision': metrics['precision'],
-        'recall': metrics['recall'],
-        'best_epoch': None  # 평가 전용이므로 best_epoch는 없음
-    }
+    # 결과 반환 (PAM은 각 측정값을 개별적으로 저장하여 model_comparison에서 평균/표준편차 계산)
+    results = []
+    if pam_train_list and pam_inference_list:
+        # 각 측정값마다 별도의 결과 행 생성
+        for pam_train_val, pam_inference_val in zip(pam_train_list, pam_inference_list):
+            result = {
+                'dataset': dataset_version,
+                'seed': seed,
+                'model_name': model_name,
+                'total_params': total_params,
+                'flops': flops,
+                'pam_train': pam_train_val,  # bytes, batch_size=1 기준
+                'pam_inference': pam_inference_val,  # bytes, batch_size=1 기준
+                'test_dice': metrics['dice'],
+                'test_wt': metrics.get('wt', None),
+                'test_tc': metrics.get('tc', None),
+                'test_et': metrics.get('et', None),
+                'val_dice': None,  # 평가 전용이므로 val_dice는 없음
+                'val_wt': None,
+                'val_tc': None,
+                'val_et': None,
+                'precision': metrics['precision'],
+                'recall': metrics['recall'],
+                'best_epoch': None  # 평가 전용이므로 best_epoch는 없음
+            }
+            results.append(result)
+    else:
+        # PAM 측정 실패 시 기본값으로 저장
+        result = {
+            'dataset': dataset_version,
+            'seed': seed,
+            'model_name': model_name,
+            'total_params': total_params,
+            'flops': flops,
+            'pam_train': 0,  # bytes, batch_size=1 기준
+            'pam_inference': 0,  # bytes, batch_size=1 기준
+            'test_dice': metrics['dice'],
+            'test_wt': metrics.get('wt', None),
+            'test_tc': metrics.get('tc', None),
+            'test_et': metrics.get('et', None),
+            'val_dice': None,  # 평가 전용이므로 val_dice는 없음
+            'val_wt': None,
+            'val_tc': None,
+            'val_et': None,
+            'precision': metrics['precision'],
+            'recall': metrics['recall'],
+            'best_epoch': None  # 평가 전용이므로 best_epoch는 없음
+        }
+        results.append(result)
     
     if is_main_process(rank):
         print(f"Test Dice: {metrics['dice']:.4f} (WT {metrics['wt']:.4f} | TC {metrics['tc']:.4f} | ET {metrics['et']:.4f})")
         print(f"Precision: {metrics['precision']:.4f} | Recall: {metrics['recall']:.4f}")
     
-    return result
+    # 모든 결과를 반환 (PAM 측정값마다 별도의 행)
+    return results
 
 
 def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d', 
@@ -214,7 +247,7 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
                 print(f"Evaluating {model_name.upper()} (seed {seed})...")
                 print(f"{'='*60}")
             
-            result = load_checkpoint_and_evaluate(
+            results = load_checkpoint_and_evaluate(
                 results_dir=results_dir,
                 model_name=model_name,
                 seed=seed,
@@ -229,8 +262,8 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
                 world_size=world_size
             )
             
-            if result and is_main_process(rank):
-                all_results.append(result)
+            if results and is_main_process(rank):
+                all_results.extend(results)  # 여러 결과를 모두 추가
                 
         except Exception as e:
             if is_main_process(rank):

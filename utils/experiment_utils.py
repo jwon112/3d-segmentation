@@ -164,7 +164,7 @@ def calculate_flops(model, input_size=(1, 4, 64, 64, 64)):
         print(f"Error calculating FLOPs: {e}")
         return 0
 
-def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_wise=False, device='cuda'):
+def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_wise=False, device='cuda', num_runs=5):
     """
     Peak Activation Memory (PAM) 계산
     
@@ -174,55 +174,98 @@ def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_
         mode: 'train' 또는 'inference'
         stage_wise: True면 stage별 PAM도 측정 (현재는 False만 지원, 향후 확장 가능)
         device: 디바이스 ('cuda' 또는 'cpu')
+        num_runs: 측정 반복 횟수 (기본 5회, 변동성 감소를 위해)
     
     Returns:
-        - 전체 PAM (bytes, batch_size=1 기준)
+        - 전체 PAM (bytes, batch_size=1 기준) - 여러 번 측정한 값들의 리스트
         - stage별 PAM dict (stage_wise=True일 때, 현재는 빈 dict)
     
     Note:
         - batch_size=1로 고정하여 측정 (모든 모델을 동일한 조건에서 비교)
         - Train 모드에서는 backward pass까지 포함하여 측정
         - Inference 모드에서는 forward pass만 측정
+        - 여러 번 측정하여 변동성을 줄이고, model_comparison에서 평균/표준편차 계산
     """
     if not torch.cuda.is_available() or device == 'cpu':
-        return 0, {}
+        return [], {}
     
     try:
         # unwrap DDP if needed
         real_model = model.module if hasattr(model, 'module') else model
         device_obj = torch.device(device)
         
-        # 메모리 초기화
-        torch.cuda.reset_peak_memory_stats(device_obj)
+        # 입력 seed 고정 (재현성 향상)
+        torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(42)
+        
+        # Warmup pass (CUDA 커널 초기화)
         torch.cuda.empty_cache()
-        
-        # Dummy input 생성 (batch_size=1로 고정)
-        dummy_input = torch.randn(input_size, dtype=torch.float32).to(device_obj)
-        
-        # 모드에 따라 forward/backward 실행
+        torch.cuda.reset_peak_memory_stats(device_obj)
+        dummy_input_warmup = torch.randn(input_size, dtype=torch.float32).to(device_obj)
         if mode == 'train':
             real_model.train()
-            # Forward pass
-            output = real_model(dummy_input)
-            # Dummy loss for backward
-            if isinstance(output, tuple):
-                loss = output[0].sum()
-            else:
-                loss = output.sum()
-            # Backward pass
-            loss.backward()
-        else:  # inference
+            with torch.enable_grad():
+                output_warmup = real_model(dummy_input_warmup)
+                if isinstance(output_warmup, tuple):
+                    loss_warmup = output_warmup[0].sum()
+                else:
+                    loss_warmup = output_warmup.sum()
+                loss_warmup.backward()
+                real_model.zero_grad()
+        else:
             real_model.eval()
             with torch.no_grad():
-                output = real_model(dummy_input)
+                _ = real_model(dummy_input_warmup)
         
-        # 동기화 후 peak memory 측정
-        torch.cuda.synchronize(device_obj)
-        peak_memory_bytes = torch.cuda.max_memory_allocated(device_obj)
-        
-        # Gradient 정리 (train 모드인 경우)
+        # 메모리 정리 후 측정 시작
+        del dummy_input_warmup
         if mode == 'train':
-            real_model.zero_grad()
+            del output_warmup, loss_warmup
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats(device_obj)
+        
+        # 여러 번 측정하여 변동성 감소
+        peak_memories = []
+        for run_idx in range(num_runs):
+            # 각 측정마다 메모리 초기화
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats(device_obj)
+            
+            # Dummy input 생성 (동일한 seed로 인해 동일한 값)
+            dummy_input = torch.randn(input_size, dtype=torch.float32).to(device_obj)
+            
+            # 모드에 따라 forward/backward 실행
+            if mode == 'train':
+                real_model.train()
+                # Forward pass
+                output = real_model(dummy_input)
+                # Dummy loss for backward
+                if isinstance(output, tuple):
+                    loss = output[0].sum()
+                else:
+                    loss = output.sum()
+                # Backward pass
+                loss.backward()
+            else:  # inference
+                real_model.eval()
+                with torch.no_grad():
+                    output = real_model(dummy_input)
+            
+            # 동기화 후 peak memory 측정
+            torch.cuda.synchronize(device_obj)
+            peak_memory_bytes = torch.cuda.max_memory_allocated(device_obj)
+            peak_memories.append(peak_memory_bytes)
+            
+            # Gradient 정리 (train 모드인 경우)
+            if mode == 'train':
+                real_model.zero_grad()
+            
+            # 메모리 정리
+            del dummy_input, output
+            if mode == 'train':
+                del loss
+            torch.cuda.empty_cache()
         
         # Stage별 측정은 향후 확장 가능 (현재는 빈 dict 반환)
         stage_memories = {}
@@ -231,13 +274,13 @@ def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_
             # 모델 구조에 따라 자동으로 stage를 감지하고 측정
             pass
         
-        return peak_memory_bytes, stage_memories
+        return peak_memories, stage_memories
     
     except Exception as e:
         print(f"Error calculating PAM: {e}")
         import traceback
         traceback.print_exc()
-        return 0, {}
+        return [], {}
 
 def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, use_pretrained=False, norm: str = 'bn'):
     """모델 생성 함수

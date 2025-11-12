@@ -143,17 +143,28 @@ def create_model_comparison_chart(results_df, results_dir):
         return
     
     # 모델별 평균 성능 계산
-    model_stats = results_df.groupby('model_name').agg({
+    agg_dict = {
         'test_dice': ['mean', 'std'],
         'val_dice': ['mean', 'std'],
         'precision': ['mean', 'std'],
         'recall': ['mean', 'std'],
         'total_params': ['mean'],
         'flops': ['mean']
-    }).round(4)
+    }
+    # PAM이 있는 경우에만 추가
+    if 'pam_train' in results_df.columns:
+        agg_dict['pam_train'] = ['mean', 'std']
+    if 'pam_inference' in results_df.columns:
+        agg_dict['pam_inference'] = ['mean', 'std']
     
-    # 차트 생성
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    model_stats = results_df.groupby('model_name').agg(agg_dict).round(4)
+    
+    # 차트 생성 (PAM이 있으면 3x3 레이아웃, 없으면 2x3 레이아웃)
+    has_pam = 'pam_train' in results_df.columns or 'pam_inference' in results_df.columns
+    if has_pam:
+        fig, axes = plt.subplots(3, 3, figsize=(18, 18))
+    else:
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
     fig.suptitle('3D Segmentation Model Comparison', fontsize=16)
     
     models = results_df['model_name'].unique()
@@ -220,6 +231,34 @@ def create_model_comparison_chart(results_df, results_dir):
     ax6.set_ylabel('FLOPs')
     ax6.tick_params(axis='x', rotation=45)
     ax6.ticklabel_format(style='scientific', axis='y', scilimits=(0,0))
+    
+    # PAM 차트 추가 (있는 경우)
+    if has_pam:
+        # PAM Train
+        if 'pam_train' in results_df.columns:
+            ax7 = axes[2, 0]
+            pam_train_means = [model_stats.loc[model, ('pam_train', 'mean')] / (1024**2) for model in models]  # MB로 변환
+            pam_train_stds = [model_stats.loc[model, ('pam_train', 'std')] / (1024**2) for model in models]  # MB로 변환
+            bars7 = ax7.bar(models, pam_train_means, yerr=pam_train_stds, 
+                           color=colors, alpha=0.7, capsize=5)
+            ax7.set_title('PAM (Train)')
+            ax7.set_ylabel('Peak Memory (MB)')
+            ax7.tick_params(axis='x', rotation=45)
+        
+        # PAM Inference
+        if 'pam_inference' in results_df.columns:
+            ax8 = axes[2, 1]
+            pam_inference_means = [model_stats.loc[model, ('pam_inference', 'mean')] / (1024**2) for model in models]  # MB로 변환
+            pam_inference_stds = [model_stats.loc[model, ('pam_inference', 'std')] / (1024**2) for model in models]  # MB로 변환
+            bars8 = ax8.bar(models, pam_inference_means, yerr=pam_inference_stds, 
+                           color=colors, alpha=0.7, capsize=5)
+            ax8.set_title('PAM (Inference)')
+            ax8.set_ylabel('Peak Memory (MB)')
+            ax8.tick_params(axis='x', rotation=45)
+        
+        # 빈 subplot 숨기기 (PAM이 하나만 있는 경우)
+        if 'pam_train' not in results_df.columns or 'pam_inference' not in results_df.columns:
+            axes[2, 2].axis('off')
     
     plt.tight_layout()
     

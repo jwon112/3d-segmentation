@@ -633,9 +633,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     if is_main_process(rank):
                         print(f"FLOPs: {flops:,}")
                     
-                    # PAM 계산 (rank 0에서만, batch_size=1로 고정)
-                    pam_train = 0
-                    pam_inference = 0
+                    # PAM 계산 (rank 0에서만, batch_size=1로 고정, 여러 번 측정)
+                    pam_train_list = []
+                    pam_inference_list = []
                     pam_train_stages = {}
                     pam_inference_stages = {}
                     if is_main_process(rank):
@@ -645,18 +645,22 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             input_size = (1, n_channels, *INPUT_SIZE_3D)
                         
                         try:
-                            pam_train, pam_train_stages = calculate_pam(
+                            pam_train_list, pam_train_stages = calculate_pam(
                                 model, input_size=input_size, mode='train', stage_wise=False, device=device
                             )
-                            pam_inference, pam_inference_stages = calculate_pam(
+                            pam_inference_list, pam_inference_stages = calculate_pam(
                                 model, input_size=input_size, mode='inference', stage_wise=False, device=device
                             )
-                            print(f"PAM (Train, batch_size=1): {pam_train / 1024**2:.2f} MB")
-                            print(f"PAM (Inference, batch_size=1): {pam_inference / 1024**2:.2f} MB")
+                            if pam_train_list:
+                                pam_train_mean = sum(pam_train_list) / len(pam_train_list)
+                                print(f"PAM (Train, batch_size=1): {pam_train_mean / 1024**2:.2f} MB (mean of {len(pam_train_list)} runs)")
+                            if pam_inference_list:
+                                pam_inference_mean = sum(pam_inference_list) / len(pam_inference_list)
+                                print(f"PAM (Inference, batch_size=1): {pam_inference_mean / 1024**2:.2f} MB (mean of {len(pam_inference_list)} runs)")
                         except Exception as e:
                             print(f"Warning: Failed to calculate PAM: {e}")
-                            pam_train = 0
-                            pam_inference = 0
+                            pam_train_list = []
+                            pam_inference_list = []
                     
                     # 최종 평가: Best 모델 로드 후 Test set 평가 (all ranks)
                     if is_main_process(rank):
@@ -708,10 +712,12 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                         input_size = (1, n_channels, *INPUT_SIZE_2D)
                                     else:
                                         input_size = (1, n_channels, *INPUT_SIZE_3D)
-                                    pam_inference, _ = calculate_pam(
+                                    pam_inference_list_after_deploy, _ = calculate_pam(
                                         model, input_size=input_size, mode='inference', stage_wise=False, device=device
                                     )
-                                    print(f"PAM (Inference after deploy, batch_size=1): {pam_inference / 1024**2:.2f} MB")
+                                    if pam_inference_list_after_deploy:
+                                        pam_inference_mean_after_deploy = sum(pam_inference_list_after_deploy) / len(pam_inference_list_after_deploy)
+                                        print(f"PAM (Inference after deploy, batch_size=1): {pam_inference_mean_after_deploy / 1024**2:.2f} MB (mean of {len(pam_inference_list_after_deploy)} runs)")
                                 except Exception as e:
                                     print(f"Warning: Failed to recalculate PAM after deploy: {e}")
 
@@ -719,30 +725,58 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size,
                                               sw_patch_size=(128, 128, 128), sw_overlap=0.10, results_dir=results_dir)
                     
-                    # 결과 저장
-                    result = {
-                        'dataset': dataset_version,
-                        'seed': seed,
-                        'fold': fold_idx if use_5fold else None,
-                        'model_name': model_name,
-                        'total_params': total_params,
-                        'flops': flops,
-                        'pam_train': pam_train,  # bytes, batch_size=1 기준
-                        'pam_inference': pam_inference,  # bytes, batch_size=1 기준
-                        'test_dice': metrics['dice'],  # WT/TC/ET 평균
-                        'test_wt': metrics.get('wt', None),
-                        'test_tc': metrics.get('tc', None),
-                        'test_et': metrics.get('et', None),
-                        'val_dice': best_val_dice,  # WT/TC/ET 평균
-                        'val_wt': best_val_wt,
-                        'val_tc': best_val_tc,
-                        'val_et': best_val_et,
-                        'precision': metrics['precision'],
-                        'recall': metrics['recall'],
-                        'best_epoch': best_epoch
-                    }
-                    if is_main_process(rank):
-                        all_results.append(result)
+                    # 결과 저장 (PAM은 각 측정값을 개별적으로 저장하여 model_comparison에서 평균/표준편차 계산)
+                    if pam_train_list and pam_inference_list:
+                        # 각 측정값마다 별도의 결과 행 생성
+                        for pam_train_val, pam_inference_val in zip(pam_train_list, pam_inference_list):
+                            result = {
+                                'dataset': dataset_version,
+                                'seed': seed,
+                                'fold': fold_idx if use_5fold else None,
+                                'model_name': model_name,
+                                'total_params': total_params,
+                                'flops': flops,
+                                'pam_train': pam_train_val,  # bytes, batch_size=1 기준
+                                'pam_inference': pam_inference_val,  # bytes, batch_size=1 기준
+                                'test_dice': metrics['dice'],  # WT/TC/ET 평균
+                                'test_wt': metrics.get('wt', None),
+                                'test_tc': metrics.get('tc', None),
+                                'test_et': metrics.get('et', None),
+                                'val_dice': best_val_dice,  # WT/TC/ET 평균
+                                'val_wt': best_val_wt,
+                                'val_tc': best_val_tc,
+                                'val_et': best_val_et,
+                                'precision': metrics['precision'],
+                                'recall': metrics['recall'],
+                                'best_epoch': best_epoch
+                            }
+                            if is_main_process(rank):
+                                all_results.append(result)
+                    else:
+                        # PAM 측정 실패 시 기본값으로 저장
+                        result = {
+                            'dataset': dataset_version,
+                            'seed': seed,
+                            'fold': fold_idx if use_5fold else None,
+                            'model_name': model_name,
+                            'total_params': total_params,
+                            'flops': flops,
+                            'pam_train': 0,  # bytes, batch_size=1 기준
+                            'pam_inference': 0,  # bytes, batch_size=1 기준
+                            'test_dice': metrics['dice'],  # WT/TC/ET 평균
+                            'test_wt': metrics.get('wt', None),
+                            'test_tc': metrics.get('tc', None),
+                            'test_et': metrics.get('et', None),
+                            'val_dice': best_val_dice,  # WT/TC/ET 평균
+                            'val_wt': best_val_wt,
+                            'val_tc': best_val_tc,
+                            'val_et': best_val_et,
+                            'precision': metrics['precision'],
+                            'recall': metrics['recall'],
+                            'best_epoch': best_epoch
+                        }
+                        if is_main_process(rank):
+                            all_results.append(result)
                     
                     # 모든 epoch 결과 저장 (test_dice는 최종 평가 값으로 업데이트)
                     for epoch_result in epoch_results:
@@ -805,12 +839,19 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     
     # 모델별 평균 성능
     try:
-        model_comparison = results_df.groupby('model_name').agg({
+        agg_dict = {
             'test_dice': ['mean', 'std'],
             'val_dice': ['mean', 'std'],
             'precision': ['mean', 'std'],
             'recall': ['mean', 'std']
-        }).round(4)
+        }
+        # PAM이 있는 경우에만 추가
+        if 'pam_train' in results_df.columns:
+            agg_dict['pam_train'] = ['mean', 'std']
+        if 'pam_inference' in results_df.columns:
+            agg_dict['pam_inference'] = ['mean', 'std']
+        
+        model_comparison = results_df.groupby('model_name').agg(agg_dict).round(4)
         if is_main_process(0) or not distributed:
             comparison_path = os.path.join(results_dir, "model_comparison.csv")
             model_comparison.to_csv(comparison_path)
