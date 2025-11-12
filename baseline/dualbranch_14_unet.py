@@ -36,10 +36,12 @@ class GhostModule3D(nn.Module):
             nn.ReLU(inplace=True) if ratio == 2 else nn.ReLU(inplace=True),
         )
         
+        # new_channels가 정확히 필요한 만큼만 생성되도록 조정
+        actual_new_channels = min(new_channels, out_channels - init_channels)
         self.cheap_operation = nn.Sequential(
-            nn.Conv3d(init_channels, new_channels, kernel_size=3, stride=1, padding=1, 
+            nn.Conv3d(init_channels, actual_new_channels, kernel_size=3, stride=1, padding=1, 
                      groups=init_channels, bias=False),
-            _make_norm3d(norm, new_channels),
+            _make_norm3d(norm, actual_new_channels),
             nn.ReLU(inplace=True),
         )
     
@@ -47,6 +49,7 @@ class GhostModule3D(nn.Module):
         x1 = self.primary_conv(x)
         x2 = self.cheap_operation(x1)
         out = torch.cat([x1, x2], dim=1)
+        # 필요한 채널만 반환 (슬라이싱은 여전히 필요하지만, 모든 파라미터가 사용됨)
         return out[:, :self.out_channels, :, :, :]
 
 
@@ -449,12 +452,13 @@ class DualBranchUNet3D_ConvNeXt_Small(nn.Module):
         self.bilinear = bilinear
         
         # Stage 1 stems (ConvNeXt blocks)
+        # Note: ConvNeXt 원래는 4x4 stride=4로 패치화하지만, segmentation에서는 크기 유지를 위해 3x3 사용
         self.stem_flair = nn.Sequential(
-            nn.Conv3d(1, 16, kernel_size=4, stride=1, padding=1, bias=True),
+            nn.Conv3d(1, 16, kernel_size=3, stride=1, padding=1, bias=True),
             ConvNeXtBlock3D(16, norm=self.norm),
         )
         self.stem_t1ce = nn.Sequential(
-            nn.Conv3d(1, 16, kernel_size=4, stride=1, padding=1, bias=True),
+            nn.Conv3d(1, 16, kernel_size=3, stride=1, padding=1, bias=True),
             ConvNeXtBlock3D(16, norm=self.norm),
         )
         
