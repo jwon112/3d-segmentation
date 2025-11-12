@@ -494,6 +494,9 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     elif model_name == 'dualbranch_14_convnext_s':
         from baseline.dualbranch_14_unet import DualBranchUNet3D_ConvNeXt_Small
         return DualBranchUNet3D_ConvNeXt_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_15_dilated125_both_s':
+        from baseline.dualbranch_15_unet import DualBranchUNet3D_Dilated125_Both_Mobile_Small
+        return DualBranchUNet3D_Dilated125_Both_Mobile_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
     # 모달리티 비교 실험 모델들
     elif model_name == 'unet3d_2modal_s':
         # 단일 분기, 2채널 (t1ce, flair) concat
