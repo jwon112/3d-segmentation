@@ -16,7 +16,7 @@ from datetime import datetime
 # Import utilities
 from utils.experiment_utils import (
     setup_distributed, cleanup_distributed, is_main_process,
-    set_seed, sliding_window_inference_3d, calculate_flops, get_model,
+    set_seed, sliding_window_inference_3d, calculate_flops, calculate_pam, get_model,
     INPUT_SIZE_2D, INPUT_SIZE_3D
 )
 
@@ -633,6 +633,31 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     if is_main_process(rank):
                         print(f"FLOPs: {flops:,}")
                     
+                    # PAM 계산 (rank 0에서만, batch_size=1로 고정)
+                    pam_train = 0
+                    pam_inference = 0
+                    pam_train_stages = {}
+                    pam_inference_stages = {}
+                    if is_main_process(rank):
+                        if dim == '2d':
+                            input_size = (1, n_channels, *INPUT_SIZE_2D)
+                        else:
+                            input_size = (1, n_channels, *INPUT_SIZE_3D)
+                        
+                        try:
+                            pam_train, pam_train_stages = calculate_pam(
+                                model, input_size=input_size, mode='train', stage_wise=False, device=device
+                            )
+                            pam_inference, pam_inference_stages = calculate_pam(
+                                model, input_size=input_size, mode='inference', stage_wise=False, device=device
+                            )
+                            print(f"PAM (Train, batch_size=1): {pam_train / 1024**2:.2f} MB")
+                            print(f"PAM (Inference, batch_size=1): {pam_inference / 1024**2:.2f} MB")
+                        except Exception as e:
+                            print(f"Warning: Failed to calculate PAM: {e}")
+                            pam_train = 0
+                            pam_inference = 0
+                    
                     # 최종 평가: Best 모델 로드 후 Test set 평가 (all ranks)
                     if is_main_process(rank):
                         print(f"\nLoading best model (epoch {best_epoch}, Val Dice: {best_val_dice:.4f}) for final test evaluation...")
@@ -676,6 +701,19 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                 flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
                             if is_main_process(rank):
                                 print(f"FLOPs after deploy: {flops:,}")
+                            # Recalculate PAM after deploy mode (may be different due to fused branches)
+                            if is_main_process(rank):
+                                try:
+                                    if dim == '2d':
+                                        input_size = (1, n_channels, *INPUT_SIZE_2D)
+                                    else:
+                                        input_size = (1, n_channels, *INPUT_SIZE_3D)
+                                    pam_inference, _ = calculate_pam(
+                                        model, input_size=input_size, mode='inference', stage_wise=False, device=device
+                                    )
+                                    print(f"PAM (Inference after deploy, batch_size=1): {pam_inference / 1024**2:.2f} MB")
+                                except Exception as e:
+                                    print(f"Warning: Failed to recalculate PAM after deploy: {e}")
 
                     # Test set 평가 (모든 랭크 동일 경로)
                     metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size,
@@ -689,6 +727,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         'model_name': model_name,
                         'total_params': total_params,
                         'flops': flops,
+                        'pam_train': pam_train,  # bytes, batch_size=1 기준
+                        'pam_inference': pam_inference,  # bytes, batch_size=1 기준
                         'test_dice': metrics['dice'],  # WT/TC/ET 평균
                         'test_wt': metrics.get('wt', None),
                         'test_tc': metrics.get('tc', None),

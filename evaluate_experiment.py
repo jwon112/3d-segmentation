@@ -21,7 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import from refactored modules
 from utils.experiment_utils import (
-    get_model, calculate_flops, 
+    get_model, calculate_flops, calculate_pam,
     setup_distributed, cleanup_distributed, is_main_process,
     INPUT_SIZE_2D, INPUT_SIZE_3D
 )
@@ -93,12 +93,32 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     total_params = sum(p.numel() for p in real_model.parameters())
     if dim == '2d':
         flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_2D))
+        input_size = (1, n_channels, *INPUT_SIZE_2D)
     else:
         flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
+        input_size = (1, n_channels, *INPUT_SIZE_3D)
+    
+    # PAM 계산 (rank 0에서만, batch_size=1로 고정)
+    pam_train = 0
+    pam_inference = 0
+    if is_main_process(rank):
+        try:
+            pam_train, _ = calculate_pam(
+                model, input_size=input_size, mode='train', stage_wise=False, device=device
+            )
+            pam_inference, _ = calculate_pam(
+                model, input_size=input_size, mode='inference', stage_wise=False, device=device
+            )
+        except Exception as e:
+            print(f"Warning: Failed to calculate PAM: {e}")
+            pam_train = 0
+            pam_inference = 0
     
     if is_main_process(rank):
         print(f"Parameters: {total_params:,}")
         print(f"FLOPs: {flops:,}")
+        print(f"PAM (Train, batch_size=1): {pam_train / 1024**2:.2f} MB")
+        print(f"PAM (Inference, batch_size=1): {pam_inference / 1024**2:.2f} MB")
     
     # Test set 평가
     metrics = evaluate_model(
@@ -115,6 +135,8 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         'model_name': model_name,
         'total_params': total_params,
         'flops': flops,
+        'pam_train': pam_train,  # bytes, batch_size=1 기준
+        'pam_inference': pam_inference,  # bytes, batch_size=1 기준
         'test_dice': metrics['dice'],
         'test_wt': metrics.get('wt', None),
         'test_tc': metrics.get('tc', None),

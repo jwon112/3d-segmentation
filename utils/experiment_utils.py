@@ -164,6 +164,81 @@ def calculate_flops(model, input_size=(1, 4, 64, 64, 64)):
         print(f"Error calculating FLOPs: {e}")
         return 0
 
+def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_wise=False, device='cuda'):
+    """
+    Peak Activation Memory (PAM) 계산
+    
+    Args:
+        model: PyTorch 모델 (DDP wrapped 가능)
+        input_size: 입력 텐서 크기 (batch_size=1로 고정)
+        mode: 'train' 또는 'inference'
+        stage_wise: True면 stage별 PAM도 측정 (현재는 False만 지원, 향후 확장 가능)
+        device: 디바이스 ('cuda' 또는 'cpu')
+    
+    Returns:
+        - 전체 PAM (bytes, batch_size=1 기준)
+        - stage별 PAM dict (stage_wise=True일 때, 현재는 빈 dict)
+    
+    Note:
+        - batch_size=1로 고정하여 측정 (모든 모델을 동일한 조건에서 비교)
+        - Train 모드에서는 backward pass까지 포함하여 측정
+        - Inference 모드에서는 forward pass만 측정
+    """
+    if not torch.cuda.is_available() or device == 'cpu':
+        return 0, {}
+    
+    try:
+        # unwrap DDP if needed
+        real_model = model.module if hasattr(model, 'module') else model
+        device_obj = torch.device(device)
+        
+        # 메모리 초기화
+        torch.cuda.reset_peak_memory_stats(device_obj)
+        torch.cuda.empty_cache()
+        
+        # Dummy input 생성 (batch_size=1로 고정)
+        dummy_input = torch.randn(input_size, dtype=torch.float32).to(device_obj)
+        
+        # 모드에 따라 forward/backward 실행
+        if mode == 'train':
+            real_model.train()
+            # Forward pass
+            output = real_model(dummy_input)
+            # Dummy loss for backward
+            if isinstance(output, tuple):
+                loss = output[0].sum()
+            else:
+                loss = output.sum()
+            # Backward pass
+            loss.backward()
+        else:  # inference
+            real_model.eval()
+            with torch.no_grad():
+                output = real_model(dummy_input)
+        
+        # 동기화 후 peak memory 측정
+        torch.cuda.synchronize(device_obj)
+        peak_memory_bytes = torch.cuda.max_memory_allocated(device_obj)
+        
+        # Gradient 정리 (train 모드인 경우)
+        if mode == 'train':
+            real_model.zero_grad()
+        
+        # Stage별 측정은 향후 확장 가능 (현재는 빈 dict 반환)
+        stage_memories = {}
+        if stage_wise:
+            # TODO: Forward hook을 사용한 stage별 메모리 측정 구현
+            # 모델 구조에 따라 자동으로 stage를 감지하고 측정
+            pass
+        
+        return peak_memory_bytes, stage_memories
+    
+    except Exception as e:
+        print(f"Error calculating PAM: {e}")
+        import traceback
+        traceback.print_exc()
+        return 0, {}
+
 def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, use_pretrained=False, norm: str = 'bn'):
     """모델 생성 함수
     
