@@ -304,6 +304,7 @@ def calculate_inference_latency(model, input_size=(1, 4, 64, 64, 64), device='cu
         - 여러 번 측정하여 변동성을 줄이고, model_comparison에서 평균/표준편차 계산
     """
     if not torch.cuda.is_available() or device != 'cuda':
+        print(f"Warning: CUDA not available or device != 'cuda', skipping latency measurement")
         return [], {}
     
     try:
@@ -321,8 +322,21 @@ def calculate_inference_latency(model, input_size=(1, 4, 64, 64, 64), device='cu
         # Warmup (CUDA 커널 초기화, PAM과 동일한 방식)
         torch.cuda.empty_cache()
         dummy_input_warmup = torch.randn(input_size, dtype=torch.float32).to(device_obj)
+        
+        # Warmup 중 모델이 제대로 실행되는지 확인
         with torch.no_grad():
-            for _ in range(num_warmup):
+            try:
+                output_warmup = real_model(dummy_input_warmup)
+                if output_warmup is None:
+                    print(f"Warning: Model returned None during warmup, input_size={input_size}")
+                    return [], {}
+            except Exception as e:
+                print(f"Error during warmup: {e}, input_size={input_size}")
+                import traceback
+                traceback.print_exc()
+                return [], {}
+            
+            for _ in range(num_warmup - 1):  # 첫 번째는 이미 실행했으므로
                 _ = real_model(dummy_input_warmup)
         
         # CUDA 동기화 (warmup 완료)
@@ -332,6 +346,7 @@ def calculate_inference_latency(model, input_size=(1, 4, 64, 64, 64), device='cu
         torch.cuda.empty_cache()
         
         # 실제 측정 (각 측정마다 새로운 입력 생성하여 변동성 반영)
+        import time
         latencies = []
         for run_idx in range(num_runs):
             # Dummy input 생성 (각 측정마다 다른 값, 실제 inference 변동성 반영)
@@ -339,17 +354,39 @@ def calculate_inference_latency(model, input_size=(1, 4, 64, 64, 64), device='cu
             dummy_input = torch.randn(input_size, dtype=torch.float32).to(device_obj)
             
             # CUDA Event를 사용한 정확한 시간 측정
+            # 동기화 후 Event 생성 (더 정확한 측정을 위해)
             torch.cuda.synchronize(device_obj)
-            start = torch.cuda.Event(enable_timing=True)
-            end = torch.cuda.Event(enable_timing=True)
+            start_event = torch.cuda.Event(enable_timing=True)
+            end_event = torch.cuda.Event(enable_timing=True)
             
-            start.record()
+            # Event 기록 시작
+            start_event.record()
             with torch.no_grad():
                 _ = real_model(dummy_input)
-            end.record()
+            end_event.record()
+            
+            # Event가 완료될 때까지 대기 (중요!)
             torch.cuda.synchronize(device_obj)
             
-            latency_ms = start.elapsed_time(end)  # milliseconds
+            # elapsed_time은 end_event가 완료된 후에만 호출해야 함
+            latency_ms = start_event.elapsed_time(end_event)  # milliseconds
+            
+            # 측정값이 유효한지 확인 (0이거나 음수면 문제)
+            # torch.cuda.Event가 0을 반환하는 경우가 있으므로, 대안으로 time.perf_counter() 사용
+            if latency_ms <= 0 or latency_ms > 100000:  # 비정상적으로 큰 값도 체크
+                # 대안: time.perf_counter() 사용 (CUDA 동기화와 함께)
+                torch.cuda.synchronize(device_obj)
+                start_time = time.perf_counter()
+                with torch.no_grad():
+                    _ = real_model(dummy_input)
+                torch.cuda.synchronize(device_obj)
+                end_time = time.perf_counter()
+                latency_ms = (end_time - start_time) * 1000  # ms로 변환
+                
+                # 여전히 0이면 경고 출력 (디버깅용)
+                if latency_ms <= 0:
+                    print(f"Warning: Latency measurement still 0 at run {run_idx}, input_size={input_size}")
+            
             latencies.append(latency_ms)
             
             # 메모리 정리
