@@ -303,14 +303,17 @@ def calculate_inference_latency(model, input_size=(1, 4, 64, 64, 64), device='cu
         - PAM과 동일하게 dummy input 사용 (torch.randn)
         - 여러 번 측정하여 변동성을 줄이고, model_comparison에서 평균/표준편차 계산
     """
-    if not torch.cuda.is_available() or device != 'cuda':
-        print(f"Warning: CUDA not available or device != 'cuda', skipping latency measurement")
+    # device가 torch.device 객체일 수 있으므로 type을 확인
+    device_type = device.type if isinstance(device, torch.device) else str(device)
+    if not torch.cuda.is_available() or device_type != 'cuda':
+        print(f"Warning: CUDA not available or device != 'cuda' (got {device_type}), skipping latency measurement")
         return [], {}
     
     try:
         # unwrap DDP if needed
         real_model = model.module if hasattr(model, 'module') else model
-        device_obj = torch.device(device)
+        # device가 이미 torch.device 객체면 그대로 사용, 아니면 변환
+        device_obj = device if isinstance(device, torch.device) else torch.device(device)
         
         # 모델을 eval 모드로 설정
         real_model.eval()
