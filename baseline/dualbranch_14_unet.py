@@ -99,42 +99,132 @@ class Down3DGhostNet(nn.Module):
         return self.block(x)
 
 
-class DepthwiseSeparableConv3D(nn.Module):
-    """3D Depth-wise Separable Convolution block."""
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int = 3, 
-                 stride: int = 1, padding: int = 1, norm: str = 'bn'):
+def channel_shuffle_3d(x: torch.Tensor, groups: int) -> torch.Tensor:
+    """3D Channel Shuffle operation.
+    
+    Args:
+        x: Input tensor of shape (B, C, D, H, W)
+        groups: Number of groups to shuffle
+    
+    Returns:
+        Shuffled tensor
+    """
+    B, C, D, H, W = x.size()
+    channels_per_group = C // groups
+    
+    # Reshape: (B, groups, channels_per_group, D, H, W)
+    x = x.view(B, groups, channels_per_group, D, H, W)
+    
+    # Transpose: (B, channels_per_group, groups, D, H, W)
+    x = x.transpose(1, 2).contiguous()
+    
+    # Flatten: (B, C, D, H, W)
+    x = x.view(B, C, D, H, W)
+    
+    return x
+
+
+class ShuffleNetV2Unit3D(nn.Module):
+    """3D ShuffleNetV2 Unit.
+    
+    ShuffleNetV2의 핵심 블록:
+    - Stride=1: Split -> Branch1 (identity) + Branch2 (DWConv -> 1x1 -> DWConv -> 1x1) -> Concat -> Shuffle
+    - Stride=2: No split -> Branch1 (DWConv stride=2 -> 1x1) + Branch2 (1x1 -> DWConv stride=2 -> 1x1) -> Concat -> Shuffle
+    """
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, norm: str = 'bn'):
         super().__init__()
-        self.depthwise = nn.Sequential(
-            nn.Conv3d(in_channels, in_channels, kernel_size, stride, padding, 
-                     groups=in_channels, bias=False),
-            _make_norm3d(norm, in_channels),
-            nn.ReLU(inplace=True),
-        )
-        self.pointwise = nn.Sequential(
-            nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            _make_norm3d(norm, out_channels),
-            nn.ReLU(inplace=True),
-        )
+        self.stride = stride
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        
+        if stride == 1:
+            # Stride=1: Split operation
+            assert in_channels == out_channels, "For stride=1, in_channels must equal out_channels"
+            mid_channels = out_channels // 2
+            
+            # Branch 1: Identity (no operation)
+            self.branch1 = nn.Identity()
+            
+            # Branch 2: DWConv -> 1x1 -> DWConv -> 1x1
+            self.branch2 = nn.Sequential(
+                # Depthwise Conv
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=1, padding=1, 
+                         groups=mid_channels, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+                # Pointwise Conv
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+                # Depthwise Conv
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=1, padding=1, 
+                         groups=mid_channels, bias=False),
+                _make_norm3d(norm, mid_channels),
+                # Pointwise Conv
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+            )
+        else:
+            # Stride=2: No split, both branches process full input
+            # Branch 1: DWConv stride=2 -> 1x1
+            self.branch1 = nn.Sequential(
+                nn.Conv3d(in_channels, in_channels, kernel_size=3, stride=2, padding=1, 
+                         groups=in_channels, bias=False),
+                _make_norm3d(norm, in_channels),
+                nn.Conv3d(in_channels, out_channels // 2, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, out_channels // 2),
+                nn.ReLU(inplace=True),
+            )
+            
+            # Branch 2: 1x1 -> DWConv stride=2 -> 1x1
+            self.branch2 = nn.Sequential(
+                nn.Conv3d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, in_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv3d(in_channels, in_channels, kernel_size=3, stride=2, padding=1, 
+                         groups=in_channels, bias=False),
+                _make_norm3d(norm, in_channels),
+                nn.Conv3d(in_channels, out_channels // 2, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, out_channels // 2),
+                nn.ReLU(inplace=True),
+            )
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.depthwise(x)
-        x = self.pointwise(x)
-        return x
+        if self.stride == 1:
+            # Split channels
+            x1, x2 = x.chunk(2, dim=1)
+            # Branch 1: Identity
+            out1 = self.branch1(x1)
+            # Branch 2: Processing
+            out2 = self.branch2(x2)
+            # Concat
+            out = torch.cat([out1, out2], dim=1)
+        else:
+            # Both branches process full input
+            out1 = self.branch1(x)
+            out2 = self.branch2(x)
+            # Concat
+            out = torch.cat([out1, out2], dim=1)
+        
+        # Channel Shuffle
+        out = channel_shuffle_3d(out, groups=2)
+        return out
 
 
-class Down3DDepthwiseSeparable(nn.Module):
-    """Downsampling using Depth-wise Separable Convolution (stride=2)."""
+class Down3DShuffleNetV2(nn.Module):
+    """Downsampling using ShuffleNetV2 unit (stride=2)."""
     def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn'):
         super().__init__()
-        self.block = nn.Sequential(
-            DepthwiseSeparableConv3D(in_channels, out_channels, kernel_size=3, stride=2, 
-                                    padding=1, norm=norm),
-            DepthwiseSeparableConv3D(out_channels, out_channels, kernel_size=3, stride=1, 
-                                    padding=1, norm=norm),
-        )
+        # First unit: stride=2 for downsampling
+        self.unit1 = ShuffleNetV2Unit3D(in_channels, out_channels, stride=2, norm=norm)
+        # Second unit: stride=1 for feature refinement
+        self.unit2 = ShuffleNetV2Unit3D(out_channels, out_channels, stride=1, norm=norm)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.block(x)
+        x = self.unit1(x)
+        x = self.unit2(x)
+        return x
 
 
 class ConvNeXtBlock3D(nn.Module):
@@ -313,69 +403,6 @@ class DualBranchUNet3D_GhostNet_Small(nn.Module):
         return self.outc(x)
 
 
-class DualBranchUNet3D_DepthwiseSeparable_Small(nn.Module):
-    """Dual-branch UNet with Depth-wise Separable Conv for both branches (Small).
-    
-    Stage 1-4: Dual-branch with Depth-wise Separable Conv
-    Stage 5: Fused branch with MobileViT
-    """
-    def __init__(self, n_channels: int = 2, n_classes: int = 4, norm: str = 'bn', bilinear: bool = False):
-        super().__init__()
-        assert n_channels == 2
-        self.norm = norm or 'bn'
-        self.bilinear = bilinear
-        
-        # Stage 1 stems (Depth-wise Separable Conv)
-        self.stem_flair = DepthwiseSeparableConv3D(1, 16, kernel_size=3, stride=1, padding=1, norm=self.norm)
-        self.stem_t1ce = DepthwiseSeparableConv3D(1, 16, kernel_size=3, stride=1, padding=1, norm=self.norm)
-        
-        # Stage 2-4 branches (both Depth-wise Separable Conv)
-        self.branch_flair = Down3DDepthwiseSeparable(16, 32, norm=self.norm)
-        self.branch_t1ce = Down3DDepthwiseSeparable(16, 32, norm=self.norm)
-        
-        self.branch_flair3 = Down3DDepthwiseSeparable(32, 64, norm=self.norm)
-        self.branch_t1ce3 = Down3DDepthwiseSeparable(32, 64, norm=self.norm)
-        
-        self.branch_flair4 = Down3DDepthwiseSeparable(64, 128, norm=self.norm)
-        self.branch_t1ce4 = Down3DDepthwiseSeparable(64, 128, norm=self.norm)
-        
-        # Stage 5 fused branch with MobileViT
-        factor = 2 if self.bilinear else 1
-        self.down5 = Down3DStrideMViT(128 + 128, 512 // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
-        
-        # Decoder
-        self.up1 = Up3D(512, 256 // factor, self.bilinear, norm=self.norm)
-        self.up2 = Up3D(256, 128 // factor, self.bilinear, norm=self.norm)
-        self.up3 = Up3D(128, 64 // factor, self.bilinear, norm=self.norm)
-        self.up4 = Up3D(64, 32, self.bilinear, norm=self.norm)
-        self.outc = OutConv3D(32, n_classes)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x1_flair = self.stem_flair(x[:, :1])
-        x1_t1ce = self.stem_t1ce(x[:, 1:2])
-        x1 = torch.cat([x1_flair, x1_t1ce], dim=1)
-        
-        b_flair = self.branch_flair(x1_flair)
-        b_t1ce = self.branch_t1ce(x1_t1ce)
-        x2 = torch.cat([b_flair, b_t1ce], dim=1)
-        
-        b2_flair = self.branch_flair3(b_flair)
-        b2_t1ce = self.branch_t1ce3(b_t1ce)
-        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
-        
-        b3_flair = self.branch_flair4(b2_flair)
-        b3_t1ce = self.branch_t1ce4(b2_t1ce)
-        x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
-        
-        x5 = self.down5(x4)
-        
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
-        return self.outc(x)
-
-
 class DualBranchUNet3D_Dilated_Small(nn.Module):
     """Dual-branch UNet with Dilated Conv (rate 1,2,5) for both branches (Small).
     
@@ -509,11 +536,85 @@ class DualBranchUNet3D_ConvNeXt_Small(nn.Module):
         return self.outc(x)
 
 
+class DualBranchUNet3D_ShuffleNetV2_Small(nn.Module):
+    """Dual-branch UNet with ShuffleNetV2 for both branches (Small).
+    
+    Stage 1-4: Dual-branch with ShuffleNetV2
+    Stage 5: Fused branch with MobileViT
+    """
+    def __init__(self, n_channels: int = 2, n_classes: int = 4, norm: str = 'bn', bilinear: bool = False):
+        super().__init__()
+        assert n_channels == 2
+        self.norm = norm or 'bn'
+        self.bilinear = bilinear
+        
+        # Stage 1 stems (ShuffleNetV2: initial conv + ShuffleNetV2 unit stride=1)
+        # Initial conv to get 16 channels, then split for ShuffleNetV2
+        self.stem_flair = nn.Sequential(
+            nn.Conv3d(1, 16, kernel_size=3, stride=1, padding=1, bias=False),
+            _make_norm3d(norm, 16),
+            nn.ReLU(inplace=True),
+            ShuffleNetV2Unit3D(16, 16, stride=1, norm=norm),
+        )
+        self.stem_t1ce = nn.Sequential(
+            nn.Conv3d(1, 16, kernel_size=3, stride=1, padding=1, bias=False),
+            _make_norm3d(norm, 16),
+            nn.ReLU(inplace=True),
+            ShuffleNetV2Unit3D(16, 16, stride=1, norm=norm),
+        )
+        
+        # Stage 2-4 branches (both ShuffleNetV2)
+        self.branch_flair = Down3DShuffleNetV2(16, 32, norm=self.norm)
+        self.branch_t1ce = Down3DShuffleNetV2(16, 32, norm=self.norm)
+        
+        self.branch_flair3 = Down3DShuffleNetV2(32, 64, norm=self.norm)
+        self.branch_t1ce3 = Down3DShuffleNetV2(32, 64, norm=self.norm)
+        
+        self.branch_flair4 = Down3DShuffleNetV2(64, 128, norm=self.norm)
+        self.branch_t1ce4 = Down3DShuffleNetV2(64, 128, norm=self.norm)
+        
+        # Stage 5 fused branch with MobileViT
+        factor = 2 if self.bilinear else 1
+        self.down5 = Down3DStrideMViT(128 + 128, 512 // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
+        
+        # Decoder
+        self.up1 = Up3D(512, 256 // factor, self.bilinear, norm=self.norm)
+        self.up2 = Up3D(256, 128 // factor, self.bilinear, norm=self.norm)
+        self.up3 = Up3D(128, 64 // factor, self.bilinear, norm=self.norm)
+        self.up4 = Up3D(64, 32, self.bilinear, norm=self.norm)
+        self.outc = OutConv3D(32, n_classes)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x1_flair = self.stem_flair(x[:, :1])
+        x1_t1ce = self.stem_t1ce(x[:, 1:2])
+        x1 = torch.cat([x1_flair, x1_t1ce], dim=1)
+        
+        b_flair = self.branch_flair(x1_flair)
+        b_t1ce = self.branch_t1ce(x1_t1ce)
+        x2 = torch.cat([b_flair, b_t1ce], dim=1)
+        
+        b2_flair = self.branch_flair3(b_flair)
+        b2_t1ce = self.branch_t1ce3(b_t1ce)
+        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
+        
+        b3_flair = self.branch_flair4(b2_flair)
+        b3_t1ce = self.branch_t1ce4(b2_t1ce)
+        x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
+        
+        x5 = self.down5(x4)
+        
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x = self.up4(x, x1)
+        return self.outc(x)
+
+
 __all__ = [
     'DualBranchUNet3D_MobileNetV2_Expand2_Small',
     'DualBranchUNet3D_GhostNet_Small',
-    'DualBranchUNet3D_DepthwiseSeparable_Small',
     'DualBranchUNet3D_Dilated_Small',
     'DualBranchUNet3D_ConvNeXt_Small',
+    'DualBranchUNet3D_ShuffleNetV2_Small',
 ]
 

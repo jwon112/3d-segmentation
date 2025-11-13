@@ -580,15 +580,15 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     elif model_name == 'dualbranch_14_ghostnet_s':
         from baseline.dualbranch_14_unet import DualBranchUNet3D_GhostNet_Small
         return DualBranchUNet3D_GhostNet_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_14_depthwise_separable_s':
-        from baseline.dualbranch_14_unet import DualBranchUNet3D_DepthwiseSeparable_Small
-        return DualBranchUNet3D_DepthwiseSeparable_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
     elif model_name == 'dualbranch_14_dilated_s':
         from baseline.dualbranch_14_unet import DualBranchUNet3D_Dilated_Small
         return DualBranchUNet3D_Dilated_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
     elif model_name == 'dualbranch_14_convnext_s':
         from baseline.dualbranch_14_unet import DualBranchUNet3D_ConvNeXt_Small
         return DualBranchUNet3D_ConvNeXt_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name == 'dualbranch_14_shufflenetv2_s':
+        from baseline.dualbranch_14_unet import DualBranchUNet3D_ShuffleNetV2_Small
+        return DualBranchUNet3D_ShuffleNetV2_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
     elif model_name == 'dualbranch_15_dilated125_both_s':
         from baseline.dualbranch_15_unet import DualBranchUNet3D_Dilated125_Both_Mobile_Small
         return DualBranchUNet3D_Dilated125_Both_Mobile_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
