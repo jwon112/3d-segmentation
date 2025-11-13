@@ -16,7 +16,7 @@ from datetime import datetime
 # Import utilities
 from utils.experiment_utils import (
     setup_distributed, cleanup_distributed, is_main_process,
-    set_seed, sliding_window_inference_3d, calculate_flops, calculate_pam, get_model,
+    set_seed, sliding_window_inference_3d, calculate_flops, calculate_pam, calculate_inference_latency, get_model,
     INPUT_SIZE_2D, INPUT_SIZE_3D
 )
 
@@ -664,6 +664,25 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             pam_train_list = []
                             pam_inference_list = []
                     
+                    # Inference Latency 계산 (rank 0에서만, batch_size=1로 고정, 여러 번 측정)
+                    inference_latency_list = []
+                    inference_latency_stats = {}
+                    if is_main_process(rank):
+                        try:
+                            inference_latency_list, inference_latency_stats = calculate_inference_latency(
+                                model, input_size=input_size, device=device, num_warmup=10, num_runs=100
+                            )
+                            if inference_latency_list:
+                                latency_mean = inference_latency_stats['mean']
+                                latency_std = inference_latency_stats['std']
+                                print(f"Inference Latency (batch_size=1): {latency_mean:.2f} ± {latency_std:.2f} ms (mean ± std of {len(inference_latency_list)} runs)")
+                                print(f"  Min: {inference_latency_stats['min']:.2f} ms, Max: {inference_latency_stats['max']:.2f} ms")
+                                print(f"  P50: {inference_latency_stats['p50']:.2f} ms, P95: {inference_latency_stats['p95']:.2f} ms, P99: {inference_latency_stats['p99']:.2f} ms")
+                        except Exception as e:
+                            print(f"Warning: Failed to calculate inference latency: {e}")
+                            inference_latency_list = []
+                            inference_latency_stats = {}
+                    
                     # 최종 평가: Best 모델 로드 후 Test set 평가 (all ranks)
                     if is_main_process(rank):
                         print(f"\nLoading best model (epoch {best_epoch}, Val Dice: {best_val_dice:.4f}) for final test evaluation...")
@@ -727,10 +746,16 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size,
                                               sw_patch_size=(128, 128, 128), sw_overlap=0.10, results_dir=results_dir)
                     
-                    # 결과 저장 (PAM은 각 측정값을 개별적으로 저장하여 model_comparison에서 평균/표준편차 계산)
+                    # 결과 저장 (PAM과 Latency는 각 측정값을 개별적으로 저장하여 model_comparison에서 평균/표준편차 계산)
                     if pam_train_list and pam_inference_list:
                         # 각 측정값마다 별도의 결과 행 생성
-                        for pam_train_val, pam_inference_val in zip(pam_train_list, pam_inference_list):
+                        # Latency는 PAM과 동일한 인덱스로 매칭 (또는 각 latency 값마다 저장)
+                        max_len = max(len(pam_train_list), len(pam_inference_list), len(inference_latency_list) if inference_latency_list else 0)
+                        for idx in range(max_len):
+                            pam_train_val = pam_train_list[idx] if idx < len(pam_train_list) else pam_train_list[-1] if pam_train_list else 0
+                            pam_inference_val = pam_inference_list[idx] if idx < len(pam_inference_list) else pam_inference_list[-1] if pam_inference_list else 0
+                            latency_val = inference_latency_list[idx] if inference_latency_list and idx < len(inference_latency_list) else (inference_latency_list[-1] if inference_latency_list else 0)
+                            
                             result = {
                                 'dataset': dataset_version,
                                 'seed': seed,
@@ -740,6 +765,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                 'flops': flops,
                                 'pam_train': pam_train_val,  # bytes, batch_size=1 기준
                                 'pam_inference': pam_inference_val,  # bytes, batch_size=1 기준
+                                'inference_latency_ms': latency_val,  # milliseconds, batch_size=1 기준
                                 'test_dice': metrics['dice'],  # WT/TC/ET 평균
                                 'test_wt': metrics.get('wt', None),
                                 'test_tc': metrics.get('tc', None),
@@ -756,29 +782,60 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                 all_results.append(result)
                     else:
                         # PAM 측정 실패 시 기본값으로 저장
-                        result = {
-                            'dataset': dataset_version,
-                            'seed': seed,
-                            'fold': fold_idx if use_5fold else None,
-                            'model_name': model_name,
-                            'total_params': total_params,
-                            'flops': flops,
-                            'pam_train': 0,  # bytes, batch_size=1 기준
-                            'pam_inference': 0,  # bytes, batch_size=1 기준
-                            'test_dice': metrics['dice'],  # WT/TC/ET 평균
-                            'test_wt': metrics.get('wt', None),
-                            'test_tc': metrics.get('tc', None),
-                            'test_et': metrics.get('et', None),
-                            'val_dice': best_val_dice,  # WT/TC/ET 평균
-                            'val_wt': best_val_wt,
-                            'val_tc': best_val_tc,
-                            'val_et': best_val_et,
-                            'precision': metrics['precision'],
-                            'recall': metrics['recall'],
-                            'best_epoch': best_epoch
-                        }
-                        if is_main_process(rank):
-                            all_results.append(result)
+                        # Latency는 있으면 각 측정값마다 저장, 없으면 0
+                        if inference_latency_list:
+                            # Latency만 있는 경우 각 측정값마다 저장
+                            for latency_val in inference_latency_list:
+                                result = {
+                                    'dataset': dataset_version,
+                                    'seed': seed,
+                                    'fold': fold_idx if use_5fold else None,
+                                    'model_name': model_name,
+                                    'total_params': total_params,
+                                    'flops': flops,
+                                    'pam_train': 0,  # bytes, batch_size=1 기준
+                                    'pam_inference': 0,  # bytes, batch_size=1 기준
+                                    'inference_latency_ms': latency_val,  # milliseconds, batch_size=1 기준
+                                    'test_dice': metrics['dice'],  # WT/TC/ET 평균
+                                    'test_wt': metrics.get('wt', None),
+                                    'test_tc': metrics.get('tc', None),
+                                    'test_et': metrics.get('et', None),
+                                    'val_dice': best_val_dice,  # WT/TC/ET 평균
+                                    'val_wt': best_val_wt,
+                                    'val_tc': best_val_tc,
+                                    'val_et': best_val_et,
+                                    'precision': metrics['precision'],
+                                    'recall': metrics['recall'],
+                                    'best_epoch': best_epoch
+                                }
+                                if is_main_process(rank):
+                                    all_results.append(result)
+                        else:
+                            # PAM도 Latency도 없는 경우
+                            result = {
+                                'dataset': dataset_version,
+                                'seed': seed,
+                                'fold': fold_idx if use_5fold else None,
+                                'model_name': model_name,
+                                'total_params': total_params,
+                                'flops': flops,
+                                'pam_train': 0,  # bytes, batch_size=1 기준
+                                'pam_inference': 0,  # bytes, batch_size=1 기준
+                                'inference_latency_ms': 0,  # milliseconds, batch_size=1 기준
+                                'test_dice': metrics['dice'],  # WT/TC/ET 평균
+                                'test_wt': metrics.get('wt', None),
+                                'test_tc': metrics.get('tc', None),
+                                'test_et': metrics.get('et', None),
+                                'val_dice': best_val_dice,  # WT/TC/ET 평균
+                                'val_wt': best_val_wt,
+                                'val_tc': best_val_tc,
+                                'val_et': best_val_et,
+                                'precision': metrics['precision'],
+                                'recall': metrics['recall'],
+                                'best_epoch': best_epoch
+                            }
+                            if is_main_process(rank):
+                                all_results.append(result)
                     
                     # 모든 epoch 결과 저장 (test_dice는 최종 평가 값으로 업데이트)
                     for epoch_result in epoch_results:

@@ -282,6 +282,101 @@ def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_
         traceback.print_exc()
         return [], {}
 
+def calculate_inference_latency(model, input_size=(1, 4, 64, 64, 64), device='cuda', num_warmup=10, num_runs=100):
+    """
+    Inference Latency 계산 (ms 단위)
+    
+    Args:
+        model: PyTorch 모델 (DDP wrapped 가능)
+        input_size: 입력 텐서 크기 (batch_size=1로 고정)
+        device: 디바이스 ('cuda'만 지원)
+        num_warmup: Warmup 실행 횟수 (CUDA 커널 초기화, 기본 10회)
+        num_runs: 측정 반복 횟수 (기본 100회, 통계적 신뢰성 확보)
+    
+    Returns:
+        - Latency 리스트 (ms 단위) - 여러 번 측정한 값들
+        - 통계 정보 dict (mean, std, min, max, median, p50, p95, p99)
+    
+    Note:
+        - batch_size=1로 고정하여 측정 (모든 모델을 동일한 조건에서 비교)
+        - CUDA의 경우 torch.cuda.Event를 사용하여 정확한 측정
+        - PAM과 동일하게 dummy input 사용 (torch.randn)
+        - 여러 번 측정하여 변동성을 줄이고, model_comparison에서 평균/표준편차 계산
+    """
+    if not torch.cuda.is_available() or device != 'cuda':
+        return [], {}
+    
+    try:
+        # unwrap DDP if needed
+        real_model = model.module if hasattr(model, 'module') else model
+        device_obj = torch.device(device)
+        
+        # 모델을 eval 모드로 설정
+        real_model.eval()
+        
+        # 입력 seed 고정 (재현성, PAM과 동일)
+        torch.manual_seed(42)
+        torch.cuda.manual_seed(42)
+        
+        # Warmup (CUDA 커널 초기화, PAM과 동일한 방식)
+        torch.cuda.empty_cache()
+        dummy_input_warmup = torch.randn(input_size, dtype=torch.float32).to(device_obj)
+        with torch.no_grad():
+            for _ in range(num_warmup):
+                _ = real_model(dummy_input_warmup)
+        
+        # CUDA 동기화 (warmup 완료)
+        torch.cuda.synchronize(device_obj)
+        
+        del dummy_input_warmup
+        torch.cuda.empty_cache()
+        
+        # 실제 측정 (각 측정마다 새로운 입력 생성하여 변동성 반영)
+        latencies = []
+        for run_idx in range(num_runs):
+            # Dummy input 생성 (각 측정마다 다른 값, 실제 inference 변동성 반영)
+            # Seed는 warmup에서만 고정하고, 실제 측정에서는 변동성 허용
+            dummy_input = torch.randn(input_size, dtype=torch.float32).to(device_obj)
+            
+            # CUDA Event를 사용한 정확한 시간 측정
+            torch.cuda.synchronize(device_obj)
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            
+            start.record()
+            with torch.no_grad():
+                _ = real_model(dummy_input)
+            end.record()
+            torch.cuda.synchronize(device_obj)
+            
+            latency_ms = start.elapsed_time(end)  # milliseconds
+            latencies.append(latency_ms)
+            
+            # 메모리 정리
+            del dummy_input
+            torch.cuda.empty_cache()
+        
+        # 통계 정보 계산
+        latencies_array = np.array(latencies)
+        stats = {
+            'mean': float(np.mean(latencies_array)),
+            'std': float(np.std(latencies_array)),
+            'min': float(np.min(latencies_array)),
+            'max': float(np.max(latencies_array)),
+            'median': float(np.median(latencies_array)),
+            'p50': float(np.percentile(latencies_array, 50)),
+            'p95': float(np.percentile(latencies_array, 95)),
+            'p99': float(np.percentile(latencies_array, 99))
+        }
+        
+        return latencies, stats
+    
+    except Exception as e:
+        print(f"Error calculating inference latency: {e}")
+        import traceback
+        traceback.print_exc()
+        return [], {}
+
 def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, use_pretrained=False, norm: str = 'bn'):
     """모델 생성 함수
     

@@ -156,15 +156,22 @@ def create_model_comparison_chart(results_df, results_dir):
         agg_dict['pam_train'] = ['mean', 'std']
     if 'pam_inference' in results_df.columns:
         agg_dict['pam_inference'] = ['mean', 'std']
+    # Latency 추가
+    if 'inference_latency_ms' in results_df.columns:
+        agg_dict['inference_latency_ms'] = ['mean', 'std']
     
     model_stats = results_df.groupby('model_name').agg(agg_dict).round(4)
     
-    # 차트 생성 (PAM이 있으면 3x3 레이아웃, 없으면 2x3 레이아웃)
+    # 차트 생성 (PAM과 Latency에 따라 레이아웃 결정)
     has_pam = 'pam_train' in results_df.columns or 'pam_inference' in results_df.columns
-    if has_pam:
-        fig, axes = plt.subplots(3, 3, figsize=(18, 18))
+    has_latency = 'inference_latency_ms' in results_df.columns
+    
+    if has_pam and has_latency:
+        fig, axes = plt.subplots(4, 3, figsize=(18, 24))  # 4x3 레이아웃
+    elif has_pam or has_latency:
+        fig, axes = plt.subplots(3, 3, figsize=(18, 18))  # 3x3 레이아웃
     else:
-        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))  # 2x3 레이아웃
     fig.suptitle('3D Segmentation Model Comparison', fontsize=16)
     
     models = results_df['model_name'].unique()
@@ -258,6 +265,45 @@ def create_model_comparison_chart(results_df, results_dir):
         
         # 빈 subplot 숨기기 (PAM이 하나만 있는 경우)
         if 'pam_train' not in results_df.columns or 'pam_inference' not in results_df.columns:
+            if not has_latency:
+                axes[2, 2].axis('off')
+    
+    # Latency 차트 추가 (있는 경우)
+    if has_latency:
+        if has_pam:
+            ax_latency = axes[3, 0] if has_pam else axes[2, 0]
+        else:
+            ax_latency = axes[2, 0]
+        
+        latency_means = [model_stats.loc[model, ('inference_latency_ms', 'mean')] for model in models]
+        latency_stds = [model_stats.loc[model, ('inference_latency_ms', 'std')] for model in models]
+        bars_latency = ax_latency.bar(models, latency_means, yerr=latency_stds, 
+                                     color=colors, alpha=0.7, capsize=5)
+        ax_latency.set_title('Inference Latency')
+        ax_latency.set_ylabel('Latency (ms)')
+        ax_latency.tick_params(axis='x', rotation=45)
+        
+        # 나머지 빈 subplot 숨기기
+        if has_pam:
+            if 'pam_train' in results_df.columns and 'pam_inference' in results_df.columns:
+                # PAM이 둘 다 있고 latency도 있으면 4x3 레이아웃
+                axes[3, 1].axis('off')
+                axes[3, 2].axis('off')
+            elif 'pam_train' in results_df.columns:
+                # PAM train만 있고 latency도 있으면
+                axes[2, 1].axis('off')  # PAM inference 자리
+                axes[2, 2].axis('off')
+                axes[3, 1].axis('off')
+                axes[3, 2].axis('off')
+            elif 'pam_inference' in results_df.columns:
+                # PAM inference만 있고 latency도 있으면
+                axes[2, 0].axis('off')  # PAM train 자리
+                axes[2, 2].axis('off')
+                axes[3, 1].axis('off')
+                axes[3, 2].axis('off')
+        else:
+            # PAM이 없고 latency만 있으면
+            axes[2, 1].axis('off')
             axes[2, 2].axis('off')
     
     plt.tight_layout()
@@ -375,17 +421,46 @@ def create_parameter_efficiency_chart(results_df, results_dir):
         return
     
     # 모델별 평균 성능 계산
-    model_stats = results_df.groupby('model_name').agg({
+    agg_dict = {
         'test_dice': 'mean',
         'val_dice': 'mean',
         'total_params': 'mean',
         'flops': 'mean'
-    }).round(4)
+    }
     
-    fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+    # PAM이 있는 경우 추가
+    has_pam_train = 'pam_train' in results_df.columns
+    has_pam_inference = 'pam_inference' in results_df.columns
+    has_pam = has_pam_train or has_pam_inference
+    
+    if has_pam_train:
+        agg_dict['pam_train'] = 'mean'
+    if has_pam_inference:
+        agg_dict['pam_inference'] = 'mean'
+    
+    # Latency 추가
+    has_latency = 'inference_latency_ms' in results_df.columns
+    if has_latency:
+        agg_dict['inference_latency_ms'] = 'mean'
+    
+    model_stats = results_df.groupby('model_name').agg(agg_dict).round(4)
+    
+    # 모델 정렬 (test_dice 기준 내림차순)
+    model_stats = model_stats.sort_values('test_dice', ascending=False)
+    models = model_stats.index.tolist()
+    
+    # 레이아웃 결정: PAM과 Latency에 따라
+    if has_pam and has_latency:
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))  # 2x3 레이아웃
+        axes = axes.flatten()
+    elif has_pam or has_latency:
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))  # 2x2 레이아웃
+        axes = axes.flatten()
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=(15, 6))  # 1x2 레이아웃
+    
     fig.suptitle('3D Segmentation Model Efficiency Analysis', fontsize=16)
     
-    models = results_df['model_name'].unique()
     colors = plt.cm.Set2(np.linspace(0, 1, len(models)))
     
     # Parameters vs Performance
@@ -398,7 +473,7 @@ def create_parameter_efficiency_chart(results_df, results_dir):
     ax1.set_xlabel('Number of Parameters')
     ax1.set_ylabel('Test Dice Score')
     ax1.set_title('Parameters vs Performance')
-    ax1.legend()
+    ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
     ax1.grid(True, alpha=0.3)
     ax1.ticklabel_format(style='scientific', axis='x', scilimits=(0,0))
     
@@ -412,9 +487,74 @@ def create_parameter_efficiency_chart(results_df, results_dir):
     ax2.set_xlabel('FLOPs')
     ax2.set_ylabel('Test Dice Score')
     ax2.set_title('FLOPs vs Performance')
-    ax2.legend()
+    ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
     ax2.grid(True, alpha=0.3)
     ax2.ticklabel_format(style='scientific', axis='x', scilimits=(0,0))
+    
+    # PAM Train vs Performance
+    if has_pam_train:
+        ax3 = axes[2]
+        for i, model in enumerate(models):
+            pam_train_mb = model_stats.loc[model, 'pam_train'] / (1024**2)  # bytes to MB
+            ax3.scatter(pam_train_mb, 
+                       model_stats.loc[model, 'test_dice'],
+                       s=100, color=colors[i], alpha=0.7, label=model.upper())
+        
+        ax3.set_xlabel('PAM (Train) [MB]')
+        ax3.set_ylabel('Test Dice Score')
+        ax3.set_title('PAM (Train) vs Performance')
+        ax3.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+        ax3.grid(True, alpha=0.3)
+    
+    # PAM Inference vs Performance
+    if has_pam_inference:
+        ax4_idx = 3 if has_pam_train else 2
+        ax4 = axes[ax4_idx]
+        for i, model in enumerate(models):
+            pam_inference_mb = model_stats.loc[model, 'pam_inference'] / (1024**2)  # bytes to MB
+            ax4.scatter(pam_inference_mb, 
+                       model_stats.loc[model, 'test_dice'],
+                       s=100, color=colors[i], alpha=0.7, label=model.upper())
+        
+        ax4.set_xlabel('PAM (Inference) [MB]')
+        ax4.set_ylabel('Test Dice Score')
+        ax4.set_title('PAM (Inference) vs Performance')
+        ax4.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+        ax4.grid(True, alpha=0.3)
+    
+    # Latency vs Performance
+    if has_latency:
+        if has_pam_train and has_pam_inference:
+            ax_latency = axes[4]
+        elif has_pam_train or has_pam_inference:
+            ax_latency = axes[3]
+        else:
+            ax_latency = axes[2]
+        
+        for i, model in enumerate(models):
+            latency_ms = model_stats.loc[model, 'inference_latency_ms']
+            ax_latency.scatter(latency_ms, 
+                             model_stats.loc[model, 'test_dice'],
+                             s=100, color=colors[i], alpha=0.7, label=model.upper())
+        
+        ax_latency.set_xlabel('Inference Latency [ms]')
+        ax_latency.set_ylabel('Test Dice Score')
+        ax_latency.set_title('Inference Latency vs Performance')
+        ax_latency.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+        ax_latency.grid(True, alpha=0.3)
+    
+    # 빈 subplot 숨기기
+    if has_pam_train and not has_pam_inference and not has_latency:
+        axes[3].axis('off')
+    elif has_pam_inference and not has_pam_train and not has_latency:
+        axes[2].axis('off')
+    elif has_pam_train and has_pam_inference and not has_latency:
+        axes[4].axis('off')
+        axes[5].axis('off')
+    elif has_pam_train and not has_pam_inference and has_latency:
+        axes[3].axis('off')
+    elif has_pam_inference and not has_pam_train and has_latency:
+        axes[2].axis('off')
     
     plt.tight_layout()
     
