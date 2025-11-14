@@ -500,7 +500,9 @@ def comprehensive_analysis_multi_model(models_dict: Dict[str, torch.nn.Module],
 
 if __name__ == "__main__":
     # 테스트
-    from baseline import UNet3D_Simplified, UNETR_Simplified, SwinUNETR_Simplified
+    from models import UNet3D_Small, UNETR_Simplified, SwinUNETR_Simplified
+    # Alias for backward compatibility
+    UNet3D_Simplified = UNet3D_Small
     from data_loader import get_data_loaders
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

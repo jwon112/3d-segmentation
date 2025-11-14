@@ -486,7 +486,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     """모델 생성 함수
     
     Args:
-        model_name: 모델 이름
+        model_name: 모델 이름 (예: 'dualbranch_01_unet_s', 'unet3d_m', 'dualbranch_01_unet_xs')
         n_channels: 입력 채널 수
         n_classes: 출력 클래스 수
         dim: '2d' 또는 '3d'
@@ -496,35 +496,28 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     # Add parent directory to path for imports
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
-    # Import baseline models
-    from baseline import (
+    # Import models
+    from models import (
         UNETR_Simplified, 
         SwinUNETR_Simplified,
         MobileUNETR,
     )
-    from baseline.mobileunetr_3d import MobileUNETR_3D_Wrapper
+    from models.mobileunetr_3d import MobileUNETR_3D_Wrapper
+    from models.channel_configs import parse_model_size
     
     # 2D 입력인 경우 3D로 확장 (unsqueeze depth dimension)
-    if model_name == 'unet3d_s':
+    if model_name.startswith('unet3d_'):
         if dim == '2d':
             # 2D 데이터는 depth 차원 추가가 필요
             pass
-        from baseline.model_3d_unet import UNet3D_Small
-        return UNet3D_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'unet3d_m':
-        if dim == '2d':
-            # 2D 데이터는 depth 차원 추가가 필요
-            pass
-        from baseline.model_3d_unet import UNet3D_Medium
-        return UNet3D_Medium(n_channels=n_channels, n_classes=n_classes, bilinear=False)
-    elif model_name == 'unet3d_stride_s':
-        # UNet3D variant with stride-2 conv downsampling (Small channels)
-        from baseline.model_3d_unet_stride import UNet3D_Stride_Small
-        return UNet3D_Stride_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'unet3d_stride_m':
-        # UNet3D variant with stride-2 conv downsampling (Medium channels)
-        from baseline.model_3d_unet_stride import UNet3D_Stride_Medium
-        return UNet3D_Stride_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False)
+        base_name, size = parse_model_size(model_name)
+        from models.model_3d_unet import UNet3D
+        return UNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
+    elif model_name.startswith('unet3d_stride_'):
+        # UNet3D variant with stride-2 conv downsampling - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.model_3d_unet_stride import UNet3D_Stride
+        return UNet3D_Stride(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
     elif model_name == 'unetr':
         # dim에 따라 img_size 설정
         if dim == '2d':
@@ -594,135 +587,136 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             in_channels=n_channels,
             out_channels=n_classes
         )
-    elif model_name == 'dualbranch_01_unet_s':
-        # Dual-branch 3D UNet (v0.1) - Small channels. Expect exactly 2 input channels (FLAIR, t1ce)
-        from baseline.dualbranch_01_unet import DualBranchUNet3D_Small
-        return DualBranchUNet3D_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_01_unet_m':
-        # Dual-branch 3D UNet (v0.1) - Medium channels. Expect exactly 2 input channels (FLAIR, t1ce)
-        from baseline.dualbranch_01_unet import DualBranchUNet3D_Medium
-        return DualBranchUNet3D_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_02_unet_s':
-        # Dual-branch 3D UNet (v0.2) - stride-2 convolutional downsampling (Small channels)
-        from baseline.dualbranch_02_unet import DualBranchUNet3D_Stride_Small
-        return DualBranchUNet3D_Stride_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_02_unet_m':
-        # Dual-branch 3D UNet (v0.2) - stride-2 convolutional downsampling (Medium channels)
-        from baseline.dualbranch_02_unet import DualBranchUNet3D_Stride_Medium
-        return DualBranchUNet3D_Stride_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_03_unet_s':
-        # Dual-branch 3D UNet (v0.3) - dilated conv for FLAIR branch (Small channels)
-        from baseline.dualbranch_03_unet import DualBranchUNet3D_StrideDilated_Small
-        return DualBranchUNet3D_StrideDilated_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_03_unet_m':
-        # Dual-branch 3D UNet (v0.3) - dilated conv for FLAIR branch (Medium channels)
-        from baseline.dualbranch_03_unet import DualBranchUNet3D_StrideDilated_Medium
-        return DualBranchUNet3D_StrideDilated_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_04_unet_s':
-        from baseline.dualbranch_04_unet import DualBranchUNet3D_StrideLK_Small
-        return DualBranchUNet3D_StrideLK_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_04_unet_m':
-        from baseline.dualbranch_04_unet import DualBranchUNet3D_StrideLK_Medium
-        return DualBranchUNet3D_StrideLK_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_05_unet_s':
-        from baseline.dualbranch_05_unet import DualBranchUNet3D_StrideLK_FFN2_Small
-        return DualBranchUNet3D_StrideLK_FFN2_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_05_unet_m':
-        from baseline.dualbranch_05_unet import DualBranchUNet3D_StrideLK_FFN2_Medium
-        return DualBranchUNet3D_StrideLK_FFN2_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_06_unet_s':
-        from baseline.dualbranch_06_unet import DualBranchUNet3D_StrideLK_FFN2_MViT_Small
-        return DualBranchUNet3D_StrideLK_FFN2_MViT_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_06_unet_m':
-        from baseline.dualbranch_06_unet import DualBranchUNet3D_StrideLK_FFN2_MViT_Medium
-        return DualBranchUNet3D_StrideLK_FFN2_MViT_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_07_unet_s':
-        from baseline.dualbranch_07_unet import DualBranchUNet3D_StrideLK_FFN2_MViT_Stage5_Small
-        return DualBranchUNet3D_StrideLK_FFN2_MViT_Stage5_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_07_unet_m':
-        from baseline.dualbranch_07_unet import DualBranchUNet3D_StrideLK_FFN2_MViT_Stage5_Medium
-        return DualBranchUNet3D_StrideLK_FFN2_MViT_Stage5_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_08_unet_s':
-        from baseline.dualbranch_08_unet import DualBranchUNet3D_LK_MobileNet_MViT_Small
-        return DualBranchUNet3D_LK_MobileNet_MViT_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_08_unet_m':
-        from baseline.dualbranch_08_unet import DualBranchUNet3D_LK_MobileNet_MViT_Medium
-        return DualBranchUNet3D_LK_MobileNet_MViT_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_09_unet_s':
-        from baseline.dualbranch_09_unet import DualBranchUNet3D_LK7x7_MobileNet_MViT_Small
-        return DualBranchUNet3D_LK7x7_MobileNet_MViT_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_09_unet_m':
-        from baseline.dualbranch_09_unet import DualBranchUNet3D_LK7x7_MobileNet_MViT_Medium
-        return DualBranchUNet3D_LK7x7_MobileNet_MViT_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_10_unet_s':
-        from baseline.dualbranch_10_unet import DualBranchUNet3D_DilatedMobile_Small
-        return DualBranchUNet3D_DilatedMobile_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_10_unet_m':
-        from baseline.dualbranch_10_unet import DualBranchUNet3D_DilatedMobile_Medium
-        return DualBranchUNet3D_DilatedMobile_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_11_unet_s':
-        from baseline.dualbranch_11_unet import DualBranchUNet3D_Dilated123_Mobile_Small
-        return DualBranchUNet3D_Dilated123_Mobile_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_11_unet_m':
-        from baseline.dualbranch_11_unet import DualBranchUNet3D_Dilated123_Mobile_Medium
-        return DualBranchUNet3D_Dilated123_Mobile_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_12_unet_s':
-        from baseline.dualbranch_12_unet import DualBranchUNet3D_MobileNet_MViT_Small
-        return DualBranchUNet3D_MobileNet_MViT_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_12_unet_m':
-        from baseline.dualbranch_12_unet import DualBranchUNet3D_MobileNet_MViT_Medium
-        return DualBranchUNet3D_MobileNet_MViT_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_13_unet_s':
-        from baseline.dualbranch_13_unet import DualBranchUNet3D_MViT_Extended_Small
-        return DualBranchUNet3D_MViT_Extended_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_13_unet_m':
-        from baseline.dualbranch_13_unet import DualBranchUNet3D_MViT_Extended_Medium
-        return DualBranchUNet3D_MViT_Extended_Medium(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    # PAM comparison experiments - different backbones
-    elif model_name == 'dualbranch_14_mobilenetv2_expand2_s':
-        from baseline.dualbranch_14_unet import DualBranchUNet3D_MobileNetV2_Expand2_Small
-        return DualBranchUNet3D_MobileNetV2_Expand2_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_14_ghostnet_s':
-        from baseline.dualbranch_14_unet import DualBranchUNet3D_GhostNet_Small
-        return DualBranchUNet3D_GhostNet_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_14_dilated_s':
-        from baseline.dualbranch_14_unet import DualBranchUNet3D_Dilated_Small
-        return DualBranchUNet3D_Dilated_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_14_convnext_s':
-        from baseline.dualbranch_14_unet import DualBranchUNet3D_ConvNeXt_Small
-        return DualBranchUNet3D_ConvNeXt_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_14_shufflenetv2_s':
-        from baseline.dualbranch_14_unet import DualBranchUNet3D_ShuffleNetV2_Small
-        return DualBranchUNet3D_ShuffleNetV2_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_14_shufflenetv2_dilated_s':
-        from baseline.dualbranch_14_unet import DualBranchUNet3D_ShuffleNetV2_Dilated_Small
-        return DualBranchUNet3D_ShuffleNetV2_Dilated_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_14_shufflenetv2_lk_s':
-        from baseline.dualbranch_14_unet import DualBranchUNet3D_ShuffleNetV2_LK_Small
-        return DualBranchUNet3D_ShuffleNetV2_LK_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_15_dilated125_both_s':
-        from baseline.dualbranch_15_unet import DualBranchUNet3D_Dilated125_Both_Mobile_Small
-        return DualBranchUNet3D_Dilated125_Both_Mobile_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+    elif model_name.startswith('dualbranch_01_unet_'):
+        # Dual-branch 3D UNet (v0.1) - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_basic import DualBranchUNet3D
+        return DualBranchUNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_02_unet_'):
+        # Dual-branch 3D UNet (v0.2) - stride-2 convolutional downsampling - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_basic import DualBranchUNet3D_Stride
+        return DualBranchUNet3D_Stride(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_03_unet_'):
+        # Dual-branch 3D UNet (v0.3) - dilated conv for FLAIR branch - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_basic import DualBranchUNet3D_StrideDilated
+        return DualBranchUNet3D_StrideDilated(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_04_unet_'):
+        # Dual-branch UNet with RepLK (13x13x13) for FLAIR branch - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_replk import DualBranchUNet3D_StrideLK
+        return DualBranchUNet3D_StrideLK(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_05_unet_'):
+        # Dual-branch UNet with RepLK + FFN2 (expansion_ratio=2) - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_replk import DualBranchUNet3D_StrideLK_FFN2
+        return DualBranchUNet3D_StrideLK_FFN2(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_06_unet_'):
+        # Dual-branch UNet with RepLK + FFN2 + MViT Stage 4,5 - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_replk import DualBranchUNet3D_StrideLK_FFN2_MViT
+        return DualBranchUNet3D_StrideLK_FFN2_MViT(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_07_unet_'):
+        # Dual-branch UNet with RepLK + FFN2 + MViT Stage 5만 - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_replk import DualBranchUNet3D_StrideLK_FFN2_MViT_Stage5
+        return DualBranchUNet3D_StrideLK_FFN2_MViT_Stage5(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_08_unet_'):
+        # Dual-branch UNet with RepLK (FLAIR) + MobileNetV2 (t1ce) + MViT Stage5 - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_mobilenet import DualBranchUNet3D_LK_MobileNet_MViT
+        return DualBranchUNet3D_LK_MobileNet_MViT(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_09_unet_'):
+        # Dual-branch UNet with RepLK 7x7x7 (FLAIR) + MobileNetV2 (t1ce) + MViT Stage5 - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_mobilenet import DualBranchUNet3D_LK7x7_MobileNet_MViT
+        return DualBranchUNet3D_LK7x7_MobileNet_MViT(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_10_unet_'):
+        # Dual-branch UNet with dilated FLAIR branch + MobileNetV2 - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_dilated_mobile import DualBranchUNet3D_DilatedMobile
+        return DualBranchUNet3D_DilatedMobile(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_11_unet_'):
+        # Dual-branch UNet with dilated FLAIR branch (rate 1,2,3) + MobileNetV2 - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_dilated_mobile import DualBranchUNet3D_Dilated123_Mobile
+        return DualBranchUNet3D_Dilated123_Mobile(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_12_unet_'):
+        # Dual-branch UNet with MobileNetV2 for both branches + MViT Stage5 - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_mobilenet import DualBranchUNet3D_MobileNet_MViT
+        return DualBranchUNet3D_MobileNet_MViT(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_13_unet_'):
+        # Dual-branch UNet with MobileViT extended to FLAIR branch Stage 3,4 + MViT Stage5 - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_mvit import DualBranchUNet3D_MViT_Extended
+        return DualBranchUNet3D_MViT_Extended(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    # PAM comparison experiments - different backbones (dualbranch_14)
+    elif model_name.startswith('dualbranch_14_'):
+        # Extract backbone type and size: dualbranch_14_mobilenetv2_expand2_s -> mobilenetv2_expand2, s
+        parts = model_name.split('_', 2)  # ['dualbranch', '14', 'mobilenetv2_expand2_s']
+        if len(parts) >= 3:
+            backbone_and_size = parts[2]  # 'mobilenetv2_expand2_s'
+            # Extract size suffix
+            if backbone_and_size.endswith('_xs'):
+                backbone = backbone_and_size[:-3]
+                size = 'xs'
+            elif backbone_and_size.endswith('_s'):
+                backbone = backbone_and_size[:-2]
+                size = 's'
+            elif backbone_and_size.endswith('_m'):
+                backbone = backbone_and_size[:-2]
+                size = 'm'
+            elif backbone_and_size.endswith('_l'):
+                backbone = backbone_and_size[:-2]
+                size = 'l'
+            else:
+                raise ValueError(f"Invalid model name: {model_name}")
+            
+            # Map backbone to class name
+            backbone_map = {
+                'mobilenetv2_expand2': 'DualBranchUNet3D_MobileNetV2_Expand2',
+                'ghostnet': 'DualBranchUNet3D_GhostNet',
+                'dilated': 'DualBranchUNet3D_Dilated',
+                'convnext': 'DualBranchUNet3D_ConvNeXt',
+                'shufflenetv2': 'DualBranchUNet3D_ShuffleNetV2',
+                'shufflenetv2_dilated': 'DualBranchUNet3D_ShuffleNetV2_Dilated',
+                'shufflenetv2_lk': 'DualBranchUNet3D_ShuffleNetV2_LK',
+            }
+            
+            if backbone in backbone_map:
+                class_name = backbone_map[backbone]
+                from models import dualbranch_14_unet
+                model_class = getattr(dualbranch_14_unet, class_name)
+                return model_class(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+            else:
+                raise ValueError(f"Unknown backbone in dualbranch_14: {backbone}")
+    elif model_name.startswith('dualbranch_15_dilated125_both_'):
+        # Dual-branch UNet with dilated both branches (rate 1,2,5) + MobileNetV2 - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_dilated_mobile import DualBranchUNet3D_Dilated125_Both_Mobile
+        return DualBranchUNet3D_Dilated125_Both_Mobile(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
     # 모달리티 비교 실험 모델들
     elif model_name == 'unet3d_2modal_s':
         # 단일 분기, 2채널 (t1ce, flair) concat
-        from baseline.model_3d_unet_modal_comparison import UNet3D_2Modal_Small
+        from models.model_3d_unet_modal_comparison import UNet3D_2Modal_Small
         return UNet3D_2Modal_Small(n_classes=n_classes, norm=norm)
     elif model_name == 'unet3d_4modal_s':
         # 단일 분기, 4채널 (t1, t1ce, t2, flair) concat
-        from baseline.model_3d_unet_modal_comparison import UNet3D_4Modal_Small
+        from models.model_3d_unet_modal_comparison import UNet3D_4Modal_Small
         return UNet3D_4Modal_Small(n_classes=n_classes, norm=norm)
     elif model_name == 'dualbranch_2modal_unet_s':
         # 2개 분기 (t1ce, flair) - dualbranch_01_unet_s와 동일 (MaxPool 기반)
-        from baseline.dualbranch_01_unet import DualBranchUNet3D_Small
-        return DualBranchUNet3D_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+        from models.dualbranch_basic import DualBranchUNet3D
+        return DualBranchUNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm, size='s')
     elif model_name == 'quadbranch_4modal_unet_s':
         # 4개 분기 (t1, t1ce, t2, flair) - 어텐션 없음
-        from baseline.model_3d_unet_modal_comparison import QuadBranchUNet3D_4Modal_Small
+        from models.model_3d_unet_modal_comparison import QuadBranchUNet3D_4Modal_Small
         return QuadBranchUNet3D_4Modal_Small(n_classes=n_classes, norm=norm)
     elif model_name == 'quadbranch_4modal_attention_unet_s':
         # 4개 분기 (t1, t1ce, t2, flair) - 채널 어텐션 포함
-        from baseline.model_3d_unet_modal_comparison import QuadBranchUNet3D_4Modal_Attention_Small
+        from models.model_3d_unet_modal_comparison import QuadBranchUNet3D_4Modal_Attention_Small
         return QuadBranchUNet3D_4Modal_Attention_Small(n_classes=n_classes, norm=norm)
     else:
         raise ValueError(f"Unknown model: {model_name}")

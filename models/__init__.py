@@ -1,5 +1,5 @@
 """
-3D Segmentation Baseline Models
+3D Segmentation Models
 """
 
 from .model_3d_unet import (

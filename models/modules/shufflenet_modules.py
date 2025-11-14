@@ -1,0 +1,359 @@
+"""
+ShuffleNetV2 Modules
+ShuffleNetV2 스타일의 3D 모듈들
+"""
+
+import torch
+import torch.nn as nn
+
+from ..model_3d_unet import _make_norm3d
+
+
+def channel_shuffle_3d(x: torch.Tensor, groups: int) -> torch.Tensor:
+    """3D Channel Shuffle operation.
+    
+    Args:
+        x: Input tensor of shape (B, C, D, H, W)
+        groups: Number of groups to shuffle
+    
+    Returns:
+        Shuffled tensor
+    """
+    B, C, D, H, W = x.size()
+    channels_per_group = C // groups
+    
+    # Reshape: (B, groups, channels_per_group, D, H, W)
+    x = x.view(B, groups, channels_per_group, D, H, W)
+    
+    # Transpose: (B, channels_per_group, groups, D, H, W)
+    x = x.transpose(1, 2).contiguous()
+    
+    # Flatten: (B, C, D, H, W)
+    x = x.view(B, C, D, H, W)
+    
+    return x
+
+
+class ShuffleNetV2Unit3D(nn.Module):
+    """3D ShuffleNetV2 Unit.
+    
+    ShuffleNetV2의 핵심 블록:
+    - Stride=1: Split -> Branch1 (identity) + Branch2 (DWConv -> 1x1 -> DWConv -> 1x1) -> Concat -> Shuffle
+    - Stride=2: No split -> Branch1 (DWConv stride=2 -> 1x1) + Branch2 (1x1 -> DWConv stride=2 -> 1x1) -> Concat -> Shuffle
+    """
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, norm: str = 'bn'):
+        super().__init__()
+        self.stride = stride
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        
+        if stride == 1:
+            # Stride=1: Split operation
+            assert in_channels == out_channels, "For stride=1, in_channels must equal out_channels"
+            mid_channels = out_channels // 2
+            
+            # Branch 1: Identity (no operation)
+            self.branch1 = nn.Identity()
+            
+            # Branch 2: DWConv -> 1x1 -> DWConv -> 1x1
+            self.branch2 = nn.Sequential(
+                # Depthwise Conv
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=1, padding=1, 
+                         groups=mid_channels, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+                # Pointwise Conv
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+                # Depthwise Conv
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=1, padding=1, 
+                         groups=mid_channels, bias=False),
+                _make_norm3d(norm, mid_channels),
+                # Pointwise Conv
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+            )
+        else:
+            # Stride=2: No split, both branches process full input
+            # Branch 1: DWConv stride=2 -> 1x1
+            self.branch1 = nn.Sequential(
+                nn.Conv3d(in_channels, in_channels, kernel_size=3, stride=2, padding=1, 
+                         groups=in_channels, bias=False),
+                _make_norm3d(norm, in_channels),
+                nn.Conv3d(in_channels, out_channels // 2, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, out_channels // 2),
+                nn.ReLU(inplace=True),
+            )
+            
+            # Branch 2: 1x1 -> DWConv stride=2 -> 1x1
+            self.branch2 = nn.Sequential(
+                nn.Conv3d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, in_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv3d(in_channels, in_channels, kernel_size=3, stride=2, padding=1, 
+                         groups=in_channels, bias=False),
+                _make_norm3d(norm, in_channels),
+                nn.Conv3d(in_channels, out_channels // 2, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, out_channels // 2),
+                nn.ReLU(inplace=True),
+            )
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.stride == 1:
+            # Split channels
+            x1, x2 = x.chunk(2, dim=1)
+            # Branch 1: Identity
+            out1 = self.branch1(x1)
+            # Branch 2: Processing
+            out2 = self.branch2(x2)
+            # Concat
+            out = torch.cat([out1, out2], dim=1)
+        else:
+            # Both branches process full input
+            out1 = self.branch1(x)
+            out2 = self.branch2(x)
+            # Concat
+            out = torch.cat([out1, out2], dim=1)
+        
+        # Channel Shuffle
+        out = channel_shuffle_3d(out, groups=2)
+        return out
+
+
+class ShuffleNetV2Unit3D_Dilated(nn.Module):
+    """3D ShuffleNetV2 Unit with Dilated Convolution (rate [1,2,5]).
+    
+    ShuffleNetV2의 DWConv에 dilated convolution 적용:
+    - Stride=1: Split -> Branch1 (identity) + Branch2 (DWDilatedConv[1,2,5] -> 1x1 -> DWDilatedConv[1,2,5] -> 1x1) -> Concat -> Shuffle
+    - Stride=2: No split -> Branch1 (DWDilatedConv stride=2 -> 1x1) + Branch2 (1x1 -> DWDilatedConv stride=2 -> 1x1) -> Concat -> Shuffle
+    """
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, norm: str = 'bn', dilation_rates: list = [1, 2, 5]):
+        super().__init__()
+        self.stride = stride
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.dilation_rates = dilation_rates
+        
+        if stride == 1:
+            # Stride=1: Split operation
+            assert in_channels == out_channels, "For stride=1, in_channels must equal out_channels"
+            mid_channels = out_channels // 2
+            
+            # Branch 1: Identity (no operation)
+            self.branch1 = nn.Identity()
+            
+            # Branch 2: DWDilatedConv[rate1] -> 1x1 -> DWDilatedConv[rate2] -> 1x1 -> DWDilatedConv[rate5] -> 1x1
+            # rate [1,2,5]를 모두 사용하여 더 넓은 receptive field 확보
+            # Padding for dilated conv: padding = dilation * (kernel_size - 1) / 2
+            # For kernel=5, dilation=1: padding = 1 * (5-1) / 2 = 2
+            # For kernel=5, dilation=2: padding = 2 * (5-1) / 2 = 4
+            # For kernel=5, dilation=5: padding = 5 * (5-1) / 2 = 10
+            self.branch2 = nn.Sequential(
+                # Depthwise Dilated Conv (rate 1)
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=5, stride=1, padding=2, 
+                         dilation=dilation_rates[0], groups=mid_channels, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+                # Pointwise Conv
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+                # Depthwise Dilated Conv (rate 2)
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=5, stride=1, padding=4, 
+                         dilation=dilation_rates[1], groups=mid_channels, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+                # Pointwise Conv
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+                # Depthwise Dilated Conv (rate 5)
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=5, stride=1, padding=10, 
+                         dilation=dilation_rates[2], groups=mid_channels, bias=False),
+                _make_norm3d(norm, mid_channels),
+                # Pointwise Conv
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+            )
+        else:
+            # Stride=2: No split, both branches process full input
+            # Branch 1: DWDilatedConv stride=2 -> 1x1
+            self.branch1 = nn.Sequential(
+                nn.Conv3d(in_channels, in_channels, kernel_size=3, stride=2, padding=1, 
+                         groups=in_channels, bias=False),
+                _make_norm3d(norm, in_channels),
+                nn.Conv3d(in_channels, out_channels // 2, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, out_channels // 2),
+                nn.ReLU(inplace=True),
+            )
+            
+            # Branch 2: 1x1 -> DWDilatedConv stride=2 -> 1x1
+            self.branch2 = nn.Sequential(
+                nn.Conv3d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, in_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv3d(in_channels, in_channels, kernel_size=3, stride=2, padding=1, 
+                         groups=in_channels, bias=False),
+                _make_norm3d(norm, in_channels),
+                nn.Conv3d(in_channels, out_channels // 2, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, out_channels // 2),
+                nn.ReLU(inplace=True),
+            )
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.stride == 1:
+            # Split channels
+            x1, x2 = x.chunk(2, dim=1)
+            # Branch 1: Identity
+            out1 = self.branch1(x1)
+            # Branch 2: Processing
+            out2 = self.branch2(x2)
+            # Concat
+            out = torch.cat([out1, out2], dim=1)
+        else:
+            # Both branches process full input
+            out1 = self.branch1(x)
+            out2 = self.branch2(x)
+            # Concat
+            out = torch.cat([out1, out2], dim=1)
+        
+        # Channel Shuffle
+        out = channel_shuffle_3d(out, groups=2)
+        return out
+
+
+class ShuffleNetV2Unit3D_LK(nn.Module):
+    """3D ShuffleNetV2 Unit with Large Kernel (7x7x7).
+    
+    ShuffleNetV2의 DWConv kernel_size를 7x7x7로 변경:
+    - Stride=1: Split -> Branch1 (identity) + Branch2 (DWConv7x7 -> 1x1 -> DWConv7x7 -> 1x1) -> Concat -> Shuffle
+    - Stride=2: No split -> Branch1 (DWConv7x7 stride=2 -> 1x1) + Branch2 (1x1 -> DWConv7x7 stride=2 -> 1x1) -> Concat -> Shuffle
+    """
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, norm: str = 'bn'):
+        super().__init__()
+        self.stride = stride
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        
+        if stride == 1:
+            # Stride=1: Split operation
+            assert in_channels == out_channels, "For stride=1, in_channels must equal out_channels"
+            mid_channels = out_channels // 2
+            
+            # Branch 1: Identity (no operation)
+            self.branch1 = nn.Identity()
+            
+            # Branch 2: DWConv7x7 -> 1x1 -> DWConv7x7 -> 1x1
+            self.branch2 = nn.Sequential(
+                # Depthwise Conv (7x7x7)
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=7, stride=1, padding=3, 
+                         groups=mid_channels, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+                # Pointwise Conv
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+                # Depthwise Conv (7x7x7)
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=7, stride=1, padding=3, 
+                         groups=mid_channels, bias=False),
+                _make_norm3d(norm, mid_channels),
+                # Pointwise Conv
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, mid_channels),
+                nn.ReLU(inplace=True),
+            )
+        else:
+            # Stride=2: No split, both branches process full input
+            # Branch 1: DWConv7x7 stride=2 -> 1x1
+            self.branch1 = nn.Sequential(
+                nn.Conv3d(in_channels, in_channels, kernel_size=7, stride=2, padding=3, 
+                         groups=in_channels, bias=False),
+                _make_norm3d(norm, in_channels),
+                nn.Conv3d(in_channels, out_channels // 2, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, out_channels // 2),
+                nn.ReLU(inplace=True),
+            )
+            
+            # Branch 2: 1x1 -> DWConv7x7 stride=2 -> 1x1
+            self.branch2 = nn.Sequential(
+                nn.Conv3d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, in_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv3d(in_channels, in_channels, kernel_size=7, stride=2, padding=3, 
+                         groups=in_channels, bias=False),
+                _make_norm3d(norm, in_channels),
+                nn.Conv3d(in_channels, out_channels // 2, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, out_channels // 2),
+                nn.ReLU(inplace=True),
+            )
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.stride == 1:
+            # Split channels
+            x1, x2 = x.chunk(2, dim=1)
+            # Branch 1: Identity
+            out1 = self.branch1(x1)
+            # Branch 2: Processing
+            out2 = self.branch2(x2)
+            # Concat
+            out = torch.cat([out1, out2], dim=1)
+        else:
+            # Both branches process full input
+            out1 = self.branch1(x)
+            out2 = self.branch2(x)
+            # Concat
+            out = torch.cat([out1, out2], dim=1)
+        
+        # Channel Shuffle
+        out = channel_shuffle_3d(out, groups=2)
+        return out
+
+
+class Down3DShuffleNetV2(nn.Module):
+    """Downsampling using ShuffleNetV2 unit (stride=2)."""
+    def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn'):
+        super().__init__()
+        # First unit: stride=2 for downsampling
+        self.unit1 = ShuffleNetV2Unit3D(in_channels, out_channels, stride=2, norm=norm)
+        # Second unit: stride=1 for feature refinement
+        self.unit2 = ShuffleNetV2Unit3D(out_channels, out_channels, stride=1, norm=norm)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.unit1(x)
+        x = self.unit2(x)
+        return x
+
+
+class Down3DShuffleNetV2_Dilated(nn.Module):
+    """Downsampling using ShuffleNetV2 Dilated unit (stride=2)."""
+    def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn', dilation_rates: list = [1, 2, 5]):
+        super().__init__()
+        # First unit: stride=2 for downsampling
+        self.unit1 = ShuffleNetV2Unit3D_Dilated(in_channels, out_channels, stride=2, norm=norm, dilation_rates=dilation_rates)
+        # Second unit: stride=1 for feature refinement
+        self.unit2 = ShuffleNetV2Unit3D_Dilated(out_channels, out_channels, stride=1, norm=norm, dilation_rates=dilation_rates)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.unit1(x)
+        x = self.unit2(x)
+        return x
+
+
+class Down3DShuffleNetV2_LK(nn.Module):
+    """Downsampling using ShuffleNetV2 Large Kernel unit (stride=2)."""
+    def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn'):
+        super().__init__()
+        # First unit: stride=2 for downsampling
+        self.unit1 = ShuffleNetV2Unit3D_LK(in_channels, out_channels, stride=2, norm=norm)
+        # Second unit: stride=1 for feature refinement
+        self.unit2 = ShuffleNetV2Unit3D_LK(out_channels, out_channels, stride=1, norm=norm)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.unit1(x)
+        x = self.unit2(x)
+        return x
+

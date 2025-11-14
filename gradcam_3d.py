@@ -291,7 +291,7 @@ def analyze_gradcam(model, data_loader, device, target_layer='bottleneck',
 
 if __name__ == "__main__":
     # 테스트
-    from model_3d_unet import UNet3D_Simplified
+    from models.model_3d_unet import UNet3D_Small as UNet3D_Simplified
     from data_loader import get_data_loaders
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

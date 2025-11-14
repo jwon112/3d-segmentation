@@ -84,66 +84,44 @@ class OutConv3D(nn.Module):
     def forward(self, x):
         return self.conv(x)
 
-class UNet3D_Medium(nn.Module):
-    """Medium 3D U-Net 모델 (표준 채널 수)"""
-    def __init__(self, n_channels=4, n_classes=4, bilinear=False):
-        super(UNet3D_Medium, self).__init__()
-        self.n_channels = n_channels
-        self.n_classes = n_classes
-        self.bilinear = bilinear
+from .channel_configs import get_unet_channels
 
-        self.inc = DoubleConv3D(n_channels, 64)
-        self.down1 = Down3D(64, 128)
-        self.down2 = Down3D(128, 256)
-        self.down3 = Down3D(256, 512)
-        factor = 2 if bilinear else 1
-        self.down4 = Down3D(512, 1024 // factor)
-        
-        self.up1 = Up3D(1024, 512 // factor, bilinear)
-        self.up2 = Up3D(512, 256 // factor, bilinear)
-        self.up3 = Up3D(256, 128 // factor, bilinear)
-        self.up4 = Up3D(128, 64, bilinear)
-        self.outc = OutConv3D(64, n_classes)
 
-    def forward(self, x):
-        x1 = self.inc(x)
-        x2 = self.down1(x1)
-        x3 = self.down2(x2)
-        x4 = self.down3(x3)
-        x5 = self.down4(x4)
-        
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
-        logits = self.outc(x)
-        return logits
-
-class UNet3D_Small(nn.Module):
-    """Small 3D U-Net (메모리 효율성을 위해 - 채널 수 절반)"""
-    def __init__(self, n_channels=4, n_classes=4, norm: str = 'bn'):
-        super(UNet3D_Small, self).__init__()
+class UNet3D(nn.Module):
+    """3D U-Net with configurable channel sizes
+    
+    Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
+    """
+    def __init__(self, n_channels=4, n_classes=4, norm: str = 'bn', bilinear=False, size: str = 's'):
+        super(UNet3D, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.norm = (norm or 'bn')
-
+        self.bilinear = bilinear
+        self.size = size
+        
+        # Get channel configuration
+        channels = get_unet_channels(size)
+        enc_channels = channels['enc']
+        
         # Encoder
-        self.enc1 = DoubleConv3D(n_channels, 32, norm=self.norm)
-        self.enc2 = Down3D(32, 64, norm=self.norm)
-        self.enc3 = Down3D(64, 128, norm=self.norm)
-        self.enc4 = Down3D(128, 256, norm=self.norm)
+        self.enc1 = DoubleConv3D(n_channels, enc_channels[0], norm=self.norm)
+        self.enc2 = Down3D(enc_channels[0], enc_channels[1], norm=self.norm)
+        self.enc3 = Down3D(enc_channels[1], enc_channels[2], norm=self.norm)
+        self.enc4 = Down3D(enc_channels[2], enc_channels[3], norm=self.norm)
         
         # Bottleneck
-        self.bottleneck = DoubleConv3D(256, 512, norm=self.norm)
+        factor = 2 if bilinear else 1
+        self.bottleneck = DoubleConv3D(enc_channels[3], channels['bottleneck'] // factor, norm=self.norm)
         
-        # Decoder - bilinear=False로 설정하여 채널 수 문제 해결
-        self.dec4 = Up3D(512, 256, bilinear=False, norm=self.norm)
-        self.dec3 = Up3D(256, 128, bilinear=False, norm=self.norm)
-        self.dec2 = Up3D(128, 64, bilinear=False, norm=self.norm)
-        self.dec1 = Up3D(64, 32, bilinear=False, norm=self.norm)
+        # Decoder
+        self.dec4 = Up3D(channels['bottleneck'], enc_channels[3] // factor, bilinear, norm=self.norm)
+        self.dec3 = Up3D(enc_channels[3], enc_channels[2] // factor, bilinear, norm=self.norm)
+        self.dec2 = Up3D(enc_channels[2], enc_channels[1] // factor, bilinear, norm=self.norm)
+        self.dec1 = Up3D(enc_channels[1], enc_channels[0] // factor, bilinear, norm=self.norm)
         
         # Output
-        self.outc = OutConv3D(32, n_classes)
+        self.outc = OutConv3D(enc_channels[0] // factor, n_classes)
 
     def forward(self, x):
         # Encoder
@@ -164,6 +142,27 @@ class UNet3D_Small(nn.Module):
         # Output
         logits = self.outc(d1)
         return logits
+
+
+# Convenience classes for backward compatibility
+class UNet3D_XS(UNet3D):
+    def __init__(self, n_channels=4, n_classes=4, norm: str = 'bn', bilinear=False):
+        super().__init__(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=bilinear, size='xs')
+
+
+class UNet3D_Small(UNet3D):
+    def __init__(self, n_channels=4, n_classes=4, norm: str = 'bn', bilinear=False):
+        super().__init__(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=bilinear, size='s')
+
+
+class UNet3D_Medium(UNet3D):
+    def __init__(self, n_channels=4, n_classes=4, norm: str = 'bn', bilinear=False):
+        super().__init__(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=bilinear, size='m')
+
+
+class UNet3D_Large(UNet3D):
+    def __init__(self, n_channels=4, n_classes=4, norm: str = 'bn', bilinear=False):
+        super().__init__(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=bilinear, size='l')
 
 # Losses and metrics moved to ml/losses.py and ml/metrics.py
 

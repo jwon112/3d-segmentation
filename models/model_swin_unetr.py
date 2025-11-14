@@ -35,14 +35,18 @@ class WindowAttention3D(nn.Module):
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0., proj_drop=0.):
         super().__init__()
         self.dim = dim
-        self.window_size = window_size
+        # Convert window_size to tuple if it's an int
+        if isinstance(window_size, int):
+            self.window_size = (window_size, window_size, window_size)
+        else:
+            self.window_size = window_size
         self.num_heads = num_heads
         head_dim = dim // num_heads
         self.scale = head_dim ** -0.5
 
         # Relative position bias
         self.relative_position_bias_table = nn.Parameter(
-            torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1) * (2 * window_size[2] - 1), num_heads))
+            torch.zeros((2 * self.window_size[0] - 1) * (2 * self.window_size[1] - 1) * (2 * self.window_size[2] - 1), num_heads))
 
         # Get pair-wise relative position index for each token inside the window
         coords_d = torch.arange(self.window_size[0])
@@ -105,13 +109,17 @@ class SwinTransformerBlock3D(nn.Module):
         self.dim = dim
         self.input_resolution = input_resolution
         self.num_heads = num_heads
+        # Convert window_size to tuple if it's an int
+        if isinstance(window_size, int):
+            window_size = (window_size, window_size, window_size)
         self.window_size = window_size
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
-        if min(self.input_resolution) <= self.window_size:
+        if min(self.input_resolution) <= min(self.window_size):
             # if window size is larger than input resolution, we don't partition windows
             self.shift_size = 0
-            self.window_size = min(self.input_resolution)
+            min_res = min(self.input_resolution)
+            self.window_size = (min_res, min_res, min_res)
 
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention3D(
