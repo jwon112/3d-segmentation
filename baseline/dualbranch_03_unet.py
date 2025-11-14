@@ -28,22 +28,22 @@ class Down3DStride(nn.Module):
 class Down3DStrideDilated(nn.Module):
     """Downsampling with stride-2 Conv and dilated convolutions for wider ERF.
     
-    Pattern: Conv(stride=2) -> Norm -> ReLU -> DilatedConv(rate=2) -> Norm -> ReLU -> DilatedConv(rate=3) -> Norm -> ReLU
+    Pattern: Conv(stride=2) -> Norm -> ReLU -> DilatedConv(rate=2) -> Norm -> ReLU -> DilatedConv(rate=5) -> Norm -> ReLU
     Uses dilated convolutions instead of regular conv to capture wider context.
     """
     def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn'):
         super().__init__()
         # Padding for dilated conv: padding = dilation * (kernel_size - 1) / 2
-        # For kernel=3, dilation=2: padding = 2 * (3-1) / 2 = 2
-        # For kernel=3, dilation=3: padding = 3 * (3-1) / 2 = 3
+        # For kernel=5, dilation=2: padding = 2 * (5-1) / 2 = 4
+        # For kernel=5, dilation=5: padding = 5 * (5-1) / 2 = 10
         self.block = nn.Sequential(
             nn.Conv3d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, bias=False),
             _make_norm3d(norm, out_channels),
             nn.ReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, kernel_size=3, dilation=2, padding=2, bias=False),
+            nn.Conv3d(out_channels, out_channels, kernel_size=5, dilation=2, padding=4, bias=False),
             _make_norm3d(norm, out_channels),
             nn.ReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, kernel_size=3, dilation=5, padding=5, bias=False),
+            nn.Conv3d(out_channels, out_channels, kernel_size=5, dilation=5, padding=10, bias=False),
             _make_norm3d(norm, out_channels),
             nn.ReLU(inplace=True),
         )
