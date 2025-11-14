@@ -499,6 +499,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     # 결과 저장용
     all_results = []
     all_epochs_results = []
+    all_stage_pam_results = []  # Stage별 PAM 결과 저장용
     
     # Distributed setup
     distributed, rank, local_rank, world_size = setup_distributed()
@@ -648,10 +649,10 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         
                         try:
                             pam_train_list, pam_train_stages = calculate_pam(
-                                model, input_size=input_size, mode='train', stage_wise=False, device=device
+                                model, input_size=input_size, mode='train', stage_wise=True, device=device
                             )
                             pam_inference_list, pam_inference_stages = calculate_pam(
-                                model, input_size=input_size, mode='inference', stage_wise=False, device=device
+                                model, input_size=input_size, mode='inference', stage_wise=True, device=device
                             )
                             if pam_train_list:
                                 pam_train_mean = sum(pam_train_list) / len(pam_train_list)
@@ -659,10 +660,26 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             if pam_inference_list:
                                 pam_inference_mean = sum(pam_inference_list) / len(pam_inference_list)
                                 print(f"PAM (Inference, batch_size=1): {pam_inference_mean / 1024**2:.2f} MB (mean of {len(pam_inference_list)} runs)")
+                            
+                            # Stage별 PAM 출력
+                            if pam_train_stages:
+                                print(f"PAM (Train) by stage:")
+                                for stage_name, mem_list in sorted(pam_train_stages.items()):
+                                    if mem_list:
+                                        mem_mean = sum(mem_list) / len(mem_list)
+                                        print(f"  {stage_name}: {mem_mean / 1024**2:.2f} MB")
+                            if pam_inference_stages:
+                                print(f"PAM (Inference) by stage:")
+                                for stage_name, mem_list in sorted(pam_inference_stages.items()):
+                                    if mem_list:
+                                        mem_mean = sum(mem_list) / len(mem_list)
+                                        print(f"  {stage_name}: {mem_mean / 1024**2:.2f} MB")
                         except Exception as e:
                             print(f"Warning: Failed to calculate PAM: {e}")
                             pam_train_list = []
                             pam_inference_list = []
+                            pam_train_stages = {}
+                            pam_inference_stages = {}
                     
                     # Inference Latency 계산 (rank 0에서만, batch_size=1로 고정, 여러 번 측정)
                     inference_latency_list = []
@@ -734,7 +751,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                     else:
                                         input_size = (1, n_channels, *INPUT_SIZE_3D)
                                     pam_inference_list_after_deploy, _ = calculate_pam(
-                                        model, input_size=input_size, mode='inference', stage_wise=False, device=device
+                                        model, input_size=input_size, mode='inference', stage_wise=True, device=device
                                     )
                                     if pam_inference_list_after_deploy:
                                         pam_inference_mean_after_deploy = sum(pam_inference_list_after_deploy) / len(pam_inference_list_after_deploy)
@@ -776,6 +793,43 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     }
                     if is_main_process(rank):
                         all_results.append(result)
+                        
+                        # Stage별 PAM 결과 저장
+                        if pam_train_stages:
+                            for stage_name, mem_list in pam_train_stages.items():
+                                if mem_list:
+                                    mem_mean = sum(mem_list) / len(mem_list)
+                                    mem_std = (sum((x - mem_mean) ** 2 for x in mem_list) / len(mem_list)) ** 0.5 if len(mem_list) > 1 else 0.0
+                                    stage_pam_result = {
+                                        'dataset': dataset_version,
+                                        'seed': seed,
+                                        'fold': fold_idx if use_5fold else None,
+                                        'model_name': model_name,
+                                        'mode': 'train',
+                                        'stage_name': stage_name,
+                                        'pam_mean': mem_mean,  # bytes
+                                        'pam_std': mem_std,  # bytes
+                                        'num_runs': len(mem_list)
+                                    }
+                                    all_stage_pam_results.append(stage_pam_result)
+                        
+                        if pam_inference_stages:
+                            for stage_name, mem_list in pam_inference_stages.items():
+                                if mem_list:
+                                    mem_mean = sum(mem_list) / len(mem_list)
+                                    mem_std = (sum((x - mem_mean) ** 2 for x in mem_list) / len(mem_list)) ** 0.5 if len(mem_list) > 1 else 0.0
+                                    stage_pam_result = {
+                                        'dataset': dataset_version,
+                                        'seed': seed,
+                                        'fold': fold_idx if use_5fold else None,
+                                        'model_name': model_name,
+                                        'mode': 'inference',
+                                        'stage_name': stage_name,
+                                        'pam_mean': mem_mean,  # bytes
+                                        'pam_std': mem_std,  # bytes
+                                        'num_runs': len(mem_list)
+                                    }
+                                    all_stage_pam_results.append(stage_pam_result)
                     
                     # 모든 epoch 결과 저장 (test_dice는 최종 평가 값으로 업데이트)
                     for epoch_result in epoch_results:
@@ -831,6 +885,13 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
             epochs_csv_path = os.path.join(results_dir, "all_epochs_results.csv")
             epochs_df.to_csv(epochs_csv_path, index=False)
             print(f"All epochs results saved to: {epochs_csv_path}")
+    
+    # Stage별 PAM 결과 저장
+    if all_stage_pam_results and (is_main_process(0) or not distributed):
+        stage_pam_df = pd.DataFrame(all_stage_pam_results)
+        stage_pam_csv_path = os.path.join(results_dir, "stage_wise_pam_results.csv")
+        stage_pam_df.to_csv(stage_pam_csv_path, index=False)
+        print(f"Stage-wise PAM results saved to: {stage_pam_csv_path}")
     
     # 모델별 성능 비교 분석
     if is_main_process(0) or not distributed:

@@ -101,18 +101,34 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     # PAM 계산 (rank 0에서만, batch_size=1로 고정, 여러 번 측정)
     pam_train_list = []
     pam_inference_list = []
+    pam_train_stages = {}
+    pam_inference_stages = {}
     if is_main_process(rank):
         try:
-            pam_train_list, _ = calculate_pam(
-                model, input_size=input_size, mode='train', stage_wise=False, device=device
+            pam_train_list, pam_train_stages = calculate_pam(
+                model, input_size=input_size, mode='train', stage_wise=True, device=device
             )
-            pam_inference_list, _ = calculate_pam(
-                model, input_size=input_size, mode='inference', stage_wise=False, device=device
+            pam_inference_list, pam_inference_stages = calculate_pam(
+                model, input_size=input_size, mode='inference', stage_wise=True, device=device
             )
+            if pam_train_stages:
+                print(f"PAM (Train) by stage:")
+                for stage_name, mem_list in sorted(pam_train_stages.items()):
+                    if mem_list:
+                        mem_mean = sum(mem_list) / len(mem_list)
+                        print(f"  {stage_name}: {mem_mean / 1024**2:.2f} MB")
+            if pam_inference_stages:
+                print(f"PAM (Inference) by stage:")
+                for stage_name, mem_list in sorted(pam_inference_stages.items()):
+                    if mem_list:
+                        mem_mean = sum(mem_list) / len(mem_list)
+                        print(f"  {stage_name}: {mem_mean / 1024**2:.2f} MB")
         except Exception as e:
             print(f"Warning: Failed to calculate PAM: {e}")
             pam_train_list = []
             pam_inference_list = []
+            pam_train_stages = {}
+            pam_inference_stages = {}
     
     # Inference Latency 계산 (rank 0에서만, batch_size=1로 고정, 여러 번 측정)
     inference_latency_list = []
@@ -181,8 +197,43 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         print(f"Test Dice: {metrics['dice']:.4f} (WT {metrics['wt']:.4f} | TC {metrics['tc']:.4f} | ET {metrics['et']:.4f})")
         print(f"Precision: {metrics['precision']:.4f} | Recall: {metrics['recall']:.4f}")
     
-    # 하나의 결과만 반환
-    return [result] if is_main_process(rank) else []
+    # Stage별 PAM 결과도 함께 반환
+    stage_pam_results = []
+    if is_main_process(rank):
+        if pam_train_stages:
+            for stage_name, mem_list in pam_train_stages.items():
+                if mem_list:
+                    mem_mean = sum(mem_list) / len(mem_list)
+                    mem_std = (sum((x - mem_mean) ** 2 for x in mem_list) / len(mem_list)) ** 0.5 if len(mem_list) > 1 else 0.0
+                    stage_pam_results.append({
+                        'dataset': dataset_version,
+                        'seed': seed,
+                        'model_name': model_name,
+                        'mode': 'train',
+                        'stage_name': stage_name,
+                        'pam_mean': mem_mean,
+                        'pam_std': mem_std,
+                        'num_runs': len(mem_list)
+                    })
+        
+        if pam_inference_stages:
+            for stage_name, mem_list in pam_inference_stages.items():
+                if mem_list:
+                    mem_mean = sum(mem_list) / len(mem_list)
+                    mem_std = (sum((x - mem_mean) ** 2 for x in mem_list) / len(mem_list)) ** 0.5 if len(mem_list) > 1 else 0.0
+                    stage_pam_results.append({
+                        'dataset': dataset_version,
+                        'seed': seed,
+                        'model_name': model_name,
+                        'mode': 'inference',
+                        'stage_name': stage_name,
+                        'pam_mean': mem_mean,
+                        'pam_std': mem_std,
+                        'num_runs': len(mem_list)
+                    })
+    
+    # 결과와 stage별 PAM 결과 반환
+    return ([result], stage_pam_results) if is_main_process(rank) else ([], [])
 
 
 def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d', 
@@ -235,6 +286,7 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
     
     # 평가 실행
     all_results = []
+    all_stage_pam_results = []  # Stage별 PAM 결과 저장용
     for model_name, seed in all_checkpoints:
         try:
             if is_main_process(rank):
@@ -242,7 +294,7 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
                 print(f"Evaluating {model_name.upper()} (seed {seed})...")
                 print(f"{'='*60}")
             
-            results = load_checkpoint_and_evaluate(
+            results, stage_pam_results = load_checkpoint_and_evaluate(
                 results_dir=results_dir,
                 model_name=model_name,
                 seed=seed,
@@ -259,6 +311,7 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
             
             if results and is_main_process(rank):
                 all_results.extend(results)  # 여러 결과를 모두 추가
+                all_stage_pam_results.extend(stage_pam_results)  # Stage별 PAM 결과 추가
                 
         except Exception as e:
             if is_main_process(rank):
@@ -284,6 +337,13 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
         
         results_df.to_csv(csv_path, index=False)
         print(f"\nEvaluation results saved to: {csv_path}")
+    
+    # Stage별 PAM 결과 저장
+    if all_stage_pam_results and (is_main_process(rank) or not distributed):
+        stage_pam_df = pd.DataFrame(all_stage_pam_results)
+        stage_pam_csv_path = os.path.join(results_dir, "stage_wise_pam_results.csv")
+        stage_pam_df.to_csv(stage_pam_csv_path, index=False)
+        print(f"Stage-wise PAM results saved to: {stage_pam_csv_path}")
     
     # 시각화 생성
     if is_main_process(rank) or not distributed:

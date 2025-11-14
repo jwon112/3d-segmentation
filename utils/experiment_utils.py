@@ -164,7 +164,7 @@ def calculate_flops(model, input_size=(1, 4, 64, 64, 64)):
         print(f"Error calculating FLOPs: {e}")
         return 0
 
-def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_wise=False, device='cuda', num_runs=5):
+def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_wise=True, device='cuda', num_runs=5):
     """
     Peak Activation Memory (PAM) 계산
     
@@ -172,19 +172,22 @@ def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_
         model: PyTorch 모델 (DDP wrapped 가능)
         input_size: 입력 텐서 크기 (batch_size=1로 고정)
         mode: 'train' 또는 'inference'
-        stage_wise: True면 stage별 PAM도 측정 (현재는 False만 지원, 향후 확장 가능)
+        stage_wise: True면 stage별 PAM도 측정 (기본값: True)
         device: 디바이스 ('cuda' 또는 'cpu')
         num_runs: 측정 반복 횟수 (기본 5회, 변동성 감소를 위해)
     
     Returns:
         - 전체 PAM (bytes, batch_size=1 기준) - 여러 번 측정한 값들의 리스트
-        - stage별 PAM dict (stage_wise=True일 때, 현재는 빈 dict)
+        - stage별 PAM dict (stage_wise=True일 때)
+            - key: stage 이름 (예: 'stem_flair', 'branch_flair', 'down3', 'up1', 'outc')
+            - value: 해당 stage의 PAM 리스트 (bytes, num_runs만큼)
     
     Note:
         - batch_size=1로 고정하여 측정 (모든 모델을 동일한 조건에서 비교)
         - Train 모드에서는 backward pass까지 포함하여 측정
         - Inference 모드에서는 forward pass만 측정
         - 여러 번 측정하여 변동성을 줄이고, model_comparison에서 평균/표준편차 계산
+        - Stage별 측정은 forward hook을 사용하여 각 stage의 출력 텐서 메모리 측정
     """
     if not torch.cuda.is_available() or device == 'cpu':
         return [], {}
@@ -225,12 +228,66 @@ def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats(device_obj)
         
+        # Stage별 측정을 위한 stage 감지 및 hook 준비
+        stage_modules = {}
+        if stage_wise:
+            # Stage 패턴: stem_*, branch_*, down*, up*, outc
+            stage_patterns = ['stem_', 'branch_', 'down', 'up', 'outc']
+            
+            for name, module in real_model.named_modules():
+                # Stage 패턴이 포함된 모듈 찾기
+                if any(pattern in name for pattern in stage_patterns):
+                    # 최상위 레벨의 stage만 선택 (중첩된 모듈 제외)
+                    # 예: 'stem_flair'는 선택, 'stem_flair.conv1'은 제외
+                    parts = name.split('.')
+                    if len(parts) <= 2:  # 최상위 또는 한 단계 아래만
+                        # 부모가 stage가 아닌 경우만 선택
+                        is_top_level = True
+                        if len(parts) == 2:
+                            parent_name = parts[0]
+                            if any(p in parent_name for p in stage_patterns):
+                                is_top_level = False
+                        
+                        if is_top_level:
+                            stage_modules[name] = module
+        
         # 여러 번 측정하여 변동성 감소
         peak_memories = []
+        stage_memories_dict = {name: [] for name in stage_modules.keys()} if stage_wise else {}
+        
         for run_idx in range(num_runs):
             # 각 측정마다 메모리 초기화
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats(device_obj)
+            
+            # Stage별 메모리 초기화
+            if stage_wise:
+                for stage_name in stage_memories_dict.keys():
+                    stage_memories_dict[stage_name] = []
+            
+            # Forward hook 등록 (stage별 메모리 측정)
+            hooks = []
+            if stage_wise and stage_modules:
+                def make_stage_hook(stage_name):
+                    def hook_fn(module, input, output):
+                        # Output 텐서의 메모리 크기 계산
+                        if isinstance(output, torch.Tensor):
+                            output_mem = output.element_size() * output.nelement()
+                        elif isinstance(output, tuple):
+                            output_mem = sum(
+                                t.element_size() * t.nelement() 
+                                if isinstance(t, torch.Tensor) else 0 
+                                for t in output
+                            )
+                        else:
+                            output_mem = 0
+                        
+                        stage_memories_dict[stage_name].append(output_mem)
+                    return hook_fn
+                
+                for name, module in stage_modules.items():
+                    hook = module.register_forward_hook(make_stage_hook(name))
+                    hooks.append(hook)
             
             # Dummy input 생성 (동일한 seed로 인해 동일한 값)
             dummy_input = torch.randn(input_size, dtype=torch.float32).to(device_obj)
@@ -257,6 +314,10 @@ def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_
             peak_memory_bytes = torch.cuda.max_memory_allocated(device_obj)
             peak_memories.append(peak_memory_bytes)
             
+            # Hook 제거
+            for hook in hooks:
+                hook.remove()
+            
             # Gradient 정리 (train 모드인 경우)
             if mode == 'train':
                 real_model.zero_grad()
@@ -267,12 +328,16 @@ def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_
                 del loss
             torch.cuda.empty_cache()
         
-        # Stage별 측정은 향후 확장 가능 (현재는 빈 dict 반환)
+        # Stage별 메모리 결과 정리 (각 run별로 리스트로 저장)
         stage_memories = {}
-        if stage_wise:
-            # TODO: Forward hook을 사용한 stage별 메모리 측정 구현
-            # 모델 구조에 따라 자동으로 stage를 감지하고 측정
-            pass
+        if stage_wise and stage_memories_dict:
+            # 각 stage별로 num_runs만큼의 측정값이 있어야 함
+            for stage_name, mem_list in stage_memories_dict.items():
+                if len(mem_list) == num_runs:
+                    stage_memories[stage_name] = mem_list
+                elif len(mem_list) > 0:
+                    # 일부만 측정된 경우 (예: 조건부 실행 등)
+                    stage_memories[stage_name] = mem_list
         
         return peak_memories, stage_memories
     
