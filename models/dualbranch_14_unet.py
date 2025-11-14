@@ -74,10 +74,18 @@ class DualBranchUNet3D_MobileNetV2_Expand2(nn.Module):
         self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Decoder
-        self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-        self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-        self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-        self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        if self.bilinear:
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        else:
+            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -144,10 +152,18 @@ class DualBranchUNet3D_GhostNet(nn.Module):
         self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Decoder
-        self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-        self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-        self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-        self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        if self.bilinear:
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        else:
+            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -214,10 +230,18 @@ class DualBranchUNet3D_Dilated(nn.Module):
         self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Decoder
-        self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-        self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-        self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-        self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        if self.bilinear:
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        else:
+            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -291,10 +315,18 @@ class DualBranchUNet3D_ConvNeXt(nn.Module):
         self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Decoder
-        self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-        self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-        self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-        self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        if self.bilinear:
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        else:
+            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -372,10 +404,18 @@ class DualBranchUNet3D_ShuffleNetV2(nn.Module):
         self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Decoder
-        self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-        self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-        self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-        self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        if self.bilinear:
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        else:
+            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -452,10 +492,18 @@ class DualBranchUNet3D_ShuffleNetV2_Dilated(nn.Module):
         self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Decoder
-        self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-        self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-        self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-        self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        if self.bilinear:
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        else:
+            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -532,10 +580,18 @@ class DualBranchUNet3D_ShuffleNetV2_LK(nn.Module):
         self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Decoder
-        self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-        self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-        self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-        self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        if self.bilinear:
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+        else:
+            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
+            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
+            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:

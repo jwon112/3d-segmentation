@@ -219,10 +219,18 @@ class QuadBranchUNet3D_4Modal_Small(nn.Module):
         self.down5 = Down3D(256, 512 // factor, norm=self.norm)
 
         # Decoder (다른 모델과 동일)
-        self.up1 = Up3D(512, 256 // factor, self.bilinear, norm=self.norm)
-        self.up2 = Up3D(256, 128 // factor, self.bilinear, norm=self.norm)
-        self.up3 = Up3D(128, 64 // factor, self.bilinear, norm=self.norm)
-        self.up4 = Up3D(64, 32, self.bilinear, norm=self.norm)
+        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        if self.bilinear:
+            self.up1 = Up3D(512, 256 // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(256, 128 // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(128, 64 // factor, self.bilinear, norm=self.norm)
+            self.up4 = Up3D(64, 32, self.bilinear, norm=self.norm)
+        else:
+            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
+            self.up1 = Up3D(512, 256 // factor, self.bilinear, norm=self.norm, skip_channels=256)
+            self.up2 = Up3D(256, 128 // factor, self.bilinear, norm=self.norm, skip_channels=128)
+            self.up3 = Up3D(128, 64 // factor, self.bilinear, norm=self.norm, skip_channels=64)
+            self.up4 = Up3D(64, 32, self.bilinear, norm=self.norm, skip_channels=32)
         self.outc = OutConv3D(32, n_classes)
 
     def forward(self, x: torch.Tensor):
@@ -313,10 +321,18 @@ class QuadBranchUNet3D_4Modal_Attention_Small(nn.Module):
         self.down5 = Down3D(256, 512 // factor, norm=self.norm)
 
         # Decoder (다른 모델과 동일)
-        self.up1 = Up3D(512, 256 // factor, self.bilinear, norm=self.norm)
-        self.up2 = Up3D(256, 128 // factor, self.bilinear, norm=self.norm)
-        self.up3 = Up3D(128, 64 // factor, self.bilinear, norm=self.norm)
-        self.up4 = Up3D(64, 32, self.bilinear, norm=self.norm)
+        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        if self.bilinear:
+            self.up1 = Up3D(512, 256 // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(256, 128 // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(128, 64 // factor, self.bilinear, norm=self.norm)
+            self.up4 = Up3D(64, 32, self.bilinear, norm=self.norm)
+        else:
+            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
+            self.up1 = Up3D(512, 256 // factor, self.bilinear, norm=self.norm, skip_channels=256)
+            self.up2 = Up3D(256, 128 // factor, self.bilinear, norm=self.norm, skip_channels=128)
+            self.up3 = Up3D(128, 64 // factor, self.bilinear, norm=self.norm, skip_channels=64)
+            self.up4 = Up3D(64, 32, self.bilinear, norm=self.norm, skip_channels=32)
         self.outc = OutConv3D(32, n_classes)
 
     def forward(self, x: torch.Tensor, return_attention=False):

@@ -221,7 +221,7 @@ class GradCAM3DVisualizer:
             fig.write_html(save_path)
         
         return fig
-
+    
 def analyze_gradcam(model, data_loader, device, target_layer='bottleneck', 
                    num_samples=3, class_names=['Background', 'NCR/NET', 'ED', 'ET']):
     """Grad-CAM 분석 및 시각화"""

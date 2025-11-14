@@ -46,7 +46,7 @@ class Down3D(nn.Module):
 
 class Up3D(nn.Module):
     """3D Upsampling 블록"""
-    def __init__(self, in_channels, out_channels, bilinear=True, norm: str = 'bn'):
+    def __init__(self, in_channels, out_channels, bilinear=True, norm: str = 'bn', skip_channels=None):
         super().__init__()
         
         if bilinear:
@@ -55,10 +55,12 @@ class Up3D(nn.Module):
         else:
             self.up = nn.ConvTranspose3d(in_channels, in_channels // 2, kernel_size=2, stride=2)
             # bilinear=False일 때는 upsampling 후 skip connection과 concat하므로
-            # in_channels = (in_channels // 2) + skip_channels
-            # 여기서는 skip_channels = in_channels // 2이므로
-            # total_channels = (in_channels // 2) + (in_channels // 2) = in_channels
-            self.conv = DoubleConv3D(in_channels, out_channels, norm=norm)
+            # total_channels = (in_channels // 2) + skip_channels
+            # skip_channels가 None이면 기본값으로 in_channels // 2를 사용 (기존 동작 유지)
+            if skip_channels is None:
+                skip_channels = in_channels // 2
+            total_channels = (in_channels // 2) + skip_channels
+            self.conv = DoubleConv3D(total_channels, out_channels, norm=norm)
 
     def forward(self, x1, x2):
         x1 = self.up(x1)

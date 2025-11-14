@@ -6,32 +6,33 @@
 
 ```
 3d_segmentation/
-├── baseline/                           # Baseline 모델들
+├── models/                             # 모델 아키텍처
 │   ├── __init__.py
-│   ├── model_3d_unet.py               # 3D U-Net 모델 (기본, Small/Medium)
-│   ├── model_3d_unet_stride.py        # 3D U-Net (Stride Conv 버전)
+│   ├── channel_configs.py             # 중앙 집중식 채널 설정 (_xs, _s, _m, _l)
+│   ├── model_3d_unet.py               # 3D U-Net (크기: xs, s, m, l)
+│   ├── model_3d_unet_stride.py        # 3D U-Net Stride (크기: xs, s, m, l)
 │   ├── model_3d_unet_modal_comparison.py  # 모달리티 비교 모델 (2modal, 4modal, quadbranch)
 │   ├── model_unetr.py                 # UNETR 모델
 │   ├── model_swin_unetr.py            # Swin UNETR 모델
 │   ├── mobileunetr.py                 # Mobile UNETR (2D)
 │   ├── mobileunetr_3d.py              # Mobile UNETR 3D
-│   ├── dualbranch_01_unet.py          # Dual-Branch U-Net (기본, MaxPool)
-│   ├── dualbranch_02_unet.py          # Dual-Branch (Stride Conv)
-│   ├── dualbranch_03_unet.py          # Dual-Branch (Dilated Conv)
-│   ├── dualbranch_04_unet.py          # Dual-Branch (RepLK 13x13)
-│   ├── dualbranch_05_unet.py          # Dual-Branch (RepLK + FFN2)
-│   ├── dualbranch_06_unet.py          # Dual-Branch (RepLK + MViT Stage 4,5)
-│   ├── dualbranch_07_unet.py          # Dual-Branch (RepLK + MViT Stage 5)
-│   ├── dualbranch_08_unet.py          # Dual-Branch (RepLK + MobileNetV2 + MViT)
-│   ├── dualbranch_09_unet.py          # Dual-Branch (RepLK 7x7 + MobileNetV2 + MViT)
-│   ├── dualbranch_10_unet.py          # Dual-Branch (Dilated + MobileNetV2 + MViT)
-│   ├── dualbranch_11_unet.py          # Dual-Branch (Dilated 1,2,3 + MobileNetV2 + MViT)
-│   ├── dualbranch_12_unet.py          # Dual-Branch (MobileNetV2 Both + MViT)
-│   ├── dualbranch_13_unet.py          # Dual-Branch (MobileViT Extended)
-│   └── dualbranch_14_unet.py          # Dual-Branch (Backbone 비교: MobileNetV2, GhostNet, Depthwise, Dilated, ConvNeXt)
+│   ├── dualbranch_basic.py            # Dual-Branch 기본 (MaxPool, Stride, Dilated)
+│   ├── dualbranch_replk.py            # Dual-Branch RepLK (RepLK + MViT)
+│   ├── dualbranch_mobilenet.py        # Dual-Branch MobileNetV2 + RepLK/MViT
+│   ├── dualbranch_dilated_mobile.py   # Dual-Branch Dilated + MobileNetV2
+│   ├── dualbranch_mvit.py             # Dual-Branch MobileViT Extended
+│   ├── dualbranch_14_unet.py          # Dual-Branch Backbone 비교 (MobileNetV2, GhostNet, ShuffleNetV2, ConvNeXt 등)
+│   └── modules/                       # 공통 모듈
+│       ├── __init__.py
+│       ├── replk_modules.py           # RepLK 관련 모듈
+│       ├── mvit_modules.py            # MobileViT 관련 모듈
+│       ├── ghostnet_modules.py        # GhostNet 관련 모듈
+│       ├── shufflenet_modules.py      # ShuffleNetV2 관련 모듈
+│       └── convnext_modules.py        # ConvNeXt 관련 모듈
 ├── utils/                              # 유틸리티 함수
 │   ├── __init__.py
 │   ├── experiment_utils.py            # 실험 유틸리티 (모델 생성, PAM 계산, 슬라이딩 윈도우 등)
+│   ├── gradcam_utils.py               # Grad-CAM 유틸리티 (현재 비활성화)
 │   ├── debug_*.py                     # 디버깅 스크립트들
 │   └── *.md                           # 문서화 파일들
 ├── losses/                             # Loss 함수
@@ -43,7 +44,8 @@
 ├── visualization/                      # 시각화 모듈
 │   ├── __init__.py
 │   ├── visualization_3d.py            # 3D 시각화 (다중 모델 지원)
-│   └── visualization_dataframe.py     # DataFrame 기반 시각화 및 차트 생성
+│   ├── visualization_dataframe.py     # DataFrame 기반 시각화 및 차트 생성
+│   └── gradcam_3d.py                  # Grad-CAM 3D 시각화 (현재 비활성화)
 ├── baseline_results/                   # 실험 결과 저장
 ├── data/                               # 데이터셋
 ├── integrated_experiment.py            # 통합 실험 스크립트 (CLI 진입점)
@@ -170,11 +172,17 @@ torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> -
 
 ### 모델 선택 옵션
 
-#### 기본 U-Net 모델
+#### 기본 U-Net 모델 (크기: xs, s, m, l)
+- `unet3d_xs`: 3D U-Net Extra Small
 - `unet3d_s`: 3D U-Net Small
 - `unet3d_m`: 3D U-Net Medium
-- `unet3d_stride_s`: 3D U-Net Stride Small (Stride Conv downsampling)
+- `unet3d_l`: 3D U-Net Large
+- `unet3d_stride_xs`: 3D U-Net Stride Extra Small (Stride Conv downsampling)
+- `unet3d_stride_s`: 3D U-Net Stride Small
 - `unet3d_stride_m`: 3D U-Net Stride Medium
+- `unet3d_stride_l`: 3D U-Net Stride Large
+
+**크기별 채널 증가**: 각 크기가 2배씩 증가 (xs → s → m → l)
 
 #### Transformer 기반 모델
 - `unetr`: UNETR
@@ -182,26 +190,30 @@ torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> -
 - `mobile_unetr`: Mobile UNETR (2D 전용)
 - `mobile_unetr_3d`: Mobile UNETR 3D
 
-#### Dual-Branch 모델 (T1ce, FLAIR 이중 분기)
-- `dualbranch_01_unet_s`: 기본 Dual-Branch (MaxPool)
-- `dualbranch_01_unet_m`: 기본 Dual-Branch Medium
-- `dualbranch_02_unet_s`: Stride Conv 버전
-- `dualbranch_03_unet_s`: Dilated Conv (FLAIR만)
-- `dualbranch_04_unet_s`: RepLK 13x13x13 (FLAIR만)
-- `dualbranch_05_unet_s`: RepLK + FFN2
-- `dualbranch_06_unet_s`: RepLK + MViT Stage 4,5
-- `dualbranch_07_unet_s`: RepLK + MViT Stage 5만
-- `dualbranch_08_unet_s`: RepLK + MobileNetV2 + MViT
-- `dualbranch_09_unet_s`: RepLK 7x7 + MobileNetV2 + MViT
-- `dualbranch_10_unet_s`: Dilated + MobileNetV2 + MViT
-- `dualbranch_11_unet_s`: Dilated 1,2,3 + MobileNetV2 + MViT
-- `dualbranch_12_unet_s`: MobileNetV2 Both + MViT
-- `dualbranch_13_unet_s`: MobileViT Extended
-- `dualbranch_14_mobilenetv2_expand2_s`: MobileNetV2 (expand_ratio=2)
-- `dualbranch_14_ghostnet_s`: GhostNet
-- `dualbranch_14_depthwise_separable_s`: Depth-wise Separable Conv
-- `dualbranch_14_dilated_s`: Dilated Conv (rate 1,2,5)
-- `dualbranch_14_convnext_s`: ConvNeXt
+#### Dual-Branch 모델 (T1ce, FLAIR 이중 분기, 크기: xs, s, m, l)
+- `dualbranch_01_unet_{xs|s|m|l}`: 기본 Dual-Branch (MaxPool)
+- `dualbranch_02_unet_{xs|s|m|l}`: Stride Conv 버전
+- `dualbranch_03_unet_{xs|s|m|l}`: Dilated Conv (FLAIR만)
+- `dualbranch_04_unet_{xs|s|m|l}`: RepLK 13x13x13 (FLAIR만)
+- `dualbranch_05_unet_{xs|s|m|l}`: RepLK + FFN2
+- `dualbranch_06_unet_{xs|s|m|l}`: RepLK + MViT Stage 4,5
+- `dualbranch_07_unet_{xs|s|m|l}`: RepLK + MViT Stage 5만
+- `dualbranch_08_unet_{xs|s|m|l}`: RepLK + MobileNetV2 + MViT
+- `dualbranch_09_unet_{xs|s|m|l}`: RepLK 7x7 + MobileNetV2 + MViT
+- `dualbranch_10_unet_{xs|s|m|l}`: Dilated + MobileNetV2 + MViT
+- `dualbranch_11_unet_{xs|s|m|l}`: Dilated 1,2,3 + MobileNetV2 + MViT
+- `dualbranch_12_unet_{xs|s|m|l}`: MobileNetV2 Both + MViT
+- `dualbranch_13_unet_{xs|s|m|l}`: MobileViT Extended
+- `dualbranch_14_mobilenetv2_expand2_{xs|s|m|l}`: MobileNetV2 (expand_ratio=2)
+- `dualbranch_14_ghostnet_{xs|s|m|l}`: GhostNet
+- `dualbranch_14_dilated_{xs|s|m|l}`: Dilated Conv (rate 1,2,5)
+- `dualbranch_14_convnext_{xs|s|m|l}`: ConvNeXt
+- `dualbranch_14_shufflenetv2_{xs|s|m|l}`: ShuffleNetV2
+- `dualbranch_14_shufflenetv2_dilated_{xs|s|m|l}`: ShuffleNetV2 Dilated
+- `dualbranch_14_shufflenetv2_lk_{xs|s|m|l}`: ShuffleNetV2 Large Kernel
+- `dualbranch_15_dilated125_both_{xs|s|m|l}`: Dilated 1,2,5 (양쪽 분기 모두)
+
+**예시**: `dualbranch_01_unet_s`, `dualbranch_01_unet_m`, `dualbranch_14_ghostnet_l` 등
 
 #### 모달리티 비교 모델
 - `unet3d_2modal_s`: 단일 분기, 2채널 (T1ce, FLAIR) concat
@@ -265,7 +277,11 @@ python integrated_experiment.py --data_path /path/to/data --epochs 10
 ### 1. 3D U-Net
 - **기본 버전**: MaxPool 기반 downsampling
 - **Stride 버전**: Stride-2 Conv 기반 downsampling
-- **크기**: Small (16→32→64→128→256→512), Medium (32→64→128→256→512→1024)
+- **크기**: Extra Small, Small, Medium, Large (각 크기마다 채널이 2배씩 증가)
+  - **xs**: 최소 채널 수
+  - **s**: Small (기본)
+  - **m**: Medium (Small의 2배)
+  - **l**: Large (Medium의 2배)
 
 ### 2. UNETR
 - **특징**: Vision Transformer 기반 3D 세그멘테이션
@@ -283,8 +299,9 @@ python integrated_experiment.py --data_path /path/to/data --epochs 10
 ### 5. Dual-Branch U-Net
 - **구조**: T1ce와 FLAIR를 각각 독립적으로 처리 후 융합
 - **Stage 1-4**: Dual-branch 구조 유지
-- **Stage 5**: 융합된 branch (MobileViT 또는 표준 UNet)
-- **변형**: 다양한 backbone (RepLK, MobileNetV2, Dilated Conv, MobileViT 등)
+- **Stage 5+**: 융합된 branch (MobileViT 또는 표준 UNet)
+- **변형**: 다양한 backbone (RepLK, MobileNetV2, Dilated Conv, MobileViT, GhostNet, ShuffleNetV2, ConvNeXt 등)
+- **크기**: 모든 모델이 xs, s, m, l 크기 지원 (채널 수 2배씩 증가)
 
 ### 6. Quad-Branch U-Net
 - **구조**: T1, T1ce, T2, FLAIR를 각각 독립적으로 처리 후 융합
@@ -295,15 +312,17 @@ python integrated_experiment.py --data_path /path/to/data --epochs 10
 실험 결과는 `baseline_results/` 폴더에 저장됩니다:
 
 - `integrated_experiment_results_YYYYMMDD_HHMMSS/`
-  - `integrated_experiment_results.csv`: 모델별 성능 요약 (PAM 포함)
+  - `integrated_experiment_results.csv`: 모델별 성능 요약 (PAM, Inference Latency 포함)
   - `all_epochs_results.csv`: 에포크별 상세 결과
-  - `model_comparison.csv`: 모델 비교 분석 (평균/표준편차, PAM 포함)
+  - `model_comparison.csv`: 모델 비교 분석 (평균/표준편차, PAM, Inference Latency 포함)
+  - `stage_wise_pam_results.csv`: Stage별 PAM 분석 결과
   - `learning_curves.png`: 학습 곡선 차트
   - `model_comparison_chart.png`: 모델 성능 비교 차트 (PAM Train/Inference 포함)
   - `parameter_efficiency.png`: 파라미터 효율성 분석
   - `interactive_3d_analysis.html`: 인터랙티브 3D 분석
   - `{model_name}_seed_{seed}_best.pth`: 각 모델별 최적 체크포인트
   - `{model_name}_seed_{seed}_fold_{fold}_best.pth`: 5-fold CV 시 fold별 체크포인트
+  - `gradcam/`: Grad-CAM 시각화 결과 (현재 비활성화)
 
 ## 🔧 주요 기능
 
@@ -325,6 +344,7 @@ python integrated_experiment.py --data_path /path/to/data --epochs 10
 - Train/Inference 단계별 VRAM 사용량 측정
 - 5회 측정 후 평균/표준편차 계산
 - 모델별 메모리 효율성 비교
+- **Stage-wise PAM**: 모델의 각 stage별 메모리 사용량 분석 (별도 CSV 저장)
 
 ### 5. 모달리티별 기여도 분석
 - Quad-Branch 모델에서 채널 어텐션으로 모달리티별 기여도 측정
@@ -361,6 +381,7 @@ python integrated_experiment.py --data_path /path/to/data --epochs 10
 - **파라미터 수** (Parameters)
 - **연산량** (FLOPs)
 - **PAM** (Peak Activation Memory): Train/Inference 단계별 VRAM 사용량
+- **Inference Latency**: 추론 시간 (ms, batch_size=1 기준)
 
 ## 🚀 분산 학습 설정
 
@@ -471,9 +492,11 @@ torch.distributed.DistStoreError: use_libuv was requested but PyTorch was built 
 ## 🛠️ 커스터마이징
 
 ### 새로운 모델 추가
-1. `baseline/` 폴더에 새 모델 파일 생성
-2. `baseline/__init__.py`에 모델 import 추가
+1. `models/` 폴더에 새 모델 파일 생성
+2. `models/__init__.py`에 모델 import 추가
 3. `utils/experiment_utils.py`의 `get_model()` 함수에 모델 케이스 추가
+4. 크기별 채널 설정이 필요한 경우 `models/channel_configs.py`에 추가
+5. 공통 모듈은 `models/modules/` 폴더에 추가
 
 ### 실험 설정 변경
 - `integrated_experiment.py`의 기본 파라미터 수정
