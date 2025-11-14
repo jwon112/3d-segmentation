@@ -21,7 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import from refactored modules
 from utils.experiment_utils import (
-    get_model, calculate_flops, calculate_pam,
+    get_model, calculate_flops, calculate_pam, calculate_inference_latency,
     setup_distributed, cleanup_distributed, is_main_process,
     INPUT_SIZE_2D, INPUT_SIZE_3D
 )
@@ -114,6 +114,23 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
             pam_train_list = []
             pam_inference_list = []
     
+    # Inference Latency 계산 (rank 0에서만, batch_size=1로 고정, 여러 번 측정)
+    inference_latency_list = []
+    inference_latency_stats = {}
+    if is_main_process(rank):
+        try:
+            inference_latency_list, inference_latency_stats = calculate_inference_latency(
+                model, input_size=input_size, device=device, num_warmup=10, num_runs=100
+            )
+            if inference_latency_list:
+                latency_mean = inference_latency_stats['mean']
+                latency_std = inference_latency_stats['std']
+                print(f"Inference Latency (batch_size=1): {latency_mean:.2f} ± {latency_std:.2f} ms (mean ± std of {len(inference_latency_list)} runs)")
+        except Exception as e:
+            print(f"Warning: Failed to calculate inference latency: {e}")
+            inference_latency_list = []
+            inference_latency_stats = {}
+    
     if is_main_process(rank):
         print(f"Parameters: {total_params:,}")
         print(f"FLOPs: {flops:,}")
@@ -132,62 +149,40 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         results_dir=results_dir
     )
     
-    # 결과 반환 (PAM은 각 측정값을 개별적으로 저장하여 model_comparison에서 평균/표준편차 계산)
-    results = []
-    if pam_train_list and pam_inference_list:
-        # 각 측정값마다 별도의 결과 행 생성
-        for pam_train_val, pam_inference_val in zip(pam_train_list, pam_inference_list):
-            result = {
-                'dataset': dataset_version,
-                'seed': seed,
-                'model_name': model_name,
-                'total_params': total_params,
-                'flops': flops,
-                'pam_train': pam_train_val,  # bytes, batch_size=1 기준
-                'pam_inference': pam_inference_val,  # bytes, batch_size=1 기준
-                'test_dice': metrics['dice'],
-                'test_wt': metrics.get('wt', None),
-                'test_tc': metrics.get('tc', None),
-                'test_et': metrics.get('et', None),
-                'val_dice': None,  # 평가 전용이므로 val_dice는 없음
-                'val_wt': None,
-                'val_tc': None,
-                'val_et': None,
-                'precision': metrics['precision'],
-                'recall': metrics['recall'],
-                'best_epoch': None  # 평가 전용이므로 best_epoch는 없음
-            }
-            results.append(result)
-    else:
-        # PAM 측정 실패 시 기본값으로 저장
-        result = {
-            'dataset': dataset_version,
-            'seed': seed,
-            'model_name': model_name,
-            'total_params': total_params,
-            'flops': flops,
-            'pam_train': 0,  # bytes, batch_size=1 기준
-            'pam_inference': 0,  # bytes, batch_size=1 기준
-            'test_dice': metrics['dice'],
-            'test_wt': metrics.get('wt', None),
-            'test_tc': metrics.get('tc', None),
-            'test_et': metrics.get('et', None),
-            'val_dice': None,  # 평가 전용이므로 val_dice는 없음
-            'val_wt': None,
-            'val_tc': None,
-            'val_et': None,
-            'precision': metrics['precision'],
-            'recall': metrics['recall'],
-            'best_epoch': None  # 평가 전용이므로 best_epoch는 없음
-        }
-        results.append(result)
+    # 결과 반환 (각 run마다 하나의 행만 생성, PAM과 Latency는 평균값 사용)
+    # PAM과 Latency 평균값 계산
+    pam_train_mean = sum(pam_train_list) / len(pam_train_list) if pam_train_list else 0
+    pam_inference_mean = sum(pam_inference_list) / len(pam_inference_list) if pam_inference_list else 0
+    latency_mean = sum(inference_latency_list) / len(inference_latency_list) if inference_latency_list else 0
+    
+    result = {
+        'dataset': dataset_version,
+        'seed': seed,
+        'model_name': model_name,
+        'total_params': total_params,
+        'flops': flops,
+        'pam_train': pam_train_mean,  # bytes, batch_size=1 기준 (평균값)
+        'pam_inference': pam_inference_mean,  # bytes, batch_size=1 기준 (평균값)
+        'inference_latency_ms': latency_mean,  # milliseconds, batch_size=1 기준 (평균값)
+        'test_dice': metrics['dice'],
+        'test_wt': metrics.get('wt', None),
+        'test_tc': metrics.get('tc', None),
+        'test_et': metrics.get('et', None),
+        'val_dice': None,  # 평가 전용이므로 val_dice는 없음
+        'val_wt': None,
+        'val_tc': None,
+        'val_et': None,
+        'precision': metrics['precision'],
+        'recall': metrics['recall'],
+        'best_epoch': None  # 평가 전용이므로 best_epoch는 없음
+    }
     
     if is_main_process(rank):
         print(f"Test Dice: {metrics['dice']:.4f} (WT {metrics['wt']:.4f} | TC {metrics['tc']:.4f} | ET {metrics['et']:.4f})")
         print(f"Precision: {metrics['precision']:.4f} | Recall: {metrics['recall']:.4f}")
     
-    # 모든 결과를 반환 (PAM 측정값마다 별도의 행)
-    return results
+    # 하나의 결과만 반환
+    return [result] if is_main_process(rank) else []
 
 
 def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d', 
