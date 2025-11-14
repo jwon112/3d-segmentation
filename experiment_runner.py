@@ -491,10 +491,78 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     os.makedirs(results_dir, exist_ok=True)
     
     # 사용 가능한 모델들
+    # Size suffix를 지원하는 모델 prefix들 (xs, s, m, l 모두 지원)
+    size_suffix_models = {
+        'unet3d_': ['xs', 's', 'm', 'l'],
+        'unet3d_stride_': ['xs', 's', 'm', 'l'],
+        'dualbranch_01_unet_': ['xs', 's', 'm', 'l'],
+        'dualbranch_02_unet_': ['xs', 's', 'm', 'l'],
+        'dualbranch_03_unet_': ['xs', 's', 'm', 'l'],
+        'dualbranch_04_unet_': ['xs', 's', 'm', 'l'],
+        'dualbranch_05_unet_': ['xs', 's', 'm', 'l'],
+        'dualbranch_06_unet_': ['xs', 's', 'm', 'l'],
+        'dualbranch_07_unet_': ['xs', 's', 'm', 'l'],
+        'dualbranch_08_unet_': ['xs', 's', 'm', 'l'],
+        'dualbranch_09_unet_': ['xs', 's', 'm', 'l'],
+        'dualbranch_10_unet_': ['xs', 's', 'm', 'l'],
+        'dualbranch_11_unet_': ['xs', 's', 'm', 'l'],
+        'dualbranch_12_unet_': ['xs', 's', 'm', 'l'],
+        'dualbranch_13_unet_': ['xs', 's', 'm', 'l'],
+        'dualbranch_15_dilated125_both_': ['xs', 's', 'm', 'l'],
+    }
+    
+    # Size suffix를 지원하는 dualbranch_14 backbone들
+    dualbranch_14_backbones = ['mobilenetv2_expand2', 'ghostnet', 'dilated', 'convnext', 
+                                'shufflenetv2', 'shufflenetv2_dilated', 'shufflenetv2_lk']
+    
+    # Size suffix를 지원하지 않는 모델들 (고정 이름)
+    fixed_name_models = ['unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d',
+                         'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s',
+                         'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s']
+    
+    # 동적으로 available_models 생성
     if models is None:
-        available_models = ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m', 'dualbranch_10_unet_s', 'dualbranch_10_unet_m', 'dualbranch_11_unet_s', 'dualbranch_11_unet_m', 'dualbranch_12_unet_s', 'dualbranch_12_unet_m', 'dualbranch_13_unet_s', 'dualbranch_13_unet_m', 'dualbranch_14_mobilenetv2_expand2_s', 'dualbranch_14_ghostnet_s', 'dualbranch_14_dilated_s', 'dualbranch_14_convnext_s', 'dualbranch_14_shufflenetv2_s', 'dualbranch_14_shufflenetv2_dilated_s', 'dualbranch_14_shufflenetv2_lk_s', 'dualbranch_15_dilated125_both_s', 'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s']
+        available_models = []
+        # Size suffix를 지원하는 모델들 생성
+        for prefix, sizes in size_suffix_models.items():
+            for size in sizes:
+                available_models.append(f"{prefix}{size}")
+        # dualbranch_14 모델들 생성
+        for backbone in dualbranch_14_backbones:
+            for size in ['xs', 's', 'm', 'l']:
+                available_models.append(f"dualbranch_14_{backbone}_{size}")
+        # 고정 이름 모델들 추가
+        available_models.extend(fixed_name_models)
     else:
-        available_models = [m for m in models if m in ['unet3d_s', 'unet3d_m', 'unet3d_stride_s', 'unet3d_stride_m', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'dualbranch_01_unet_s', 'dualbranch_01_unet_m', 'dualbranch_02_unet_s', 'dualbranch_02_unet_m', 'dualbranch_03_unet_s', 'dualbranch_03_unet_m', 'dualbranch_04_unet_s', 'dualbranch_04_unet_m', 'dualbranch_05_unet_s', 'dualbranch_05_unet_m', 'dualbranch_06_unet_s', 'dualbranch_06_unet_m', 'dualbranch_07_unet_s', 'dualbranch_07_unet_m', 'dualbranch_08_unet_s', 'dualbranch_08_unet_m', 'dualbranch_09_unet_s', 'dualbranch_09_unet_m', 'dualbranch_10_unet_s', 'dualbranch_10_unet_m', 'dualbranch_11_unet_s', 'dualbranch_11_unet_m', 'dualbranch_12_unet_s', 'dualbranch_12_unet_m', 'dualbranch_13_unet_s', 'dualbranch_13_unet_m', 'dualbranch_14_mobilenetv2_expand2_s', 'dualbranch_14_ghostnet_s', 'dualbranch_14_dilated_s', 'dualbranch_14_convnext_s', 'dualbranch_14_shufflenetv2_s', 'dualbranch_14_shufflenetv2_dilated_s', 'dualbranch_14_shufflenetv2_lk_s', 'dualbranch_15_dilated125_both_s', 'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s']]
+        # 사용자가 지정한 모델들을 필터링 (prefix 기반으로 검증)
+        available_models = []
+        for model_name in models:
+            # 고정 이름 모델인지 확인
+            if model_name in fixed_name_models:
+                available_models.append(model_name)
+                continue
+            # Size suffix를 지원하는 모델 prefix인지 확인
+            is_valid = False
+            for prefix, sizes in size_suffix_models.items():
+                if model_name.startswith(prefix):
+                    # Size suffix 추출
+                    suffix = model_name[len(prefix):]
+                    if suffix in sizes:
+                        is_valid = True
+                        break
+            # dualbranch_14 모델인지 확인
+            if not is_valid and model_name.startswith('dualbranch_14_'):
+                parts = model_name.split('_', 2)
+                if len(parts) >= 3:
+                    backbone_and_size = parts[2]
+                    for size in ['xs', 's', 'm', 'l']:
+                        if backbone_and_size.endswith(f'_{size}'):
+                            backbone = backbone_and_size[:-len(f'_{size}')]
+                            if backbone in dualbranch_14_backbones:
+                                is_valid = True
+                                break
+            if is_valid:
+                available_models.append(model_name)
     
     # 결과 저장용
     all_results = []
