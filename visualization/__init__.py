@@ -22,6 +22,12 @@ from .visualization_dataframe import (
     create_interactive_3d_plot
 )
 
+from .gradcam_3d import (
+    GradCAM3D,
+    GradCAM3DVisualizer,
+    analyze_gradcam
+)
+
 __all__ = [
     # 3D 시각화 클래스들
     'SegmentationVisualizer',
@@ -38,5 +44,10 @@ __all__ = [
     'create_3d_segmentation_visualization',
     'create_comprehensive_analysis',
     'create_wt_tc_et_summary',
-    'create_interactive_3d_plot'
+    'create_interactive_3d_plot',
+    
+    # Grad-CAM 관련
+    'GradCAM3D',
+    'GradCAM3DVisualizer',
+    'analyze_gradcam'
 ]

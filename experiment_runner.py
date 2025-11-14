@@ -28,6 +28,9 @@ from metrics import calculate_wt_tc_et_dice
 from data_loader import get_data_loaders
 from visualization import create_comprehensive_analysis, create_interactive_3d_plot
 
+# Import Grad-CAM utilities
+from utils.gradcam_utils import generate_gradcam_for_model
+
 
 def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
                 sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True, results_dir=None, ckpt_path=None):
@@ -833,6 +836,25 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     # Test set 평가 (모든 랭크 동일 경로)
                     metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size,
                                               sw_patch_size=(128, 128, 128), sw_overlap=0.10, results_dir=results_dir)
+                    
+                    # Grad-CAM 생성 (rank 0에서만, 3D 모델만)
+                    # TODO: Grad-CAM 기능은 아직 안정화되지 않아 주석 처리됨
+                    # if is_main_process(rank) and dim == '3d':
+                    #     try:
+                    #         print(f"\nGenerating Grad-CAM visualizations for {model_name}...")
+                    #         generate_gradcam_for_model(
+                    #             model=model,
+                    #             test_loader=test_loader,
+                    #             device=device,
+                    #             model_name=model_name,
+                    #             results_dir=results_dir,
+                    #             num_samples=3,  # 각 모델당 3개 샘플
+                    #             target_layer=None  # 자동으로 찾음
+                    #         )
+                    #     except Exception as e:
+                    #         print(f"Warning: Failed to generate Grad-CAM for {model_name}: {e}")
+                    #         import traceback
+                    #         traceback.print_exc()
                     
                     # 결과 저장 (각 run마다 하나의 행만 생성, PAM과 Latency는 평균값 사용)
                     # PAM과 Latency 평균값 계산

@@ -221,43 +221,6 @@ class GradCAM3DVisualizer:
             fig.write_html(save_path)
         
         return fig
-    
-    def create_gif_animation(self, image, cam, output_path='gradcam_animation.gif', 
-                           modality_idx=0, duration=100):
-        """GIF 애니메이션 생성"""
-        import imageio
-        
-        d, h, w = image.shape[1:]
-        frames = []
-        
-        for slice_idx in range(0, d, 2):  # 2슬라이스마다
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-            
-            # 원본 이미지
-            slice_img = image[modality_idx, slice_idx, :, :]
-            ax1.imshow(slice_img, cmap='gray')
-            ax1.set_title(f'Original - Slice {slice_idx}')
-            ax1.axis('off')
-            
-            # Grad-CAM
-            slice_cam = cam[slice_idx, :, :]
-            im = ax2.imshow(slice_cam, cmap='jet', alpha=0.7)
-            ax2.set_title(f'Grad-CAM - Slice {slice_idx}')
-            ax2.axis('off')
-            
-            plt.tight_layout()
-            
-            # Figure를 이미지로 변환
-            fig.canvas.draw()
-            image_array = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-            image_array = image_array.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-            frames.append(image_array)
-            
-            plt.close(fig)
-        
-        # GIF 생성
-        imageio.mimsave(output_path, frames, duration=duration)
-        print(f"GIF animation saved to {output_path}")
 
 def analyze_gradcam(model, data_loader, device, target_layer='bottleneck', 
                    num_samples=3, class_names=['Background', 'NCR/NET', 'ED', 'ET']):
@@ -302,9 +265,6 @@ def analyze_gradcam(model, data_loader, device, target_layer='bottleneck',
         
         # 3D 볼륨 시각화
         visualizer.visualize_3d_volume(image_np, cam, seg_np)
-        
-        # GIF 애니메이션 생성
-        visualizer.create_gif_animation(image_np, cam, f'gradcam_{patient_id}.gif')
 
 if __name__ == "__main__":
     # 테스트
@@ -321,4 +281,3 @@ if __name__ == "__main__":
     
     # Grad-CAM 분석
     analyze_gradcam(model, val_loader, device, target_layer='bottleneck', num_samples=2)
-
