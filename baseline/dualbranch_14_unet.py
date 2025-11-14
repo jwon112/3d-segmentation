@@ -251,9 +251,13 @@ class ShuffleNetV2Unit3D_Dilated(nn.Module):
             
             # Branch 2: DWDilatedConv[rate1] -> 1x1 -> DWDilatedConv[rate2] -> 1x1 -> DWDilatedConv[rate5] -> 1x1
             # rate [1,2,5]를 모두 사용하여 더 넓은 receptive field 확보
+            # Padding for dilated conv: padding = dilation * (kernel_size - 1) / 2
+            # For kernel=5, dilation=1: padding = 1 * (5-1) / 2 = 2
+            # For kernel=5, dilation=2: padding = 2 * (5-1) / 2 = 4
+            # For kernel=5, dilation=5: padding = 5 * (5-1) / 2 = 10
             self.branch2 = nn.Sequential(
                 # Depthwise Dilated Conv (rate 1)
-                nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=1, padding=dilation_rates[0], 
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=5, stride=1, padding=2, 
                          dilation=dilation_rates[0], groups=mid_channels, bias=False),
                 _make_norm3d(norm, mid_channels),
                 nn.ReLU(inplace=True),
@@ -262,7 +266,7 @@ class ShuffleNetV2Unit3D_Dilated(nn.Module):
                 _make_norm3d(norm, mid_channels),
                 nn.ReLU(inplace=True),
                 # Depthwise Dilated Conv (rate 2)
-                nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=1, padding=dilation_rates[1], 
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=5, stride=1, padding=4, 
                          dilation=dilation_rates[1], groups=mid_channels, bias=False),
                 _make_norm3d(norm, mid_channels),
                 nn.ReLU(inplace=True),
@@ -271,7 +275,7 @@ class ShuffleNetV2Unit3D_Dilated(nn.Module):
                 _make_norm3d(norm, mid_channels),
                 nn.ReLU(inplace=True),
                 # Depthwise Dilated Conv (rate 5)
-                nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=1, padding=dilation_rates[2], 
+                nn.Conv3d(mid_channels, mid_channels, kernel_size=5, stride=1, padding=10, 
                          dilation=dilation_rates[2], groups=mid_channels, bias=False),
                 _make_norm3d(norm, mid_channels),
                 # Pointwise Conv
