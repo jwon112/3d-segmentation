@@ -231,8 +231,8 @@ def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_
         # Stage별 측정을 위한 stage 감지 및 hook 준비
         stage_modules = {}
         if stage_wise:
-            # Stage 패턴: stem_*, branch_*, down*, up*, outc
-            stage_patterns = ['stem_', 'branch_', 'down', 'up', 'outc']
+            # Stage 패턴: stem_*, branch_*, down*, up*, outc, cross_attn
+            stage_patterns = ['stem_', 'branch_', 'down', 'up', 'outc', 'cross_attn']
             
             for name, module in real_model.named_modules():
                 # Stage 패턴이 포함된 모듈 찾기
