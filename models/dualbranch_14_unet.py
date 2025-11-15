@@ -16,6 +16,7 @@ from .modules.shufflenet_modules import (
     Down3DShuffleNetV2_LK,
 )
 from .modules.convnext_modules import ConvNeXtBlock3D, Down3DConvNeXt
+from .modules.cross_attention_3d import BidirectionalCrossAttention3D
 
 
 # ============================================================================
@@ -39,8 +40,8 @@ class Down3DMobileNetV2_Expand2(nn.Module):
 class DualBranchUNet3D_MobileNetV2_Expand2(nn.Module):
     """Dual-branch UNet with MobileNetV2 (expand_ratio=2) for both branches - Base class with configurable channel sizes
     
-    Stage 1-5: Dual-branch with MobileNetV2 (expand_ratio=2) (all stages maintain dual-branch structure)
-    Stage 5 output is fused (concatenated) before decoder
+    Stage 1-3: Dual-branch with MobileNetV2 (expand_ratio=2) (all stages maintain dual-branch structure)
+    Stage 3 output is fused via Cross Attention before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -54,72 +55,64 @@ class DualBranchUNet3D_MobileNetV2_Expand2(nn.Module):
         # Get channel configuration
         channels = get_dualbranch_channels(size)
         
-        # Stage 1 stems (MobileNetV2 blocks, expand_ratio=2)
-        self.stem_flair = MobileNetV2Block3D(1, channels['stem'], stride=1, expand_ratio=2.0, norm=self.norm)
-        self.stem_t1ce = MobileNetV2Block3D(1, channels['stem'], stride=1, expand_ratio=2.0, norm=self.norm)
+        # Stage 1-3 branches (all MobileNetV2, expand_ratio=2, maintaining dual-branch structure)
+        # Stage 1: 128×128×128 -> 64×64×64
+        self.branch_flair1 = Down3DMobileNetV2_Expand2(1, channels['branch1'], norm=self.norm)
+        self.branch_t1ce1 = Down3DMobileNetV2_Expand2(1, channels['branch1'], norm=self.norm)
         
-        # Stage 2-5 branches (all MobileNetV2, expand_ratio=2, maintaining dual-branch structure)
-        self.branch_flair = Down3DMobileNetV2_Expand2(channels['stem'], channels['branch2'], norm=self.norm)
-        self.branch_t1ce = Down3DMobileNetV2_Expand2(channels['stem'], channels['branch2'], norm=self.norm)
+        # Stage 2: 64×64×64 -> 32×32×32
+        self.branch_flair2 = Down3DMobileNetV2_Expand2(channels['branch1'], channels['branch2'], norm=self.norm)
+        self.branch_t1ce2 = Down3DMobileNetV2_Expand2(channels['branch1'], channels['branch2'], norm=self.norm)
         
+        # Stage 3: 32×32×32 -> 16×16×16 (bottleneck)
         self.branch_flair3 = Down3DMobileNetV2_Expand2(channels['branch2'], channels['branch3'], norm=self.norm)
         self.branch_t1ce3 = Down3DMobileNetV2_Expand2(channels['branch2'], channels['branch3'], norm=self.norm)
         
-        self.branch_flair4 = Down3DMobileNetV2_Expand2(channels['branch3'], channels['branch4'], norm=self.norm)
-        self.branch_t1ce4 = Down3DMobileNetV2_Expand2(channels['branch3'], channels['branch4'], norm=self.norm)
+        # Cross Attention for feature fusion at bottleneck
+        self.cross_attn = BidirectionalCrossAttention3D(channels['branch3'], num_heads=8, norm=self.norm)
         
-        self.branch_flair5 = Down3DMobileNetV2_Expand2(channels['branch4'], channels['branch5'], norm=self.norm)
-        self.branch_t1ce5 = Down3DMobileNetV2_Expand2(channels['branch4'], channels['branch5'], norm=self.norm)
-        
-        # Decoder
-        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        # Decoder (3 stages: up1, up2, up3)
         factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm)
         else:
-            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x1_flair = self.stem_flair(x[:, :1])
-        x1_t1ce = self.stem_t1ce(x[:, 1:2])
-        x1 = torch.cat([x1_flair, x1_t1ce], dim=1)
+        # Stage 1: 128×128×128 -> 64×64×64
+        b1_flair = self.branch_flair1(x[:, :1])
+        b1_t1ce = self.branch_t1ce1(x[:, 1:2])
+        x1 = torch.cat([b1_flair, b1_t1ce], dim=1)
         
-        b_flair = self.branch_flair(x1_flair)
-        b_t1ce = self.branch_t1ce(x1_t1ce)
-        x2 = torch.cat([b_flair, b_t1ce], dim=1)
+        # Stage 2: 64×64×64 -> 32×32×32
+        b2_flair = self.branch_flair2(b1_flair)
+        b2_t1ce = self.branch_t1ce2(b1_t1ce)
+        x2 = torch.cat([b2_flair, b2_t1ce], dim=1)
         
-        b2_flair = self.branch_flair3(b_flair)
-        b2_t1ce = self.branch_t1ce3(b_t1ce)
-        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
+        # Stage 3: 32×32×32 -> 16×16×16
+        b3_flair = self.branch_flair3(b2_flair)
+        b3_t1ce = self.branch_t1ce3(b2_t1ce)
         
-        b3_flair = self.branch_flair4(b2_flair)
-        b3_t1ce = self.branch_t1ce4(b2_t1ce)
-        x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
+        # Cross Attention fusion at bottleneck
+        x3 = self.cross_attn(b3_flair, b3_t1ce)
         
-        b4_flair = self.branch_flair5(b3_flair)
-        b4_t1ce = self.branch_t1ce5(b3_t1ce)
-        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
-        
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
+        # Decoder
+        x = self.up1(x3, x2)
+        x = self.up2(x, x1)
+        x = self.up3(x, x[:, :2])
         return self.outc(x)
 
 
 class DualBranchUNet3D_GhostNet(nn.Module):
     """Dual-branch UNet with GhostNet for both branches - Base class with configurable channel sizes
     
-    Stage 1-5: Dual-branch with GhostNet (all stages maintain dual-branch structure)
-    Stage 5 output is fused (concatenated) before decoder
+    Stage 1-3: Dual-branch with GhostNet (all stages maintain dual-branch structure)
+    Stage 3 output is fused via Cross Attention before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -133,72 +126,64 @@ class DualBranchUNet3D_GhostNet(nn.Module):
         # Get channel configuration
         channels = get_dualbranch_channels(size)
         
-        # Stage 1 stems (GhostNet blocks)
-        self.stem_flair = GhostBottleneck3D(1, channels['stem'], stride=1, norm=self.norm)
-        self.stem_t1ce = GhostBottleneck3D(1, channels['stem'], stride=1, norm=self.norm)
+        # Stage 1-3 branches (all GhostNet, maintaining dual-branch structure)
+        # Stage 1: 128×128×128 -> 64×64×64
+        self.branch_flair1 = Down3DGhostNet(1, channels['branch1'], norm=self.norm)
+        self.branch_t1ce1 = Down3DGhostNet(1, channels['branch1'], norm=self.norm)
         
-        # Stage 2-5 branches (all GhostNet, maintaining dual-branch structure)
-        self.branch_flair = Down3DGhostNet(channels['stem'], channels['branch2'], norm=self.norm)
-        self.branch_t1ce = Down3DGhostNet(channels['stem'], channels['branch2'], norm=self.norm)
+        # Stage 2: 64×64×64 -> 32×32×32
+        self.branch_flair2 = Down3DGhostNet(channels['branch1'], channels['branch2'], norm=self.norm)
+        self.branch_t1ce2 = Down3DGhostNet(channels['branch1'], channels['branch2'], norm=self.norm)
         
+        # Stage 3: 32×32×32 -> 16×16×16 (bottleneck)
         self.branch_flair3 = Down3DGhostNet(channels['branch2'], channels['branch3'], norm=self.norm)
         self.branch_t1ce3 = Down3DGhostNet(channels['branch2'], channels['branch3'], norm=self.norm)
         
-        self.branch_flair4 = Down3DGhostNet(channels['branch3'], channels['branch4'], norm=self.norm)
-        self.branch_t1ce4 = Down3DGhostNet(channels['branch3'], channels['branch4'], norm=self.norm)
+        # Cross Attention for feature fusion at bottleneck
+        self.cross_attn = BidirectionalCrossAttention3D(channels['branch3'], num_heads=8, norm=self.norm)
         
-        self.branch_flair5 = Down3DGhostNet(channels['branch4'], channels['branch5'], norm=self.norm)
-        self.branch_t1ce5 = Down3DGhostNet(channels['branch4'], channels['branch5'], norm=self.norm)
-        
-        # Decoder
-        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        # Decoder (3 stages: up1, up2, up3)
         factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm)
         else:
-            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x1_flair = self.stem_flair(x[:, :1])
-        x1_t1ce = self.stem_t1ce(x[:, 1:2])
-        x1 = torch.cat([x1_flair, x1_t1ce], dim=1)
+        # Stage 1: 128×128×128 -> 64×64×64
+        b1_flair = self.branch_flair1(x[:, :1])
+        b1_t1ce = self.branch_t1ce1(x[:, 1:2])
+        x1 = torch.cat([b1_flair, b1_t1ce], dim=1)
         
-        b_flair = self.branch_flair(x1_flair)
-        b_t1ce = self.branch_t1ce(x1_t1ce)
-        x2 = torch.cat([b_flair, b_t1ce], dim=1)
+        # Stage 2: 64×64×64 -> 32×32×32
+        b2_flair = self.branch_flair2(b1_flair)
+        b2_t1ce = self.branch_t1ce2(b1_t1ce)
+        x2 = torch.cat([b2_flair, b2_t1ce], dim=1)
         
-        b2_flair = self.branch_flair3(b_flair)
-        b2_t1ce = self.branch_t1ce3(b_t1ce)
-        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
+        # Stage 3: 32×32×32 -> 16×16×16
+        b3_flair = self.branch_flair3(b2_flair)
+        b3_t1ce = self.branch_t1ce3(b2_t1ce)
         
-        b3_flair = self.branch_flair4(b2_flair)
-        b3_t1ce = self.branch_t1ce4(b2_t1ce)
-        x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
+        # Cross Attention fusion at bottleneck
+        x3 = self.cross_attn(b3_flair, b3_t1ce)
         
-        b4_flair = self.branch_flair5(b3_flair)
-        b4_t1ce = self.branch_t1ce5(b3_t1ce)
-        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
-        
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
+        # Decoder
+        x = self.up1(x3, x2)
+        x = self.up2(x, x1)
+        x = self.up3(x, x[:, :2])
         return self.outc(x)
 
 
 class DualBranchUNet3D_Dilated(nn.Module):
     """Dual-branch UNet with Dilated Conv (rate 1,2,5) for both branches - Base class with configurable channel sizes
     
-    Stage 1-5: Dual-branch with Dilated Conv (all stages maintain dual-branch structure)
-    Stage 5 output is fused (concatenated) before decoder
+    Stage 1-3: Dual-branch with Dilated Conv (all stages maintain dual-branch structure)
+    Stage 3 output is fused via Cross Attention before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -212,72 +197,66 @@ class DualBranchUNet3D_Dilated(nn.Module):
         # Get channel configuration
         channels = get_dualbranch_channels(size)
         
-        # Stage 1 stems (DoubleConv)
-        self.stem_flair = DoubleConv3D(1, channels['stem'], norm=self.norm)
-        self.stem_t1ce = DoubleConv3D(1, channels['stem'], norm=self.norm)
+        # Stage 1-3 branches (all Dilated Conv, maintaining dual-branch structure)
+        # Stage 1: 128×128×128 -> 64×64×64
+        self.branch_flair1 = Down3DStrideDilated(1, channels['branch1'], norm=self.norm)
+        self.branch_t1ce1 = Down3DStrideDilated(1, channels['branch1'], norm=self.norm)
         
-        # Stage 2-5 branches (all Dilated Conv, maintaining dual-branch structure)
-        self.branch_flair = Down3DStrideDilated(channels['stem'], channels['branch2'], norm=self.norm)
-        self.branch_t1ce = Down3DStrideDilated(channels['stem'], channels['branch2'], norm=self.norm)
+        # Stage 2: 64×64×64 -> 32×32×32
+        self.branch_flair2 = Down3DStrideDilated(channels['branch1'], channels['branch2'], norm=self.norm)
+        self.branch_t1ce2 = Down3DStrideDilated(channels['branch1'], channels['branch2'], norm=self.norm)
         
+        # Stage 3: 32×32×32 -> 16×16×16 (bottleneck)
         self.branch_flair3 = Down3DStrideDilated(channels['branch2'], channels['branch3'], norm=self.norm)
         self.branch_t1ce3 = Down3DStrideDilated(channels['branch2'], channels['branch3'], norm=self.norm)
         
-        self.branch_flair4 = Down3DStrideDilated(channels['branch3'], channels['branch4'], norm=self.norm)
-        self.branch_t1ce4 = Down3DStrideDilated(channels['branch3'], channels['branch4'], norm=self.norm)
+        # Cross Attention for feature fusion at bottleneck
+        self.cross_attn = BidirectionalCrossAttention3D(channels['branch3'], num_heads=8, norm=self.norm)
         
-        self.branch_flair5 = Down3DStrideDilated(channels['branch4'], channels['branch5'], norm=self.norm)
-        self.branch_t1ce5 = Down3DStrideDilated(channels['branch4'], channels['branch5'], norm=self.norm)
-        
-        # Decoder
+        # Decoder (3 stages: up1, up2, up3)
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
         factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm)
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)  # Input channels: 1 per modality
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x1_flair = self.stem_flair(x[:, :1])
-        x1_t1ce = self.stem_t1ce(x[:, 1:2])
-        x1 = torch.cat([x1_flair, x1_t1ce], dim=1)
+        # Stage 1: 128×128×128 -> 64×64×64
+        b1_flair = self.branch_flair1(x[:, :1])
+        b1_t1ce = self.branch_t1ce1(x[:, 1:2])
+        x1 = torch.cat([b1_flair, b1_t1ce], dim=1)  # Skip connection for up3
         
-        b_flair = self.branch_flair(x1_flair)
-        b_t1ce = self.branch_t1ce(x1_t1ce)
-        x2 = torch.cat([b_flair, b_t1ce], dim=1)
+        # Stage 2: 64×64×64 -> 32×32×32
+        b2_flair = self.branch_flair2(b1_flair)
+        b2_t1ce = self.branch_t1ce2(b1_t1ce)
+        x2 = torch.cat([b2_flair, b2_t1ce], dim=1)  # Skip connection for up2
         
-        b2_flair = self.branch_flair3(b_flair)
-        b2_t1ce = self.branch_t1ce3(b_t1ce)
-        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
+        # Stage 3: 32×32×32 -> 16×16×16
+        b3_flair = self.branch_flair3(b2_flair)
+        b3_t1ce = self.branch_t1ce3(b2_t1ce)
         
-        b3_flair = self.branch_flair4(b2_flair)
-        b3_t1ce = self.branch_t1ce4(b2_t1ce)
-        x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
+        # Cross Attention fusion at bottleneck
+        x3 = self.cross_attn(b3_flair, b3_t1ce)  # (B, C, 16, 16, 16)
         
-        b4_flair = self.branch_flair5(b3_flair)
-        b4_t1ce = self.branch_t1ce5(b3_t1ce)
-        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
-        
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
+        # Decoder
+        x = self.up1(x3, x2)  # 16×16×16 -> 32×32×32
+        x = self.up2(x, x1)   # 32×32×32 -> 64×64×64
+        x = self.up3(x, x[:, :2])  # 64×64×64 -> 128×128×128 (skip from input)
         return self.outc(x)
 
 
 class DualBranchUNet3D_ConvNeXt(nn.Module):
     """Dual-branch UNet with ConvNeXt for both branches - Base class with configurable channel sizes
     
-    Stage 1-5: Dual-branch with ConvNeXt (all stages maintain dual-branch structure)
-    Stage 5 output is fused (concatenated) before decoder
+    Stage 1-3: Dual-branch with ConvNeXt (all stages maintain dual-branch structure)
+    Stage 3 output is fused via Cross Attention before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -291,79 +270,64 @@ class DualBranchUNet3D_ConvNeXt(nn.Module):
         # Get channel configuration
         channels = get_dualbranch_channels(size)
         
-        # Stage 1 stems (ConvNeXt blocks)
-        # Note: ConvNeXt 원래는 4x4 stride=4로 패치화하지만, segmentation에서는 크기 유지를 위해 3x3 사용
-        self.stem_flair = nn.Sequential(
-            nn.Conv3d(1, channels['stem'], kernel_size=3, stride=1, padding=1, bias=True),
-            ConvNeXtBlock3D(channels['stem'], norm=self.norm),
-        )
-        self.stem_t1ce = nn.Sequential(
-            nn.Conv3d(1, channels['stem'], kernel_size=3, stride=1, padding=1, bias=True),
-            ConvNeXtBlock3D(channels['stem'], norm=self.norm),
-        )
+        # Stage 1-3 branches (all ConvNeXt, maintaining dual-branch structure)
+        # Stage 1: 128×128×128 -> 64×64×64
+        self.branch_flair1 = Down3DConvNeXt(1, channels['branch1'], norm=self.norm, num_blocks=2)
+        self.branch_t1ce1 = Down3DConvNeXt(1, channels['branch1'], norm=self.norm, num_blocks=2)
         
-        # Stage 2-5 branches (all ConvNeXt, maintaining dual-branch structure)
-        self.branch_flair = Down3DConvNeXt(channels['stem'], channels['branch2'], norm=self.norm, num_blocks=2)
-        self.branch_t1ce = Down3DConvNeXt(channels['stem'], channels['branch2'], norm=self.norm, num_blocks=2)
+        # Stage 2: 64×64×64 -> 32×32×32
+        self.branch_flair2 = Down3DConvNeXt(channels['branch1'], channels['branch2'], norm=self.norm, num_blocks=2)
+        self.branch_t1ce2 = Down3DConvNeXt(channels['branch1'], channels['branch2'], norm=self.norm, num_blocks=2)
         
+        # Stage 3: 32×32×32 -> 16×16×16 (bottleneck)
         self.branch_flair3 = Down3DConvNeXt(channels['branch2'], channels['branch3'], norm=self.norm, num_blocks=2)
         self.branch_t1ce3 = Down3DConvNeXt(channels['branch2'], channels['branch3'], norm=self.norm, num_blocks=2)
         
-        self.branch_flair4 = Down3DConvNeXt(channels['branch3'], channels['branch4'], norm=self.norm, num_blocks=2)
-        self.branch_t1ce4 = Down3DConvNeXt(channels['branch3'], channels['branch4'], norm=self.norm, num_blocks=2)
+        # Cross Attention for feature fusion at bottleneck
+        self.cross_attn = BidirectionalCrossAttention3D(channels['branch3'], num_heads=8, norm=self.norm)
         
-        self.branch_flair5 = Down3DConvNeXt(channels['branch4'], channels['branch5'], norm=self.norm, num_blocks=2)
-        self.branch_t1ce5 = Down3DConvNeXt(channels['branch4'], channels['branch5'], norm=self.norm, num_blocks=2)
-        
-        # Decoder
-        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        # Decoder (3 stages: up1, up2, up3)
         factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm)
         else:
-            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x1_flair = self.stem_flair(x[:, :1])
-        x1_t1ce = self.stem_t1ce(x[:, 1:2])
-        x1 = torch.cat([x1_flair, x1_t1ce], dim=1)
+        # Stage 1: 128×128×128 -> 64×64×64
+        b1_flair = self.branch_flair1(x[:, :1])
+        b1_t1ce = self.branch_t1ce1(x[:, 1:2])
+        x1 = torch.cat([b1_flair, b1_t1ce], dim=1)
         
-        b_flair = self.branch_flair(x1_flair)
-        b_t1ce = self.branch_t1ce(x1_t1ce)
-        x2 = torch.cat([b_flair, b_t1ce], dim=1)
+        # Stage 2: 64×64×64 -> 32×32×32
+        b2_flair = self.branch_flair2(b1_flair)
+        b2_t1ce = self.branch_t1ce2(b1_t1ce)
+        x2 = torch.cat([b2_flair, b2_t1ce], dim=1)
         
-        b2_flair = self.branch_flair3(b_flair)
-        b2_t1ce = self.branch_t1ce3(b_t1ce)
-        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
+        # Stage 3: 32×32×32 -> 16×16×16
+        b3_flair = self.branch_flair3(b2_flair)
+        b3_t1ce = self.branch_t1ce3(b2_t1ce)
         
-        b3_flair = self.branch_flair4(b2_flair)
-        b3_t1ce = self.branch_t1ce4(b2_t1ce)
-        x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
+        # Cross Attention fusion at bottleneck
+        x3 = self.cross_attn(b3_flair, b3_t1ce)
         
-        b4_flair = self.branch_flair5(b3_flair)
-        b4_t1ce = self.branch_t1ce5(b3_t1ce)
-        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
-        
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
+        # Decoder
+        x = self.up1(x3, x2)
+        x = self.up2(x, x1)
+        x = self.up3(x, x[:, :2])
         return self.outc(x)
 
 
 class DualBranchUNet3D_ShuffleNetV2(nn.Module):
     """Dual-branch UNet with ShuffleNetV2 for both branches - Base class with configurable channel sizes
     
-    Stage 1-5: Dual-branch with ShuffleNetV2 (all stages maintain dual-branch structure)
-    Stage 5 output is fused (concatenated) before decoder
+    Stage 1-3: Dual-branch with ShuffleNetV2 (all stages maintain dual-branch structure)
+    Stage 3 output is fused via Cross Attention before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -377,83 +341,64 @@ class DualBranchUNet3D_ShuffleNetV2(nn.Module):
         # Get channel configuration
         channels = get_dualbranch_channels(size)
         
-        # Stage 1 stems (ShuffleNetV2: initial conv + ShuffleNetV2 unit stride=1)
-        # Initial conv to get channels, then split for ShuffleNetV2
-        self.stem_flair = nn.Sequential(
-            nn.Conv3d(1, channels['stem'], kernel_size=3, stride=1, padding=1, bias=False),
-            _make_norm3d(norm, channels['stem']),
-            nn.ReLU(inplace=True),
-            ShuffleNetV2Unit3D(channels['stem'], channels['stem'], stride=1, norm=norm),
-        )
-        self.stem_t1ce = nn.Sequential(
-            nn.Conv3d(1, channels['stem'], kernel_size=3, stride=1, padding=1, bias=False),
-            _make_norm3d(norm, channels['stem']),
-            nn.ReLU(inplace=True),
-            ShuffleNetV2Unit3D(channels['stem'], channels['stem'], stride=1, norm=norm),
-        )
+        # Stage 1-3 branches (all ShuffleNetV2, maintaining dual-branch structure)
+        # Stage 1: 128×128×128 -> 64×64×64
+        self.branch_flair1 = Down3DShuffleNetV2(1, channels['branch1'], norm=self.norm)
+        self.branch_t1ce1 = Down3DShuffleNetV2(1, channels['branch1'], norm=self.norm)
         
-        # Stage 2-5 branches (all ShuffleNetV2, maintaining dual-branch structure)
-        self.branch_flair = Down3DShuffleNetV2(channels['stem'], channels['branch2'], norm=self.norm)
-        self.branch_t1ce = Down3DShuffleNetV2(channels['stem'], channels['branch2'], norm=self.norm)
+        # Stage 2: 64×64×64 -> 32×32×32
+        self.branch_flair2 = Down3DShuffleNetV2(channels['branch1'], channels['branch2'], norm=self.norm)
+        self.branch_t1ce2 = Down3DShuffleNetV2(channels['branch1'], channels['branch2'], norm=self.norm)
         
+        # Stage 3: 32×32×32 -> 16×16×16 (bottleneck)
         self.branch_flair3 = Down3DShuffleNetV2(channels['branch2'], channels['branch3'], norm=self.norm)
         self.branch_t1ce3 = Down3DShuffleNetV2(channels['branch2'], channels['branch3'], norm=self.norm)
         
-        self.branch_flair4 = Down3DShuffleNetV2(channels['branch3'], channels['branch4'], norm=self.norm)
-        self.branch_t1ce4 = Down3DShuffleNetV2(channels['branch3'], channels['branch4'], norm=self.norm)
+        # Cross Attention for feature fusion at bottleneck
+        self.cross_attn = BidirectionalCrossAttention3D(channels['branch3'], num_heads=8, norm=self.norm)
         
-        self.branch_flair5 = Down3DShuffleNetV2(channels['branch4'], channels['branch5'], norm=self.norm)
-        self.branch_t1ce5 = Down3DShuffleNetV2(channels['branch4'], channels['branch5'], norm=self.norm)
-        
-        # Decoder
-        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        # Decoder (3 stages: up1, up2, up3)
         factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm)
         else:
-            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x1_flair = self.stem_flair(x[:, :1])
-        x1_t1ce = self.stem_t1ce(x[:, 1:2])
-        x1 = torch.cat([x1_flair, x1_t1ce], dim=1)
+        # Stage 1: 128×128×128 -> 64×64×64
+        b1_flair = self.branch_flair1(x[:, :1])
+        b1_t1ce = self.branch_t1ce1(x[:, 1:2])
+        x1 = torch.cat([b1_flair, b1_t1ce], dim=1)
         
-        b_flair = self.branch_flair(x1_flair)
-        b_t1ce = self.branch_t1ce(x1_t1ce)
-        x2 = torch.cat([b_flair, b_t1ce], dim=1)
+        # Stage 2: 64×64×64 -> 32×32×32
+        b2_flair = self.branch_flair2(b1_flair)
+        b2_t1ce = self.branch_t1ce2(b1_t1ce)
+        x2 = torch.cat([b2_flair, b2_t1ce], dim=1)
         
-        b2_flair = self.branch_flair3(b_flair)
-        b2_t1ce = self.branch_t1ce3(b_t1ce)
-        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
+        # Stage 3: 32×32×32 -> 16×16×16
+        b3_flair = self.branch_flair3(b2_flair)
+        b3_t1ce = self.branch_t1ce3(b2_t1ce)
         
-        b3_flair = self.branch_flair4(b2_flair)
-        b3_t1ce = self.branch_t1ce4(b2_t1ce)
-        x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
+        # Cross Attention fusion at bottleneck
+        x3 = self.cross_attn(b3_flair, b3_t1ce)
         
-        b4_flair = self.branch_flair5(b3_flair)
-        b4_t1ce = self.branch_t1ce5(b3_t1ce)
-        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
-        
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
+        # Decoder
+        x = self.up1(x3, x2)
+        x = self.up2(x, x1)
+        x = self.up3(x, x[:, :2])
         return self.outc(x)
 
 
 class DualBranchUNet3D_ShuffleNetV2_Dilated(nn.Module):
     """Dual-branch UNet with ShuffleNetV2 Dilated for both branches - Base class with configurable channel sizes
     
-    Stage 1-5: Dual-branch with ShuffleNetV2 Dilated (rate [1,2,5]) (all stages maintain dual-branch structure)
-    Stage 5 output is fused (concatenated) before decoder
+    Stage 1-3: Dual-branch with ShuffleNetV2 Dilated (rate [1,2,5]) (all stages maintain dual-branch structure)
+    Stage 3 output is fused via Cross Attention before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -467,82 +412,64 @@ class DualBranchUNet3D_ShuffleNetV2_Dilated(nn.Module):
         # Get channel configuration
         channels = get_dualbranch_channels(size)
         
-        # Stage 1 stems (ShuffleNetV2 Dilated: initial conv + ShuffleNetV2 Dilated unit stride=1)
-        self.stem_flair = nn.Sequential(
-            nn.Conv3d(1, channels['stem'], kernel_size=3, stride=1, padding=1, bias=False),
-            _make_norm3d(norm, channels['stem']),
-            nn.ReLU(inplace=True),
-            ShuffleNetV2Unit3D_Dilated(channels['stem'], channels['stem'], stride=1, norm=norm, dilation_rates=[1, 2, 5]),
-        )
-        self.stem_t1ce = nn.Sequential(
-            nn.Conv3d(1, channels['stem'], kernel_size=3, stride=1, padding=1, bias=False),
-            _make_norm3d(norm, channels['stem']),
-            nn.ReLU(inplace=True),
-            ShuffleNetV2Unit3D_Dilated(channels['stem'], channels['stem'], stride=1, norm=norm, dilation_rates=[1, 2, 5]),
-        )
+        # Stage 1-3 branches (all ShuffleNetV2 Dilated, maintaining dual-branch structure)
+        # Stage 1: 128×128×128 -> 64×64×64
+        self.branch_flair1 = Down3DShuffleNetV2_Dilated(1, channels['branch1'], norm=self.norm, dilation_rates=[1, 2, 5])
+        self.branch_t1ce1 = Down3DShuffleNetV2_Dilated(1, channels['branch1'], norm=self.norm, dilation_rates=[1, 2, 5])
         
-        # Stage 2-5 branches (all ShuffleNetV2 Dilated, maintaining dual-branch structure)
-        self.branch_flair = Down3DShuffleNetV2_Dilated(channels['stem'], channels['branch2'], norm=self.norm, dilation_rates=[1, 2, 5])
-        self.branch_t1ce = Down3DShuffleNetV2_Dilated(channels['stem'], channels['branch2'], norm=self.norm, dilation_rates=[1, 2, 5])
+        # Stage 2: 64×64×64 -> 32×32×32
+        self.branch_flair2 = Down3DShuffleNetV2_Dilated(channels['branch1'], channels['branch2'], norm=self.norm, dilation_rates=[1, 2, 5])
+        self.branch_t1ce2 = Down3DShuffleNetV2_Dilated(channels['branch1'], channels['branch2'], norm=self.norm, dilation_rates=[1, 2, 5])
         
+        # Stage 3: 32×32×32 -> 16×16×16 (bottleneck)
         self.branch_flair3 = Down3DShuffleNetV2_Dilated(channels['branch2'], channels['branch3'], norm=self.norm, dilation_rates=[1, 2, 5])
         self.branch_t1ce3 = Down3DShuffleNetV2_Dilated(channels['branch2'], channels['branch3'], norm=self.norm, dilation_rates=[1, 2, 5])
         
-        self.branch_flair4 = Down3DShuffleNetV2_Dilated(channels['branch3'], channels['branch4'], norm=self.norm, dilation_rates=[1, 2, 5])
-        self.branch_t1ce4 = Down3DShuffleNetV2_Dilated(channels['branch3'], channels['branch4'], norm=self.norm, dilation_rates=[1, 2, 5])
+        # Cross Attention for feature fusion at bottleneck
+        self.cross_attn = BidirectionalCrossAttention3D(channels['branch3'], num_heads=8, norm=self.norm)
         
-        self.branch_flair5 = Down3DShuffleNetV2_Dilated(channels['branch4'], channels['branch5'], norm=self.norm, dilation_rates=[1, 2, 5])
-        self.branch_t1ce5 = Down3DShuffleNetV2_Dilated(channels['branch4'], channels['branch5'], norm=self.norm, dilation_rates=[1, 2, 5])
-        
-        # Decoder
-        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        # Decoder (3 stages: up1, up2, up3)
         factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm)
         else:
-            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x1_flair = self.stem_flair(x[:, :1])
-        x1_t1ce = self.stem_t1ce(x[:, 1:2])
-        x1 = torch.cat([x1_flair, x1_t1ce], dim=1)
+        # Stage 1: 128×128×128 -> 64×64×64
+        b1_flair = self.branch_flair1(x[:, :1])
+        b1_t1ce = self.branch_t1ce1(x[:, 1:2])
+        x1 = torch.cat([b1_flair, b1_t1ce], dim=1)
         
-        b_flair = self.branch_flair(x1_flair)
-        b_t1ce = self.branch_t1ce(x1_t1ce)
-        x2 = torch.cat([b_flair, b_t1ce], dim=1)
+        # Stage 2: 64×64×64 -> 32×32×32
+        b2_flair = self.branch_flair2(b1_flair)
+        b2_t1ce = self.branch_t1ce2(b1_t1ce)
+        x2 = torch.cat([b2_flair, b2_t1ce], dim=1)
         
-        b2_flair = self.branch_flair3(b_flair)
-        b2_t1ce = self.branch_t1ce3(b_t1ce)
-        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
+        # Stage 3: 32×32×32 -> 16×16×16
+        b3_flair = self.branch_flair3(b2_flair)
+        b3_t1ce = self.branch_t1ce3(b2_t1ce)
         
-        b3_flair = self.branch_flair4(b2_flair)
-        b3_t1ce = self.branch_t1ce4(b2_t1ce)
-        x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
+        # Cross Attention fusion at bottleneck
+        x3 = self.cross_attn(b3_flair, b3_t1ce)
         
-        b4_flair = self.branch_flair5(b3_flair)
-        b4_t1ce = self.branch_t1ce5(b3_t1ce)
-        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
-        
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
+        # Decoder
+        x = self.up1(x3, x2)
+        x = self.up2(x, x1)
+        x = self.up3(x, x[:, :2])
         return self.outc(x)
 
 
 class DualBranchUNet3D_ShuffleNetV2_LK(nn.Module):
     """Dual-branch UNet with ShuffleNetV2 Large Kernel (7x7x7) for both branches - Base class with configurable channel sizes
     
-    Stage 1-5: Dual-branch with ShuffleNetV2 Large Kernel (all stages maintain dual-branch structure)
-    Stage 5 output is fused (concatenated) before decoder
+    Stage 1-3: Dual-branch with ShuffleNetV2 Large Kernel (all stages maintain dual-branch structure)
+    Stage 3 output is fused via Cross Attention before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -556,74 +483,56 @@ class DualBranchUNet3D_ShuffleNetV2_LK(nn.Module):
         # Get channel configuration
         channels = get_dualbranch_channels(size)
         
-        # Stage 1 stems (ShuffleNetV2 LK: initial conv + ShuffleNetV2 LK unit stride=1)
-        self.stem_flair = nn.Sequential(
-            nn.Conv3d(1, channels['stem'], kernel_size=3, stride=1, padding=1, bias=False),
-            _make_norm3d(norm, channels['stem']),
-            nn.ReLU(inplace=True),
-            ShuffleNetV2Unit3D_LK(channels['stem'], channels['stem'], stride=1, norm=norm),
-        )
-        self.stem_t1ce = nn.Sequential(
-            nn.Conv3d(1, channels['stem'], kernel_size=3, stride=1, padding=1, bias=False),
-            _make_norm3d(norm, channels['stem']),
-            nn.ReLU(inplace=True),
-            ShuffleNetV2Unit3D_LK(channels['stem'], channels['stem'], stride=1, norm=norm),
-        )
+        # Stage 1-3 branches (all ShuffleNetV2 LK, maintaining dual-branch structure)
+        # Stage 1: 128×128×128 -> 64×64×64
+        self.branch_flair1 = Down3DShuffleNetV2_LK(1, channels['branch1'], norm=self.norm)
+        self.branch_t1ce1 = Down3DShuffleNetV2_LK(1, channels['branch1'], norm=self.norm)
         
-        # Stage 2-5 branches (all ShuffleNetV2 LK, maintaining dual-branch structure)
-        self.branch_flair = Down3DShuffleNetV2_LK(channels['stem'], channels['branch2'], norm=self.norm)
-        self.branch_t1ce = Down3DShuffleNetV2_LK(channels['stem'], channels['branch2'], norm=self.norm)
+        # Stage 2: 64×64×64 -> 32×32×32
+        self.branch_flair2 = Down3DShuffleNetV2_LK(channels['branch1'], channels['branch2'], norm=self.norm)
+        self.branch_t1ce2 = Down3DShuffleNetV2_LK(channels['branch1'], channels['branch2'], norm=self.norm)
         
+        # Stage 3: 32×32×32 -> 16×16×16 (bottleneck)
         self.branch_flair3 = Down3DShuffleNetV2_LK(channels['branch2'], channels['branch3'], norm=self.norm)
         self.branch_t1ce3 = Down3DShuffleNetV2_LK(channels['branch2'], channels['branch3'], norm=self.norm)
         
-        self.branch_flair4 = Down3DShuffleNetV2_LK(channels['branch3'], channels['branch4'], norm=self.norm)
-        self.branch_t1ce4 = Down3DShuffleNetV2_LK(channels['branch3'], channels['branch4'], norm=self.norm)
+        # Cross Attention for feature fusion at bottleneck
+        self.cross_attn = BidirectionalCrossAttention3D(channels['branch3'], num_heads=8, norm=self.norm)
         
-        self.branch_flair5 = Down3DShuffleNetV2_LK(channels['branch4'], channels['branch5'], norm=self.norm)
-        self.branch_t1ce5 = Down3DShuffleNetV2_LK(channels['branch4'], channels['branch5'], norm=self.norm)
-        
-        # Decoder
-        # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        # Decoder (3 stages: up1, up2, up3)
         factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm)
         else:
-            # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x1_flair = self.stem_flair(x[:, :1])
-        x1_t1ce = self.stem_t1ce(x[:, 1:2])
-        x1 = torch.cat([x1_flair, x1_t1ce], dim=1)
+        # Stage 1: 128×128×128 -> 64×64×64
+        b1_flair = self.branch_flair1(x[:, :1])
+        b1_t1ce = self.branch_t1ce1(x[:, 1:2])
+        x1 = torch.cat([b1_flair, b1_t1ce], dim=1)
         
-        b_flair = self.branch_flair(x1_flair)
-        b_t1ce = self.branch_t1ce(x1_t1ce)
-        x2 = torch.cat([b_flair, b_t1ce], dim=1)
+        # Stage 2: 64×64×64 -> 32×32×32
+        b2_flair = self.branch_flair2(b1_flair)
+        b2_t1ce = self.branch_t1ce2(b1_t1ce)
+        x2 = torch.cat([b2_flair, b2_t1ce], dim=1)
         
-        b2_flair = self.branch_flair3(b_flair)
-        b2_t1ce = self.branch_t1ce3(b_t1ce)
-        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
+        # Stage 3: 32×32×32 -> 16×16×16
+        b3_flair = self.branch_flair3(b2_flair)
+        b3_t1ce = self.branch_t1ce3(b2_t1ce)
         
-        b3_flair = self.branch_flair4(b2_flair)
-        b3_t1ce = self.branch_t1ce4(b2_t1ce)
-        x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
+        # Cross Attention fusion at bottleneck
+        x3 = self.cross_attn(b3_flair, b3_t1ce)
         
-        b4_flair = self.branch_flair5(b3_flair)
-        b4_t1ce = self.branch_t1ce5(b3_t1ce)
-        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
-        
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
+        # Decoder
+        x = self.up1(x3, x2)
+        x = self.up2(x, x1)
+        x = self.up3(x, x[:, :2])
         return self.outc(x)
 
 

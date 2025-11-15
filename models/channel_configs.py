@@ -44,35 +44,27 @@ UNET_CHANNELS = {
 
 DUALBRANCH_CHANNELS = {
     'xs': {
-        'stem': 8,           # Stage 1: modality-specific stem channels (each branch)
-        'branch2': 16,       # Stage 2: branch channels (each branch)
-        'branch3': 32,       # Stage 3: branch channels (each branch)
-        'branch4': 64,       # Stage 4: branch channels (each branch)
-        'branch5': 128,      # Stage 5: branch channels (each branch) - bottleneck
+        'branch1': 8,        # Stage 1: branch channels (each branch) - stride=2
+        'branch2': 16,       # Stage 2: branch channels (each branch) - stride=2
+        'branch3': 32,       # Stage 3: branch channels (each branch) - stride=2 (bottleneck)
         'out': 16,           # Output channels (decoder final)
     },
     's': {
-        'stem': 16,          # Stage 1: modality-specific stem channels (each branch)
-        'branch2': 32,       # Stage 2: branch channels (each branch)
-        'branch3': 64,       # Stage 3: branch channels (each branch)
-        'branch4': 128,      # Stage 4: branch channels (each branch)
-        'branch5': 256,      # Stage 5: branch channels (each branch) - bottleneck
+        'branch1': 16,       # Stage 1: branch channels (each branch) - stride=2
+        'branch2': 32,       # Stage 2: branch channels (each branch) - stride=2
+        'branch3': 64,       # Stage 3: branch channels (each branch) - stride=2 (bottleneck)
         'out': 32,           # Output channels (decoder final)
     },
     'm': {
-        'stem': 32,          # Stage 1: modality-specific stem channels (each branch)
-        'branch2': 64,       # Stage 2: branch channels (each branch)
-        'branch3': 128,      # Stage 3: branch channels (each branch)
-        'branch4': 256,      # Stage 4: branch channels (each branch)
-        'branch5': 512,      # Stage 5: branch channels (each branch) - bottleneck
+        'branch1': 32,       # Stage 1: branch channels (each branch) - stride=2
+        'branch2': 64,       # Stage 2: branch channels (each branch) - stride=2
+        'branch3': 128,      # Stage 3: branch channels (each branch) - stride=2 (bottleneck)
         'out': 64,           # Output channels (decoder final)
     },
     'l': {
-        'stem': 64,          # Stage 1: modality-specific stem channels (each branch)
-        'branch2': 128,      # Stage 2: branch channels (each branch)
-        'branch3': 256,      # Stage 3: branch channels (each branch)
-        'branch4': 512,      # Stage 4: branch channels (each branch)
-        'branch5': 1024,     # Stage 5: branch channels (each branch) - bottleneck
+        'branch1': 64,       # Stage 1: branch channels (each branch) - stride=2
+        'branch2': 128,      # Stage 2: branch channels (each branch) - stride=2
+        'branch3': 256,      # Stage 3: branch channels (each branch) - stride=2 (bottleneck)
         'out': 128,          # Output channels (decoder final)
     },
 }
