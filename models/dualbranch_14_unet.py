@@ -39,8 +39,8 @@ class Down3DMobileNetV2_Expand2(nn.Module):
 class DualBranchUNet3D_MobileNetV2_Expand2(nn.Module):
     """Dual-branch UNet with MobileNetV2 (expand_ratio=2) for both branches - Base class with configurable channel sizes
     
-    Stage 1-4: Dual-branch with MobileNetV2 (expand_ratio=2)
-    Stage 5: Fused branch with MobileViT
+    Stage 1-5: Dual-branch with MobileNetV2 (expand_ratio=2) (all stages maintain dual-branch structure)
+    Stage 5 output is fused (concatenated) before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -58,32 +58,31 @@ class DualBranchUNet3D_MobileNetV2_Expand2(nn.Module):
         self.stem_flair = MobileNetV2Block3D(1, channels['stem'], stride=1, expand_ratio=2.0, norm=self.norm)
         self.stem_t1ce = MobileNetV2Block3D(1, channels['stem'], stride=1, expand_ratio=2.0, norm=self.norm)
         
-        # Stage 2-4 branches (both MobileNetV2, expand_ratio=2)
+        # Stage 2-5 branches (all MobileNetV2, expand_ratio=2, maintaining dual-branch structure)
         self.branch_flair = Down3DMobileNetV2_Expand2(channels['stem'], channels['branch2'], norm=self.norm)
         self.branch_t1ce = Down3DMobileNetV2_Expand2(channels['stem'], channels['branch2'], norm=self.norm)
         
         self.branch_flair3 = Down3DMobileNetV2_Expand2(channels['branch2'], channels['branch3'], norm=self.norm)
         self.branch_t1ce3 = Down3DMobileNetV2_Expand2(channels['branch2'], channels['branch3'], norm=self.norm)
         
-        self.branch_flair4 = Down3DMobileNetV2_Expand2(channels['branch3'], channels['down4'], norm=self.norm)
-        self.branch_t1ce4 = Down3DMobileNetV2_Expand2(channels['branch3'], channels['down4'], norm=self.norm)
+        self.branch_flair4 = Down3DMobileNetV2_Expand2(channels['branch3'], channels['branch4'], norm=self.norm)
+        self.branch_t1ce4 = Down3DMobileNetV2_Expand2(channels['branch3'], channels['branch4'], norm=self.norm)
         
-        # Stage 5 fused branch with MobileViT
-        factor = 2 if self.bilinear else 1
-        fused_channels = channels['down4'] * 2
-        self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.branch_flair5 = Down3DMobileNetV2_Expand2(channels['branch4'], channels['branch5'], norm=self.norm)
+        self.branch_t1ce5 = Down3DMobileNetV2_Expand2(channels['branch4'], channels['branch5'], norm=self.norm)
         
         # Decoder
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
@@ -105,7 +104,9 @@ class DualBranchUNet3D_MobileNetV2_Expand2(nn.Module):
         b3_t1ce = self.branch_t1ce4(b2_t1ce)
         x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
         
-        x5 = self.down5(x4)
+        b4_flair = self.branch_flair5(b3_flair)
+        b4_t1ce = self.branch_t1ce5(b3_t1ce)
+        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
         
         x = self.up1(x5, x4)
         x = self.up2(x, x3)
@@ -117,8 +118,8 @@ class DualBranchUNet3D_MobileNetV2_Expand2(nn.Module):
 class DualBranchUNet3D_GhostNet(nn.Module):
     """Dual-branch UNet with GhostNet for both branches - Base class with configurable channel sizes
     
-    Stage 1-4: Dual-branch with GhostNet
-    Stage 5: Fused branch with MobileViT
+    Stage 1-5: Dual-branch with GhostNet (all stages maintain dual-branch structure)
+    Stage 5 output is fused (concatenated) before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -136,32 +137,31 @@ class DualBranchUNet3D_GhostNet(nn.Module):
         self.stem_flair = GhostBottleneck3D(1, channels['stem'], stride=1, norm=self.norm)
         self.stem_t1ce = GhostBottleneck3D(1, channels['stem'], stride=1, norm=self.norm)
         
-        # Stage 2-4 branches (both GhostNet)
+        # Stage 2-5 branches (all GhostNet, maintaining dual-branch structure)
         self.branch_flair = Down3DGhostNet(channels['stem'], channels['branch2'], norm=self.norm)
         self.branch_t1ce = Down3DGhostNet(channels['stem'], channels['branch2'], norm=self.norm)
         
         self.branch_flair3 = Down3DGhostNet(channels['branch2'], channels['branch3'], norm=self.norm)
         self.branch_t1ce3 = Down3DGhostNet(channels['branch2'], channels['branch3'], norm=self.norm)
         
-        self.branch_flair4 = Down3DGhostNet(channels['branch3'], channels['down4'], norm=self.norm)
-        self.branch_t1ce4 = Down3DGhostNet(channels['branch3'], channels['down4'], norm=self.norm)
+        self.branch_flair4 = Down3DGhostNet(channels['branch3'], channels['branch4'], norm=self.norm)
+        self.branch_t1ce4 = Down3DGhostNet(channels['branch3'], channels['branch4'], norm=self.norm)
         
-        # Stage 5 fused branch with MobileViT
-        factor = 2 if self.bilinear else 1
-        fused_channels = channels['down4'] * 2
-        self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.branch_flair5 = Down3DGhostNet(channels['branch4'], channels['branch5'], norm=self.norm)
+        self.branch_t1ce5 = Down3DGhostNet(channels['branch4'], channels['branch5'], norm=self.norm)
         
         # Decoder
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
@@ -183,7 +183,9 @@ class DualBranchUNet3D_GhostNet(nn.Module):
         b3_t1ce = self.branch_t1ce4(b2_t1ce)
         x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
         
-        x5 = self.down5(x4)
+        b4_flair = self.branch_flair5(b3_flair)
+        b4_t1ce = self.branch_t1ce5(b3_t1ce)
+        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
         
         x = self.up1(x5, x4)
         x = self.up2(x, x3)
@@ -195,8 +197,8 @@ class DualBranchUNet3D_GhostNet(nn.Module):
 class DualBranchUNet3D_Dilated(nn.Module):
     """Dual-branch UNet with Dilated Conv (rate 1,2,5) for both branches - Base class with configurable channel sizes
     
-    Stage 1-4: Dual-branch with Dilated Conv
-    Stage 5: Fused branch with MobileViT
+    Stage 1-5: Dual-branch with Dilated Conv (all stages maintain dual-branch structure)
+    Stage 5 output is fused (concatenated) before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -214,32 +216,31 @@ class DualBranchUNet3D_Dilated(nn.Module):
         self.stem_flair = DoubleConv3D(1, channels['stem'], norm=self.norm)
         self.stem_t1ce = DoubleConv3D(1, channels['stem'], norm=self.norm)
         
-        # Stage 2-4 branches (both Dilated Conv)
+        # Stage 2-5 branches (all Dilated Conv, maintaining dual-branch structure)
         self.branch_flair = Down3DStrideDilated(channels['stem'], channels['branch2'], norm=self.norm)
         self.branch_t1ce = Down3DStrideDilated(channels['stem'], channels['branch2'], norm=self.norm)
         
         self.branch_flair3 = Down3DStrideDilated(channels['branch2'], channels['branch3'], norm=self.norm)
         self.branch_t1ce3 = Down3DStrideDilated(channels['branch2'], channels['branch3'], norm=self.norm)
         
-        self.branch_flair4 = Down3DStrideDilated(channels['branch3'], channels['down4'], norm=self.norm)
-        self.branch_t1ce4 = Down3DStrideDilated(channels['branch3'], channels['down4'], norm=self.norm)
+        self.branch_flair4 = Down3DStrideDilated(channels['branch3'], channels['branch4'], norm=self.norm)
+        self.branch_t1ce4 = Down3DStrideDilated(channels['branch3'], channels['branch4'], norm=self.norm)
         
-        # Stage 5 fused branch with MobileViT
-        factor = 2 if self.bilinear else 1
-        fused_channels = channels['down4'] * 2
-        self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.branch_flair5 = Down3DStrideDilated(channels['branch4'], channels['branch5'], norm=self.norm)
+        self.branch_t1ce5 = Down3DStrideDilated(channels['branch4'], channels['branch5'], norm=self.norm)
         
         # Decoder
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
@@ -261,7 +262,9 @@ class DualBranchUNet3D_Dilated(nn.Module):
         b3_t1ce = self.branch_t1ce4(b2_t1ce)
         x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
         
-        x5 = self.down5(x4)
+        b4_flair = self.branch_flair5(b3_flair)
+        b4_t1ce = self.branch_t1ce5(b3_t1ce)
+        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
         
         x = self.up1(x5, x4)
         x = self.up2(x, x3)
@@ -273,8 +276,8 @@ class DualBranchUNet3D_Dilated(nn.Module):
 class DualBranchUNet3D_ConvNeXt(nn.Module):
     """Dual-branch UNet with ConvNeXt for both branches - Base class with configurable channel sizes
     
-    Stage 1-4: Dual-branch with ConvNeXt
-    Stage 5: Fused branch with MobileViT
+    Stage 1-5: Dual-branch with ConvNeXt (all stages maintain dual-branch structure)
+    Stage 5 output is fused (concatenated) before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -299,32 +302,31 @@ class DualBranchUNet3D_ConvNeXt(nn.Module):
             ConvNeXtBlock3D(channels['stem'], norm=self.norm),
         )
         
-        # Stage 2-4 branches (both ConvNeXt)
+        # Stage 2-5 branches (all ConvNeXt, maintaining dual-branch structure)
         self.branch_flair = Down3DConvNeXt(channels['stem'], channels['branch2'], norm=self.norm, num_blocks=2)
         self.branch_t1ce = Down3DConvNeXt(channels['stem'], channels['branch2'], norm=self.norm, num_blocks=2)
         
         self.branch_flair3 = Down3DConvNeXt(channels['branch2'], channels['branch3'], norm=self.norm, num_blocks=2)
         self.branch_t1ce3 = Down3DConvNeXt(channels['branch2'], channels['branch3'], norm=self.norm, num_blocks=2)
         
-        self.branch_flair4 = Down3DConvNeXt(channels['branch3'], channels['down4'], norm=self.norm, num_blocks=2)
-        self.branch_t1ce4 = Down3DConvNeXt(channels['branch3'], channels['down4'], norm=self.norm, num_blocks=2)
+        self.branch_flair4 = Down3DConvNeXt(channels['branch3'], channels['branch4'], norm=self.norm, num_blocks=2)
+        self.branch_t1ce4 = Down3DConvNeXt(channels['branch3'], channels['branch4'], norm=self.norm, num_blocks=2)
         
-        # Stage 5 fused branch with MobileViT
-        factor = 2 if self.bilinear else 1
-        fused_channels = channels['down4'] * 2
-        self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.branch_flair5 = Down3DConvNeXt(channels['branch4'], channels['branch5'], norm=self.norm, num_blocks=2)
+        self.branch_t1ce5 = Down3DConvNeXt(channels['branch4'], channels['branch5'], norm=self.norm, num_blocks=2)
         
         # Decoder
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
@@ -346,7 +348,9 @@ class DualBranchUNet3D_ConvNeXt(nn.Module):
         b3_t1ce = self.branch_t1ce4(b2_t1ce)
         x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
         
-        x5 = self.down5(x4)
+        b4_flair = self.branch_flair5(b3_flair)
+        b4_t1ce = self.branch_t1ce5(b3_t1ce)
+        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
         
         x = self.up1(x5, x4)
         x = self.up2(x, x3)
@@ -358,8 +362,8 @@ class DualBranchUNet3D_ConvNeXt(nn.Module):
 class DualBranchUNet3D_ShuffleNetV2(nn.Module):
     """Dual-branch UNet with ShuffleNetV2 for both branches - Base class with configurable channel sizes
     
-    Stage 1-4: Dual-branch with ShuffleNetV2
-    Stage 5: Fused branch with MobileViT
+    Stage 1-5: Dual-branch with ShuffleNetV2 (all stages maintain dual-branch structure)
+    Stage 5 output is fused (concatenated) before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -388,32 +392,31 @@ class DualBranchUNet3D_ShuffleNetV2(nn.Module):
             ShuffleNetV2Unit3D(channels['stem'], channels['stem'], stride=1, norm=norm),
         )
         
-        # Stage 2-4 branches (both ShuffleNetV2)
+        # Stage 2-5 branches (all ShuffleNetV2, maintaining dual-branch structure)
         self.branch_flair = Down3DShuffleNetV2(channels['stem'], channels['branch2'], norm=self.norm)
         self.branch_t1ce = Down3DShuffleNetV2(channels['stem'], channels['branch2'], norm=self.norm)
         
         self.branch_flair3 = Down3DShuffleNetV2(channels['branch2'], channels['branch3'], norm=self.norm)
         self.branch_t1ce3 = Down3DShuffleNetV2(channels['branch2'], channels['branch3'], norm=self.norm)
         
-        self.branch_flair4 = Down3DShuffleNetV2(channels['branch3'], channels['down4'], norm=self.norm)
-        self.branch_t1ce4 = Down3DShuffleNetV2(channels['branch3'], channels['down4'], norm=self.norm)
+        self.branch_flair4 = Down3DShuffleNetV2(channels['branch3'], channels['branch4'], norm=self.norm)
+        self.branch_t1ce4 = Down3DShuffleNetV2(channels['branch3'], channels['branch4'], norm=self.norm)
         
-        # Stage 5 fused branch with MobileViT
-        factor = 2 if self.bilinear else 1
-        fused_channels = channels['down4'] * 2
-        self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.branch_flair5 = Down3DShuffleNetV2(channels['branch4'], channels['branch5'], norm=self.norm)
+        self.branch_t1ce5 = Down3DShuffleNetV2(channels['branch4'], channels['branch5'], norm=self.norm)
         
         # Decoder
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
@@ -435,7 +438,9 @@ class DualBranchUNet3D_ShuffleNetV2(nn.Module):
         b3_t1ce = self.branch_t1ce4(b2_t1ce)
         x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
         
-        x5 = self.down5(x4)
+        b4_flair = self.branch_flair5(b3_flair)
+        b4_t1ce = self.branch_t1ce5(b3_t1ce)
+        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
         
         x = self.up1(x5, x4)
         x = self.up2(x, x3)
@@ -447,8 +452,8 @@ class DualBranchUNet3D_ShuffleNetV2(nn.Module):
 class DualBranchUNet3D_ShuffleNetV2_Dilated(nn.Module):
     """Dual-branch UNet with ShuffleNetV2 Dilated for both branches - Base class with configurable channel sizes
     
-    Stage 1-4: Dual-branch with ShuffleNetV2 Dilated (rate [1,2,5])
-    Stage 5: Fused branch with MobileViT
+    Stage 1-5: Dual-branch with ShuffleNetV2 Dilated (rate [1,2,5]) (all stages maintain dual-branch structure)
+    Stage 5 output is fused (concatenated) before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -476,32 +481,31 @@ class DualBranchUNet3D_ShuffleNetV2_Dilated(nn.Module):
             ShuffleNetV2Unit3D_Dilated(channels['stem'], channels['stem'], stride=1, norm=norm, dilation_rates=[1, 2, 5]),
         )
         
-        # Stage 2-4 branches (both ShuffleNetV2 Dilated)
+        # Stage 2-5 branches (all ShuffleNetV2 Dilated, maintaining dual-branch structure)
         self.branch_flair = Down3DShuffleNetV2_Dilated(channels['stem'], channels['branch2'], norm=self.norm, dilation_rates=[1, 2, 5])
         self.branch_t1ce = Down3DShuffleNetV2_Dilated(channels['stem'], channels['branch2'], norm=self.norm, dilation_rates=[1, 2, 5])
         
         self.branch_flair3 = Down3DShuffleNetV2_Dilated(channels['branch2'], channels['branch3'], norm=self.norm, dilation_rates=[1, 2, 5])
         self.branch_t1ce3 = Down3DShuffleNetV2_Dilated(channels['branch2'], channels['branch3'], norm=self.norm, dilation_rates=[1, 2, 5])
         
-        self.branch_flair4 = Down3DShuffleNetV2_Dilated(channels['branch3'], channels['down4'], norm=self.norm, dilation_rates=[1, 2, 5])
-        self.branch_t1ce4 = Down3DShuffleNetV2_Dilated(channels['branch3'], channels['down4'], norm=self.norm, dilation_rates=[1, 2, 5])
+        self.branch_flair4 = Down3DShuffleNetV2_Dilated(channels['branch3'], channels['branch4'], norm=self.norm, dilation_rates=[1, 2, 5])
+        self.branch_t1ce4 = Down3DShuffleNetV2_Dilated(channels['branch3'], channels['branch4'], norm=self.norm, dilation_rates=[1, 2, 5])
         
-        # Stage 5 fused branch with MobileViT
-        factor = 2 if self.bilinear else 1
-        fused_channels = channels['down4'] * 2
-        self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.branch_flair5 = Down3DShuffleNetV2_Dilated(channels['branch4'], channels['branch5'], norm=self.norm, dilation_rates=[1, 2, 5])
+        self.branch_t1ce5 = Down3DShuffleNetV2_Dilated(channels['branch4'], channels['branch5'], norm=self.norm, dilation_rates=[1, 2, 5])
         
         # Decoder
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
@@ -523,7 +527,9 @@ class DualBranchUNet3D_ShuffleNetV2_Dilated(nn.Module):
         b3_t1ce = self.branch_t1ce4(b2_t1ce)
         x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
         
-        x5 = self.down5(x4)
+        b4_flair = self.branch_flair5(b3_flair)
+        b4_t1ce = self.branch_t1ce5(b3_t1ce)
+        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
         
         x = self.up1(x5, x4)
         x = self.up2(x, x3)
@@ -535,8 +541,8 @@ class DualBranchUNet3D_ShuffleNetV2_Dilated(nn.Module):
 class DualBranchUNet3D_ShuffleNetV2_LK(nn.Module):
     """Dual-branch UNet with ShuffleNetV2 Large Kernel (7x7x7) for both branches - Base class with configurable channel sizes
     
-    Stage 1-4: Dual-branch with ShuffleNetV2 Large Kernel
-    Stage 5: Fused branch with MobileViT
+    Stage 1-5: Dual-branch with ShuffleNetV2 Large Kernel (all stages maintain dual-branch structure)
+    Stage 5 output is fused (concatenated) before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -564,32 +570,31 @@ class DualBranchUNet3D_ShuffleNetV2_LK(nn.Module):
             ShuffleNetV2Unit3D_LK(channels['stem'], channels['stem'], stride=1, norm=norm),
         )
         
-        # Stage 2-4 branches (both ShuffleNetV2 LK)
+        # Stage 2-5 branches (all ShuffleNetV2 LK, maintaining dual-branch structure)
         self.branch_flair = Down3DShuffleNetV2_LK(channels['stem'], channels['branch2'], norm=self.norm)
         self.branch_t1ce = Down3DShuffleNetV2_LK(channels['stem'], channels['branch2'], norm=self.norm)
         
         self.branch_flair3 = Down3DShuffleNetV2_LK(channels['branch2'], channels['branch3'], norm=self.norm)
         self.branch_t1ce3 = Down3DShuffleNetV2_LK(channels['branch2'], channels['branch3'], norm=self.norm)
         
-        self.branch_flair4 = Down3DShuffleNetV2_LK(channels['branch3'], channels['down4'], norm=self.norm)
-        self.branch_t1ce4 = Down3DShuffleNetV2_LK(channels['branch3'], channels['down4'], norm=self.norm)
+        self.branch_flair4 = Down3DShuffleNetV2_LK(channels['branch3'], channels['branch4'], norm=self.norm)
+        self.branch_t1ce4 = Down3DShuffleNetV2_LK(channels['branch3'], channels['branch4'], norm=self.norm)
         
-        # Stage 5 fused branch with MobileViT
-        factor = 2 if self.bilinear else 1
-        fused_channels = channels['down4'] * 2
-        self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.branch_flair5 = Down3DShuffleNetV2_LK(channels['branch4'], channels['branch5'], norm=self.norm)
+        self.branch_t1ce5 = Down3DShuffleNetV2_LK(channels['branch4'], channels['branch5'], norm=self.norm)
         
         # Decoder
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
+        factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['down5'], channels['down4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
-            self.up2 = Up3D(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up1 = Up3D(channels['branch5'] * 2, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
@@ -611,7 +616,9 @@ class DualBranchUNet3D_ShuffleNetV2_LK(nn.Module):
         b3_t1ce = self.branch_t1ce4(b2_t1ce)
         x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
         
-        x5 = self.down5(x4)
+        b4_flair = self.branch_flair5(b3_flair)
+        b4_t1ce = self.branch_t1ce5(b3_t1ce)
+        x5 = torch.cat([b4_flair, b4_t1ce], dim=1)  # Stage 5 output fused
         
         x = self.up1(x5, x4)
         x = self.up2(x, x3)

@@ -47,34 +47,32 @@ DUALBRANCH_CHANNELS = {
         'stem': 8,           # Stage 1: modality-specific stem channels (each branch)
         'branch2': 16,       # Stage 2: branch channels (each branch)
         'branch3': 32,       # Stage 3: branch channels (each branch)
-        'down4': 128,        # Stage 4: encoder channels
-        'down5': 256,        # Stage 5: encoder channels (bottleneck)
+        'branch4': 64,       # Stage 4: branch channels (each branch)
+        'branch5': 128,      # Stage 5: branch channels (each branch) - bottleneck
         'out': 16,           # Output channels (decoder final)
     },
     's': {
         'stem': 16,          # Stage 1: modality-specific stem channels (each branch)
         'branch2': 32,       # Stage 2: branch channels (each branch)
         'branch3': 64,       # Stage 3: branch channels (each branch)
-        'down4': 256,        # Stage 4: encoder channels
-        'down5': 512,        # Stage 5: encoder channels (bottleneck)
+        'branch4': 128,      # Stage 4: branch channels (each branch)
+        'branch5': 256,      # Stage 5: branch channels (each branch) - bottleneck
         'out': 32,           # Output channels (decoder final)
     },
     'm': {
         'stem': 32,          # Stage 1: modality-specific stem channels (each branch)
         'branch2': 64,       # Stage 2: branch channels (each branch)
         'branch3': 128,      # Stage 3: branch channels (each branch)
-        'down4': 256,        # Stage 4: encoder channels
-        'down5': 512,        # Stage 5: encoder channels
-        'down6': 1024,       # Stage 6: encoder channels (bottleneck)
+        'branch4': 256,      # Stage 4: branch channels (each branch)
+        'branch5': 512,      # Stage 5: branch channels (each branch) - bottleneck
         'out': 64,           # Output channels (decoder final)
     },
     'l': {
         'stem': 64,          # Stage 1: modality-specific stem channels (each branch)
         'branch2': 128,      # Stage 2: branch channels (each branch)
         'branch3': 256,      # Stage 3: branch channels (each branch)
-        'down4': 512,        # Stage 4: encoder channels
-        'down5': 1024,       # Stage 5: encoder channels
-        'down6': 2048,       # Stage 6: encoder channels (bottleneck)
+        'branch4': 512,      # Stage 4: branch channels (each branch)
+        'branch5': 1024,     # Stage 5: branch channels (each branch) - bottleneck
         'out': 128,          # Output channels (decoder final)
     },
 }

@@ -148,7 +148,7 @@ class GradCAM3DVisualizer:
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
         if show:
-            plt.show()
+        plt.show()
         else:
             plt.close(fig)
     
