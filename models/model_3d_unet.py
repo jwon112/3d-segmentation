@@ -51,7 +51,12 @@ class Up3D(nn.Module):
         
         if bilinear:
             self.up = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
-            self.conv = DoubleConv3D(in_channels, out_channels, in_channels // 2, norm=norm)
+            # bilinear=True일 때도 skip connection을 concat하므로 채널 수를 고려해야 함
+            # skip_channels가 None이면 기본값으로 in_channels // 2를 사용
+            if skip_channels is None:
+                skip_channels = in_channels // 2
+            total_channels = in_channels + skip_channels
+            self.conv = DoubleConv3D(total_channels, out_channels, in_channels // 2, norm=norm)
         else:
             self.up = nn.ConvTranspose3d(in_channels, in_channels // 2, kernel_size=2, stride=2)
             # bilinear=False일 때는 upsampling 후 skip connection과 concat하므로

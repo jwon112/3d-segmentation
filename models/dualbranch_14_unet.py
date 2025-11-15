@@ -74,9 +74,9 @@ class DualBranchUNet3D_MobileNetV2_Expand2(nn.Module):
         # Decoder (3 stages: up1, up2, up3)
         factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)
         else:
             self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
@@ -145,9 +145,9 @@ class DualBranchUNet3D_GhostNet(nn.Module):
         # Decoder (3 stages: up1, up2, up3)
         factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)
         else:
             self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
@@ -289,9 +289,9 @@ class DualBranchUNet3D_ConvNeXt(nn.Module):
         # Decoder (3 stages: up1, up2, up3)
         factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)
         else:
             self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
@@ -360,9 +360,9 @@ class DualBranchUNet3D_ShuffleNetV2(nn.Module):
         # Decoder (3 stages: up1, up2, up3)
         factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)
         else:
             self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
@@ -431,9 +431,9 @@ class DualBranchUNet3D_ShuffleNetV2_Dilated(nn.Module):
         # Decoder (3 stages: up1, up2, up3)
         factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)
         else:
             self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
@@ -502,9 +502,9 @@ class DualBranchUNet3D_ShuffleNetV2_LK(nn.Module):
         # Decoder (3 stages: up1, up2, up3)
         factor = 2 if self.bilinear else 1
         if self.bilinear:
-            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
+            self.up3 = Up3D(channels['branch1'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)
         else:
             self.up1 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up2 = Up3D(channels['branch2'], channels['branch1'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch1'] * 2)
