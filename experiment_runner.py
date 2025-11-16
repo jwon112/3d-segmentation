@@ -516,7 +516,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     
     # Size suffix를 지원하는 dualbranch_14 backbone들
     dualbranch_14_backbones = ['mobilenetv2_expand2', 'ghostnet', 'dilated', 'convnext', 
-                                'shufflenetv2', 'shufflenetv2_dilated', 'shufflenetv2_lk']
+                                'shufflenetv2', 'shufflenetv2_crossattn', 'shufflenetv2_dilated', 'shufflenetv2_lk']
     
     # Size suffix를 지원하지 않는 모델들 (고정 이름)
     fixed_name_models = ['unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d',
