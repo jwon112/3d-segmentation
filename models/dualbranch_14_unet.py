@@ -23,11 +23,12 @@ from .modules.cross_attention_3d import BidirectionalCrossAttention3D
 # Backbone Blocks for PAM Comparison Experiments
 # ============================================================================
 
-class StemMobileNetV2_Expand2(nn.Module):
-    """Stem using MobileNetV2 inverted residual block (stride=1, expand_ratio=2, no downsampling)."""
+# Stem: DoubleConv3D (모든 모델에서 공통 사용)
+class Stem3x3(nn.Module):
+    """Stem using DoubleConv3D (stride=1, no downsampling)."""
     def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn'):
         super().__init__()
-        self.block = MobileNetV2Block3D(in_channels, out_channels, stride=1, expand_ratio=2.0, norm=norm)
+        self.block = DoubleConv3D(in_channels, out_channels, norm=norm)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.block(x)
@@ -41,118 +42,6 @@ class Down3DMobileNetV2_Expand2(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.block(x)
-
-
-# Stem versions (stride=1, no downsampling)
-class StemGhostNet(nn.Module):
-    """Stem using GhostNet bottleneck (stride=1, no downsampling)."""
-    def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn'):
-        super().__init__()
-        self.block = GhostBottleneck3D(in_channels, out_channels, stride=1, norm=norm)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.block(x)
-
-
-class StemDilated(nn.Module):
-    """Stem using dilated convolutions (stride=1, no downsampling)."""
-    def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn'):
-        super().__init__()
-        self.block = nn.Sequential(
-            nn.Conv3d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False),
-            _make_norm3d(norm, out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, kernel_size=5, dilation=2, padding=4, bias=False),
-            _make_norm3d(norm, out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, kernel_size=5, dilation=5, padding=10, bias=False),
-            _make_norm3d(norm, out_channels),
-            nn.ReLU(inplace=True),
-        )
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.block(x)
-
-
-class StemConvNeXt(nn.Module):
-    """Stem using ConvNeXt blocks (stride=1, no downsampling)."""
-    def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn', num_blocks: int = 2):
-        super().__init__()
-        # Channel projection (no downsampling)
-        self.proj = nn.Sequential(
-            _make_norm3d(norm, in_channels),
-            nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=1, bias=True),
-        )
-        # ConvNeXt blocks
-        self.blocks = nn.Sequential(*[
-            ConvNeXtBlock3D(out_channels, norm=norm) for _ in range(num_blocks)
-        ])
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.proj(x)
-        x = self.blocks(x)
-        return x
-
-
-class StemShuffleNetV2(nn.Module):
-    """Stem using ShuffleNetV2 unit (stride=1, no downsampling)."""
-    def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn'):
-        super().__init__()
-        # First, project to out_channels if needed
-        if in_channels != out_channels:
-            self.proj = nn.Sequential(
-                nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False),
-                _make_norm3d(norm, out_channels),
-                nn.ReLU(inplace=True),
-            )
-        else:
-            self.proj = nn.Identity()
-        self.block = ShuffleNetV2Unit3D(out_channels, out_channels, stride=1, norm=norm)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.proj(x)
-        x = self.block(x)
-        return x
-
-
-class StemShuffleNetV2_Dilated(nn.Module):
-    """Stem using ShuffleNetV2 dilated unit (stride=1, no downsampling)."""
-    def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn'):
-        super().__init__()
-        if in_channels != out_channels:
-            self.proj = nn.Sequential(
-                nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False),
-                _make_norm3d(norm, out_channels),
-                nn.ReLU(inplace=True),
-            )
-        else:
-            self.proj = nn.Identity()
-        self.block = ShuffleNetV2Unit3D_Dilated(out_channels, out_channels, stride=1, norm=norm)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.proj(x)
-        x = self.block(x)
-        return x
-
-
-class StemShuffleNetV2_LK(nn.Module):
-    """Stem using ShuffleNetV2 large kernel unit (stride=1, no downsampling)."""
-    def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn'):
-        super().__init__()
-        if in_channels != out_channels:
-            self.proj = nn.Sequential(
-                nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False),
-                _make_norm3d(norm, out_channels),
-                nn.ReLU(inplace=True),
-            )
-        else:
-            self.proj = nn.Identity()
-        self.block = ShuffleNetV2Unit3D_LK(out_channels, out_channels, stride=1, norm=norm)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.proj(x)
-        x = self.block(x)
-        return x
 
 
 # ============================================================================
@@ -179,8 +68,8 @@ class DualBranchUNet3D_MobileNetV2_Expand2(nn.Module):
         channels = get_dualbranch_channels(size)
         
         # Stage 1: Stem (no downsampling, 128×128×128 -> 128×128×128)
-        self.stem_flair = StemMobileNetV2_Expand2(1, channels['stem'], norm=self.norm)
-        self.stem_t1ce = StemMobileNetV2_Expand2(1, channels['stem'], norm=self.norm)
+        self.stem_flair = Stem3x3(1, channels['stem'], norm=self.norm)
+        self.stem_t1ce = Stem3x3(1, channels['stem'], norm=self.norm)
         
         # Stage 2: 128×128×128 -> 64×64×64
         self.branch_flair2 = Down3DMobileNetV2_Expand2(channels['stem'], channels['branch2'], norm=self.norm)
@@ -265,8 +154,8 @@ class DualBranchUNet3D_GhostNet(nn.Module):
         channels = get_dualbranch_channels(size)
         
         # Stage 1: Stem (no downsampling, 128×128×128 -> 128×128×128)
-        self.stem_flair = StemGhostNet(1, channels['stem'], norm=self.norm)
-        self.stem_t1ce = StemGhostNet(1, channels['stem'], norm=self.norm)
+        self.stem_flair = Stem3x3(1, channels['stem'], norm=self.norm)
+        self.stem_t1ce = Stem3x3(1, channels['stem'], norm=self.norm)
         
         # Stage 2: 128×128×128 -> 64×64×64
         self.branch_flair2 = Down3DGhostNet(channels['stem'], channels['branch2'], norm=self.norm)
@@ -351,8 +240,8 @@ class DualBranchUNet3D_Dilated(nn.Module):
         channels = get_dualbranch_channels(size)
         
         # Stage 1: Stem (no downsampling, 128×128×128 -> 128×128×128)
-        self.stem_flair = StemDilated(1, channels['stem'], norm=self.norm)
-        self.stem_t1ce = StemDilated(1, channels['stem'], norm=self.norm)
+        self.stem_flair = Stem3x3(1, channels['stem'], norm=self.norm)
+        self.stem_t1ce = Stem3x3(1, channels['stem'], norm=self.norm)
         
         # Stage 2: 128×128×128 -> 64×64×64
         self.branch_flair2 = Down3DStrideDilated(channels['stem'], channels['branch2'], norm=self.norm)
@@ -437,8 +326,8 @@ class DualBranchUNet3D_ConvNeXt(nn.Module):
         channels = get_dualbranch_channels(size)
         
         # Stage 1: Stem (no downsampling, 128×128×128 -> 128×128×128)
-        self.stem_flair = StemConvNeXt(1, channels['stem'], norm=self.norm, num_blocks=2)
-        self.stem_t1ce = StemConvNeXt(1, channels['stem'], norm=self.norm, num_blocks=2)
+        self.stem_flair = Stem3x3(1, channels['stem'], norm=self.norm)
+        self.stem_t1ce = Stem3x3(1, channels['stem'], norm=self.norm)
         
         # Stage 2: 128×128×128 -> 64×64×64
         self.branch_flair2 = Down3DConvNeXt(channels['stem'], channels['branch2'], norm=self.norm, num_blocks=2)
@@ -523,8 +412,8 @@ class DualBranchUNet3D_ShuffleNetV2(nn.Module):
         channels = get_dualbranch_channels(size)
         
         # Stage 1: Stem (no downsampling, 128×128×128 -> 128×128×128)
-        self.stem_flair = StemShuffleNetV2(1, channels['stem'], norm=self.norm)
-        self.stem_t1ce = StemShuffleNetV2(1, channels['stem'], norm=self.norm)
+        self.stem_flair = Stem3x3(1, channels['stem'], norm=self.norm)
+        self.stem_t1ce = Stem3x3(1, channels['stem'], norm=self.norm)
         
         # Stage 2: 128×128×128 -> 64×64×64
         self.branch_flair2 = Down3DShuffleNetV2(channels['stem'], channels['branch2'], norm=self.norm)
@@ -609,8 +498,8 @@ class DualBranchUNet3D_ShuffleNetV2_Dilated(nn.Module):
         channels = get_dualbranch_channels(size)
         
         # Stage 1: Stem (no downsampling, 128×128×128 -> 128×128×128)
-        self.stem_flair = StemShuffleNetV2_Dilated(1, channels['stem'], norm=self.norm)
-        self.stem_t1ce = StemShuffleNetV2_Dilated(1, channels['stem'], norm=self.norm)
+        self.stem_flair = Stem3x3(1, channels['stem'], norm=self.norm)
+        self.stem_t1ce = Stem3x3(1, channels['stem'], norm=self.norm)
         
         # Stage 2: 128×128×128 -> 64×64×64
         self.branch_flair2 = Down3DShuffleNetV2_Dilated(channels['stem'], channels['branch2'], norm=self.norm, dilation_rates=[1, 2, 5])
@@ -695,8 +584,8 @@ class DualBranchUNet3D_ShuffleNetV2_LK(nn.Module):
         channels = get_dualbranch_channels(size)
         
         # Stage 1: Stem (no downsampling, 128×128×128 -> 128×128×128)
-        self.stem_flair = StemShuffleNetV2_LK(1, channels['stem'], norm=self.norm)
-        self.stem_t1ce = StemShuffleNetV2_LK(1, channels['stem'], norm=self.norm)
+        self.stem_flair = Stem3x3(1, channels['stem'], norm=self.norm)
+        self.stem_t1ce = Stem3x3(1, channels['stem'], norm=self.norm)
         
         # Stage 2: 128×128×128 -> 64×64×64
         self.branch_flair2 = Down3DShuffleNetV2_LK(channels['stem'], channels['branch2'], norm=self.norm)
