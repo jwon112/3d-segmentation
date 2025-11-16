@@ -681,6 +681,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 'dilated': 'DualBranchUNet3D_Dilated',
                 'convnext': 'DualBranchUNet3D_ConvNeXt',
                 'shufflenetv2': 'DualBranchUNet3D_ShuffleNetV2',
+                'shufflenetv2_crossattn': 'DualBranchUNet3D_ShuffleNetV2_CrossAttn',
                 'shufflenetv2_dilated': 'DualBranchUNet3D_ShuffleNetV2_Dilated',
                 'shufflenetv2_lk': 'DualBranchUNet3D_ShuffleNetV2_LK',
             }
