@@ -449,7 +449,7 @@ class DualBranchUNet3D_ShuffleNetV2(nn.Module):
     
     Stage 1: Stem (no downsampling, feature extraction only)
     Stage 2-5: Dual-branch with ShuffleNetV2 (all stages maintain dual-branch structure)
-    Stage 5 output is fused via Cross Attention before decoder
+    Stage 5 output is fused via concatenation before decoder
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -483,19 +483,18 @@ class DualBranchUNet3D_ShuffleNetV2(nn.Module):
         self.branch_flair5 = Down3DShuffleNetV2(channels['branch4'], channels['down5'], norm=self.norm)
         self.branch_t1ce5 = Down3DShuffleNetV2(channels['branch4'], channels['down5'], norm=self.norm)
         
-        # Cross Attention for feature fusion at bottleneck (Stage 5 output)
-        self.cross_attn = BidirectionalCrossAttention3D(channels['down5'], num_heads=8, norm=self.norm)
-        
         # Decoder (5 stages: up1, up2, up3, up4, up5)
+        # Stage 5 output is concatenated (channels['down5'] * 2)
         factor = 2 if self.bilinear else 1
+        fused_channels = channels['down5'] * 2
         if self.bilinear:
-            self.up1 = Up3D(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
+            self.up1 = Up3D(fused_channels, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
             self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up4 = Up3D(channels['branch2'], channels['stem'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
             self.up5 = Up3D(channels['stem'], channels['out'], self.bilinear, norm=self.norm, skip_channels=1 * 2)
         else:
-            self.up1 = Up3D(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
+            self.up1 = Up3D(fused_channels, channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch4'] * 2)
             self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up4 = Up3D(channels['branch2'], channels['stem'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
@@ -530,8 +529,8 @@ class DualBranchUNet3D_ShuffleNetV2(nn.Module):
         b5_flair = self.branch_flair5(b4_flair)
         b5_t1ce = self.branch_t1ce5(b4_t1ce)
         
-        # Cross Attention fusion at bottleneck (Stage 5 output)
-        x5 = self.cross_attn(b5_flair, b5_t1ce)  # (B, C, 8, 8, 8)
+        # Concatenation fusion at bottleneck (Stage 5 output)
+        x5 = torch.cat([b5_flair, b5_t1ce], dim=1)  # (B, 2*C, 8, 8, 8)
         
         # Decoder
         x = self.up1(x5, x4)  # 8×8×8 -> 16×16×16
