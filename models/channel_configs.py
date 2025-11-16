@@ -47,28 +47,32 @@ DUALBRANCH_CHANNELS = {
         'stem': 8,           # Stage 1: stem channels (each branch) - no downsampling
         'branch2': 16,       # Stage 2: branch channels (each branch) - stride=2
         'branch3': 32,       # Stage 3: branch channels (each branch) - stride=2
-        'branch4': 64,       # Stage 4: branch channels (each branch) - stride=2 (bottleneck)
+        'branch4': 64,       # Stage 4: branch channels (each branch) - stride=2
+        'down5': 128,        # Stage 5: branch channels (each branch) - stride=2 (bottleneck, MobileViT)
         'out': 16,           # Output channels (decoder final)
     },
     's': {
         'stem': 16,          # Stage 1: stem channels (each branch) - no downsampling
         'branch2': 32,       # Stage 2: branch channels (each branch) - stride=2
         'branch3': 64,       # Stage 3: branch channels (each branch) - stride=2
-        'branch4': 128,      # Stage 4: branch channels (each branch) - stride=2 (bottleneck)
+        'branch4': 128,      # Stage 4: branch channels (each branch) - stride=2
+        'down5': 256,        # Stage 5: branch channels (each branch) - stride=2 (bottleneck, MobileViT)
         'out': 32,           # Output channels (decoder final)
     },
     'm': {
         'stem': 32,          # Stage 1: stem channels (each branch) - no downsampling
         'branch2': 64,       # Stage 2: branch channels (each branch) - stride=2
         'branch3': 128,      # Stage 3: branch channels (each branch) - stride=2
-        'branch4': 256,      # Stage 4: branch channels (each branch) - stride=2 (bottleneck)
+        'branch4': 256,      # Stage 4: branch channels (each branch) - stride=2
+        'down5': 512,        # Stage 5: branch channels (each branch) - stride=2 (bottleneck, MobileViT)
         'out': 64,           # Output channels (decoder final)
     },
     'l': {
         'stem': 64,          # Stage 1: stem channels (each branch) - no downsampling
         'branch2': 128,      # Stage 2: branch channels (each branch) - stride=2
         'branch3': 256,      # Stage 3: branch channels (each branch) - stride=2
-        'branch4': 512,      # Stage 4: branch channels (each branch) - stride=2 (bottleneck)
+        'branch4': 512,      # Stage 4: branch channels (each branch) - stride=2
+        'down5': 1024,       # Stage 5: branch channels (each branch) - stride=2 (bottleneck, MobileViT)
         'out': 128,          # Output channels (decoder final)
     },
 }
