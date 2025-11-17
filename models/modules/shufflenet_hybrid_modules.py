@@ -18,6 +18,11 @@ from ..model_3d_unet import _make_norm3d
 from .shufflenet_modules import channel_shuffle_3d
 
 
+def _make_layernorm3d(channels: int) -> nn.Module:
+    """Channel-first LayerNorm implemented via GroupNorm(Group=1)."""
+    return nn.GroupNorm(1, channels)
+
+
 class ShuffleNetV2HybridUnit3D(nn.Module):
     """3D ShuffleNetV2 Hybrid Unit (Conv + Transformer).
     
@@ -49,11 +54,11 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         self.conv_branch = nn.Sequential(
             nn.Conv3d(out_channels, out_channels, kernel_size=3, stride=1, padding=1,
                       groups=out_channels, bias=False),
-            _make_norm3d(norm, out_channels),
-            nn.ReLU(inplace=True),
+            _make_layernorm3d(out_channels),
+            nn.GELU(),
             nn.Conv3d(out_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            _make_norm3d(norm, mid_channels),
-            nn.ReLU(inplace=True),
+            _make_layernorm3d(mid_channels),
+            nn.GELU(),
         )
 
         # Transformer branch (MobileViT 스타일)
