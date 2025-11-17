@@ -2,10 +2,10 @@
 ShuffleNetV2 Hybrid Modules
 ShuffleNetV2 + Transformer 하이브리드 블록
 
-핵심 아이디어 (도식 기준):
-- Stem: 3x3 depthwise stride s (s∈{1,2}) → 1x1 pointwise conv
-- Branch Conv: 3x3 depthwise → 1x1 conv (local representation)
-- Branch Transformer: 3x3 depthwise → 1x1 conv (expansion ratio 적용) → Transformer → 1x1 conv (reduction)
+핵심 아이디어 (업데이트된 구조):
+- 입력을 먼저 channel-wise split (ShuffleNetV2 스타일)
+- Conv Branch: 3x3 depthwise(stride s) → 1x1 conv → GELU
+- Transformer Branch: (기존 Stem) 3x3 depthwise(stride s) → 1x1 conv → Transformer 경로
 - 두 branch 출력 concat → Channel shuffle → 1x1 conv (fuse)
 - Residual 연결 (stride≠1 또는 채널 mismatch일 때는 1x1 conv로 정렬)
 """
@@ -26,49 +26,57 @@ def _make_layernorm3d(channels: int) -> nn.Module:
 class ShuffleNetV2HybridUnit3D(nn.Module):
     """3D ShuffleNetV2 Hybrid Unit (Conv + Transformer).
     
-    Stem → (Conv branch, Transformer branch) → concat → shuffle → fuse → residual
+    Input split → (Conv branch, Transformer branch) → concat → shuffle → fuse → residual
     """
     def __init__(self, in_channels: int, out_channels: int, stride: int = 1,
                  norm: str = 'bn', expand_ratio: float = 4.0,
-                 num_heads: int = 4, mlp_ratio: int = 2, patch_size: int = 4):
+                 num_heads: int = 4, mlp_ratio: int = 2, patch_size: int = 4,
+                 force_layernorm: bool = False):
         super().__init__()
         self.stride = stride
         self.out_channels = out_channels
+        self.force_layernorm = force_layernorm
+        self.norm_type = norm or 'bn'
+        norm_fn = (lambda c: _make_layernorm3d(c)) if self.force_layernorm else (lambda c: _make_norm3d(self.norm_type, c))
         mid_channels = out_channels // 2
+        if mid_channels == 0:
+            raise ValueError("out_channels must be >= 2 for ShuffleNetV2HybridUnit3D")
         expanded_channels = max(int(mid_channels * expand_ratio), mid_channels)
         self.expanded_channels = expanded_channels
+        self.conv_in_channels = in_channels // 2
+        self.trans_in_channels = in_channels - self.conv_in_channels
+        if self.conv_in_channels == 0 or self.trans_in_channels == 0:
+            raise ValueError("in_channels must be >= 2 to split channels for hybrid unit.")
         self.patch_size = patch_size
-
-        # Stem: 3x3 depthwise (stride) + 1x1 conv
-        self.stem = nn.Sequential(
-            nn.Conv3d(in_channels, in_channels, kernel_size=3, stride=stride, padding=1,
-                      groups=in_channels, bias=False),
-            _make_norm3d(norm, in_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            _make_norm3d(norm, out_channels),
-            nn.ReLU(inplace=True),
-        )
 
         # Conv branch (local)
         self.conv_branch = nn.Sequential(
-            nn.Conv3d(out_channels, out_channels, kernel_size=3, stride=1, padding=1,
-                      groups=out_channels, bias=False),
-            _make_layernorm3d(out_channels),
+            nn.Conv3d(self.conv_in_channels, self.conv_in_channels, kernel_size=3, stride=stride, padding=1,
+                      groups=self.conv_in_channels, bias=False),
+            _make_layernorm3d(self.conv_in_channels),
             nn.GELU(),
-            nn.Conv3d(out_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.Conv3d(self.conv_in_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
             _make_layernorm3d(mid_channels),
             nn.GELU(),
         )
 
         # Transformer branch (MobileViT 스타일)
-        self.transformer_local = nn.Sequential(
-            nn.Conv3d(out_channels, out_channels, kernel_size=3, stride=1, padding=1,
-                      groups=out_channels, bias=False),
-            _make_norm3d(norm, out_channels),
+        self.transformer_stem = nn.Sequential(
+            nn.Conv3d(self.trans_in_channels, self.trans_in_channels, kernel_size=3, stride=stride, padding=1,
+                      groups=self.trans_in_channels, bias=False),
+            norm_fn(self.trans_in_channels),
             nn.ReLU(inplace=True),
-            nn.Conv3d(out_channels, expanded_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            _make_norm3d(norm, expanded_channels),
+            nn.Conv3d(self.trans_in_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            norm_fn(mid_channels),
+            nn.ReLU(inplace=True),
+        )
+        self.transformer_local = nn.Sequential(
+            nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=1, padding=1,
+                      groups=mid_channels, bias=False),
+            norm_fn(mid_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(mid_channels, expanded_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            norm_fn(expanded_channels),
             nn.ReLU(inplace=True),
         )
         self.transformer_norm = nn.LayerNorm(expanded_channels)
@@ -80,7 +88,7 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         )
         self.transformer_reduce = nn.Sequential(
             nn.Conv3d(expanded_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            _make_norm3d(norm, mid_channels),
+            norm_fn(mid_channels),
             nn.ReLU(inplace=True),
         )
         patch_dim = (patch_size ** 3) * expanded_channels
@@ -94,7 +102,7 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         # Fusion after concat + shuffle
         self.fuse = nn.Sequential(
             nn.Conv3d(out_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            _make_norm3d(norm, out_channels),
+            norm_fn(out_channels),
         )
 
         # Residual path
@@ -103,17 +111,18 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         else:
             self.shortcut = nn.Sequential(
                 nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=stride, padding=0, bias=False),
-                _make_norm3d(norm, out_channels),
+                norm_fn(out_channels),
             )
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        stem_out = self.stem(x)
+        x_conv, x_trans = torch.split(x, [self.conv_in_channels, self.trans_in_channels], dim=1)
 
         # Conv branch
-        conv_feat = self.conv_branch(stem_out)
+        conv_feat = self.conv_branch(x_conv)
 
         # Transformer branch
-        trans_local = self.transformer_local(stem_out)
+        trans_feat_input = self.transformer_stem(x_trans)
+        trans_local = self.transformer_local(trans_feat_input)
         b, c, d, h, w = trans_local.shape
         orig_d, orig_h, orig_w = d, h, w
         p = self.patch_size
@@ -167,21 +176,37 @@ class Down3DShuffleNetV2Hybrid(nn.Module):
     """Downsampling using ShuffleNetV2 Hybrid unit (stride=2)."""
     def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn',
                  expand_ratio: float = 4.0, num_heads: int = 4, mlp_ratio: int = 2,
-                 patch_size: int = 4):
+                 patch_size: int = 4, force_layernorm: bool = False):
         super().__init__()
         # First unit: stride=2 for downsampling
         self.unit1 = ShuffleNetV2HybridUnit3D(in_channels, out_channels, stride=2,
                                               norm=norm, expand_ratio=expand_ratio,
                                               num_heads=num_heads, mlp_ratio=mlp_ratio,
-                                              patch_size=patch_size)
+                                              patch_size=patch_size,
+                                              force_layernorm=force_layernorm)
         # Second unit: stride=1 for feature refinement
         self.unit2 = ShuffleNetV2HybridUnit3D(out_channels, out_channels, stride=1,
                                               norm=norm, expand_ratio=expand_ratio,
                                               num_heads=num_heads, mlp_ratio=mlp_ratio,
-                                              patch_size=patch_size)
+                                              patch_size=patch_size,
+                                              force_layernorm=force_layernorm)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.unit1(x)
         x = self.unit2(x)
         return x
+
+
+class ShuffleNetV2HybridUnit3D_AllLN(ShuffleNetV2HybridUnit3D):
+    """Convenience class forcing LayerNorm/GroupNorm(1) everywhere."""
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault('force_layernorm', True)
+        super().__init__(*args, **kwargs)
+
+
+class Down3DShuffleNetV2Hybrid_AllLN(Down3DShuffleNetV2Hybrid):
+    """Down block variant that forces LayerNorm in every normalization site."""
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault('force_layernorm', True)
+        super().__init__(*args, **kwargs)
 

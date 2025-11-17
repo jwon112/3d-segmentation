@@ -20,12 +20,13 @@ class DualBranchUNet3D_ShuffleHybrid(nn.Module):
 
     def __init__(self, n_channels: int = 2, n_classes: int = 4, norm: str = 'bn', bilinear: bool = False,
                  size: str = 's', hybrid_expand_ratio: float = 2.0, hybrid_num_heads: int = 4, hybrid_mlp_ratio: int = 2,
-                 hybrid_patch_size: int = 4):
+                 hybrid_patch_size: int = 4, force_hybrid_layernorm: bool = False):
         super().__init__()
         assert n_channels == 2
         self.norm = norm or 'bn'
         self.bilinear = bilinear
         self.size = size
+        self.force_hybrid_layernorm = force_hybrid_layernorm
 
         channels = get_dualbranch_channels_stage4_fused(size)
 
@@ -45,12 +46,14 @@ class DualBranchUNet3D_ShuffleHybrid(nn.Module):
         self.branch_flair4 = Down3DShuffleNetV2Hybrid(
             channels['branch3'], channels['branch4'], norm=self.norm,
             expand_ratio=hybrid_expand_ratio, num_heads=hybrid_num_heads,
-            mlp_ratio=hybrid_mlp_ratio, patch_size=hybrid_patch_size
+            mlp_ratio=hybrid_mlp_ratio, patch_size=hybrid_patch_size,
+            force_layernorm=self.force_hybrid_layernorm
         )
         self.branch_t1ce4 = Down3DShuffleNetV2Hybrid(
             channels['branch3'], channels['branch4'], norm=self.norm,
             expand_ratio=hybrid_expand_ratio, num_heads=hybrid_num_heads,
-            mlp_ratio=hybrid_mlp_ratio, patch_size=hybrid_patch_size
+            mlp_ratio=hybrid_mlp_ratio, patch_size=hybrid_patch_size,
+            force_layernorm=self.force_hybrid_layernorm
         )
 
         # Stage 5 (single branch)
@@ -58,7 +61,8 @@ class DualBranchUNet3D_ShuffleHybrid(nn.Module):
         self.down5 = Down3DShuffleNetV2Hybrid(
             fused_stage4_channels, channels['down5'], norm=self.norm,
             expand_ratio=hybrid_expand_ratio, num_heads=hybrid_num_heads,
-            mlp_ratio=hybrid_mlp_ratio, patch_size=hybrid_patch_size
+            mlp_ratio=hybrid_mlp_ratio, patch_size=hybrid_patch_size,
+            force_layernorm=self.force_hybrid_layernorm
         )
 
         # Decoder
@@ -134,11 +138,42 @@ class DualBranchUNet3D_ShuffleHybrid_Large(DualBranchUNet3D_ShuffleHybrid):
         super().__init__(size='l', **kwargs)
 
 
+class DualBranchUNet3D_ShuffleHybrid_AllLN(DualBranchUNet3D_ShuffleHybrid):
+    def __init__(self, **kwargs):
+        kwargs.setdefault('force_hybrid_layernorm', True)
+        super().__init__(**kwargs)
+
+
+class DualBranchUNet3D_ShuffleHybrid_AllLN_XS(DualBranchUNet3D_ShuffleHybrid_AllLN):
+    def __init__(self, **kwargs):
+        super().__init__(size='xs', **kwargs)
+
+
+class DualBranchUNet3D_ShuffleHybrid_AllLN_Small(DualBranchUNet3D_ShuffleHybrid_AllLN):
+    def __init__(self, **kwargs):
+        super().__init__(size='s', **kwargs)
+
+
+class DualBranchUNet3D_ShuffleHybrid_AllLN_Medium(DualBranchUNet3D_ShuffleHybrid_AllLN):
+    def __init__(self, **kwargs):
+        super().__init__(size='m', **kwargs)
+
+
+class DualBranchUNet3D_ShuffleHybrid_AllLN_Large(DualBranchUNet3D_ShuffleHybrid_AllLN):
+    def __init__(self, **kwargs):
+        super().__init__(size='l', **kwargs)
+
+
 __all__ = [
     'DualBranchUNet3D_ShuffleHybrid',
     'DualBranchUNet3D_ShuffleHybrid_XS',
     'DualBranchUNet3D_ShuffleHybrid_Small',
     'DualBranchUNet3D_ShuffleHybrid_Medium',
     'DualBranchUNet3D_ShuffleHybrid_Large',
+    'DualBranchUNet3D_ShuffleHybrid_AllLN',
+    'DualBranchUNet3D_ShuffleHybrid_AllLN_XS',
+    'DualBranchUNet3D_ShuffleHybrid_AllLN_Small',
+    'DualBranchUNet3D_ShuffleHybrid_AllLN_Medium',
+    'DualBranchUNet3D_ShuffleHybrid_AllLN_Large',
 ]
 
