@@ -1,15 +1,18 @@
 """
 ShuffleNetV2 Hybrid Modules
-ShuffleNetV2 기반 Conv-Transformer 하이브리드 블록
+ShuffleNetV2 + Transformer 하이브리드 블록
 
-구조:
-- ShuffleNetV2의 기본 구조 (split -> branch1 + branch2 -> concat -> shuffle)
-- Branch 1: Conv 연산 (기존 ShuffleNetV2 스타일)
-- Branch 2: Transformer 연산 (MobileViT 스타일 inverted bottleneck + Self-Attention)
+핵심 아이디어 (도식 기준):
+- Stem: 3x3 depthwise stride s (s∈{1,2}) → 1x1 pointwise conv
+- Branch Conv: 3x3 depthwise → 1x1 conv (local representation)
+- Branch Transformer: 3x3 depthwise → 1x1 conv (expansion ratio 적용) → Transformer → 1x1 conv (reduction)
+- 두 branch 출력 concat → Channel shuffle → 1x1 conv (fuse)
+- Residual 연결 (stride≠1 또는 채널 mismatch일 때는 1x1 conv로 정렬)
 """
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from ..model_3d_unet import _make_norm3d
 from .shufflenet_modules import channel_shuffle_3d
@@ -18,180 +21,137 @@ from .shufflenet_modules import channel_shuffle_3d
 class ShuffleNetV2HybridUnit3D(nn.Module):
     """3D ShuffleNetV2 Hybrid Unit (Conv + Transformer).
     
-    ShuffleNetV2 구조에 Conv와 Transformer를 병렬로 융합:
-    - Stride=1: Split -> Branch1 (Conv) + Branch2 (Transformer with inverted bottleneck) -> Concat -> Shuffle
-    - Stride=2: No split -> Branch1 (Conv stride=2) + Branch2 (Transformer stride=2) -> Concat -> Shuffle
-    
-    Branch 2 (Transformer):
-    - MobileViT 스타일: 3x3 DWConv + 1x1 Conv (expansion) -> Transformer -> 1x1 Conv (reduction)
-    - Inverted bottleneck 구조로 채널 확장/축소
-    - Transformer는 Self-Attention + MLP로 구성
+    Stem → (Conv branch, Transformer branch) → concat → shuffle → fuse → residual
     """
-    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, 
-                 norm: str = 'bn', expand_ratio: float = 4.0, 
-                 num_heads: int = 4, mlp_ratio: int = 2):
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1,
+                 norm: str = 'bn', expand_ratio: float = 4.0,
+                 num_heads: int = 4, mlp_ratio: int = 2, patch_size: int = 4):
         super().__init__()
         self.stride = stride
-        self.in_channels = in_channels
         self.out_channels = out_channels
-        self.expand_ratio = expand_ratio
-        self.num_heads = num_heads
-        self.mlp_ratio = mlp_ratio
-        
-        if stride == 1:
-            # Stride=1: Split operation
-            assert in_channels == out_channels, "For stride=1, in_channels must equal out_channels"
-            mid_channels = out_channels // 2
-            
-            # Branch 1: Conv (기존 ShuffleNetV2 스타일)
-            self.branch1 = nn.Sequential(
-                # Depthwise Conv
-                nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=1, padding=1, 
-                         groups=mid_channels, bias=False),
-                _make_norm3d(norm, mid_channels),
-                nn.ReLU(inplace=True),
-                # Pointwise Conv
-                nn.Conv3d(mid_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
-                _make_norm3d(norm, mid_channels),
-                nn.ReLU(inplace=True),
-            )
-            
-            # Branch 2: Transformer with inverted bottleneck
-            expanded_channels = int(mid_channels * expand_ratio)
-            
-            # MobileViT 스타일: 3x3 DWConv + 1x1 Conv (expansion)
-            self.branch2_local = nn.Sequential(
-                # 3x3 Depthwise Conv (local representation)
-                nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=1, padding=1, 
-                         groups=mid_channels, bias=False),
-                _make_norm3d(norm, mid_channels),
-                nn.ReLU(inplace=True),
-                # 1x1 Conv (expansion)
-                nn.Conv3d(mid_channels, expanded_channels, kernel_size=1, stride=1, padding=0, bias=False),
-                _make_norm3d(norm, expanded_channels),
-                nn.ReLU(inplace=True),
-            )
-            
-            # Transformer (Self-Attention + MLP)
-            self.branch2_attn_norm = nn.LayerNorm(expanded_channels)
-            self.branch2_attn = nn.MultiheadAttention(expanded_channels, num_heads=num_heads, batch_first=True)
-            self.branch2_ffn = nn.Sequential(
-                nn.Linear(expanded_channels, expanded_channels * mlp_ratio),
-                nn.GELU(),
-                nn.Linear(expanded_channels * mlp_ratio, expanded_channels)
-            )
-            
-            # 1x1 Conv (reduction)
-            self.branch2_reduce = nn.Sequential(
-                nn.Conv3d(expanded_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
-                _make_norm3d(norm, mid_channels),
-                nn.ReLU(inplace=True),
-            )
+        mid_channels = out_channels // 2
+        expanded_channels = max(int(mid_channels * expand_ratio), mid_channels)
+        self.patch_size = patch_size
+
+        # Stem: 3x3 depthwise (stride) + 1x1 conv
+        self.stem = nn.Sequential(
+            nn.Conv3d(in_channels, in_channels, kernel_size=3, stride=stride, padding=1,
+                      groups=in_channels, bias=False),
+            _make_norm3d(norm, in_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            _make_norm3d(norm, out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+        # Conv branch (local)
+        self.conv_branch = nn.Sequential(
+            nn.Conv3d(out_channels, out_channels, kernel_size=3, stride=1, padding=1,
+                      groups=out_channels, bias=False),
+            _make_norm3d(norm, out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(out_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            _make_norm3d(norm, mid_channels),
+            nn.ReLU(inplace=True),
+        )
+
+        # Transformer branch (MobileViT 스타일)
+        self.transformer_local = nn.Sequential(
+            nn.Conv3d(out_channels, out_channels, kernel_size=3, stride=1, padding=1,
+                      groups=out_channels, bias=False),
+            _make_norm3d(norm, out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(out_channels, expanded_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            _make_norm3d(norm, expanded_channels),
+            nn.ReLU(inplace=True),
+        )
+        self.transformer_norm = nn.LayerNorm(expanded_channels)
+        self.transformer_attn = nn.MultiheadAttention(expanded_channels, num_heads=num_heads, batch_first=True)
+        self.transformer_ffn = nn.Sequential(
+            nn.Linear(expanded_channels, expanded_channels * mlp_ratio),
+            nn.GELU(),
+            nn.Linear(expanded_channels * mlp_ratio, expanded_channels),
+        )
+        self.transformer_reduce = nn.Sequential(
+            nn.Conv3d(expanded_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            _make_norm3d(norm, mid_channels),
+            nn.ReLU(inplace=True),
+        )
+        patch_dim = (patch_size ** 3) * expanded_channels
+        self.patch_embed = nn.Linear(patch_dim, expanded_channels)
+        self.pos_mlp = nn.Sequential(
+            nn.Linear(3, expanded_channels),
+            nn.GELU(),
+            nn.Linear(expanded_channels, expanded_channels),
+        )
+
+        # Fusion after concat + shuffle
+        self.fuse = nn.Sequential(
+            nn.Conv3d(out_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            _make_norm3d(norm, out_channels),
+        )
+
+        # Residual path
+        if stride == 1 and in_channels == out_channels:
+            self.shortcut = nn.Identity()
         else:
-            # Stride=2: No split, both branches process full input
-            # Branch 1: Conv stride=2
-            self.branch1 = nn.Sequential(
-                nn.Conv3d(in_channels, in_channels, kernel_size=3, stride=2, padding=1, 
-                         groups=in_channels, bias=False),
-                _make_norm3d(norm, in_channels),
-                nn.Conv3d(in_channels, out_channels // 2, kernel_size=1, stride=1, padding=0, bias=False),
-                _make_norm3d(norm, out_channels // 2),
-                nn.ReLU(inplace=True),
-            )
-            
-            # Branch 2: Transformer stride=2
-            expanded_channels = int(in_channels * expand_ratio)
-            
-            # MobileViT 스타일: 3x3 DWConv stride=2 + 1x1 Conv (expansion)
-            self.branch2_local = nn.Sequential(
-                # 3x3 Depthwise Conv stride=2 (local representation + downsampling)
-                nn.Conv3d(in_channels, in_channels, kernel_size=3, stride=2, padding=1, 
-                         groups=in_channels, bias=False),
-                _make_norm3d(norm, in_channels),
-                nn.ReLU(inplace=True),
-                # 1x1 Conv (expansion)
-                nn.Conv3d(in_channels, expanded_channels, kernel_size=1, stride=1, padding=0, bias=False),
-                _make_norm3d(norm, expanded_channels),
-                nn.ReLU(inplace=True),
-            )
-            
-            # Transformer (Self-Attention + MLP)
-            self.branch2_attn_norm = nn.LayerNorm(expanded_channels)
-            self.branch2_attn = nn.MultiheadAttention(expanded_channels, num_heads=num_heads, batch_first=True)
-            self.branch2_ffn = nn.Sequential(
-                nn.Linear(expanded_channels, expanded_channels * mlp_ratio),
-                nn.GELU(),
-                nn.Linear(expanded_channels * mlp_ratio, expanded_channels)
-            )
-            
-            # 1x1 Conv (reduction)
-            self.branch2_reduce = nn.Sequential(
-                nn.Conv3d(expanded_channels, out_channels // 2, kernel_size=1, stride=1, padding=0, bias=False),
-                _make_norm3d(norm, out_channels // 2),
-                nn.ReLU(inplace=True),
+            self.shortcut = nn.Sequential(
+                nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=stride, padding=0, bias=False),
+                _make_norm3d(norm, out_channels),
             )
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.stride == 1:
-            # Split channels
-            x1, x2 = x.chunk(2, dim=1)
-            
-            # Branch 1: Conv
-            out1 = self.branch1(x1)
-            
-            # Branch 2: Transformer with inverted bottleneck
-            # Local representation (MobileViT 스타일)
-            x2_local = self.branch2_local(x2)  # (B, expanded_channels, D, H, W)
-            
-            # To tokens: (B, N, C)
-            b, c, d, h, w = x2_local.shape
-            tokens = x2_local.permute(0, 2, 3, 4, 1).contiguous().view(b, d * h * w, c)
-            
-            # Transformer
-            tokens_norm = self.branch2_attn_norm(tokens)
-            attn_out, _ = self.branch2_attn(tokens_norm, tokens_norm, tokens_norm)
-            tokens = tokens + attn_out  # Residual connection
-            tokens = tokens + self.branch2_ffn(self.branch2_attn_norm(tokens))  # FFN with residual
-            
-            # Back to 3D: (B, N, C) -> (B, C, D, H, W)
-            tokens = tokens.view(b, d, h, w, c).permute(0, 4, 1, 2, 3).contiguous()
-            
-            # Reduction
-            out2 = self.branch2_reduce(tokens)
-            
-            # Concat
-            out = torch.cat([out1, out2], dim=1)
-        else:
-            # Both branches process full input
-            # Branch 1: Conv
-            out1 = self.branch1(x)
-            
-            # Branch 2: Transformer with inverted bottleneck
-            # Local representation (MobileViT 스타일)
-            x2_local = self.branch2_local(x)  # (B, expanded_channels, D, H, W)
-            
-            # To tokens: (B, N, C)
-            b, c, d, h, w = x2_local.shape
-            tokens = x2_local.permute(0, 2, 3, 4, 1).contiguous().view(b, d * h * w, c)
-            
-            # Transformer
-            tokens_norm = self.branch2_attn_norm(tokens)
-            attn_out, _ = self.branch2_attn(tokens_norm, tokens_norm, tokens_norm)
-            tokens = tokens + attn_out  # Residual connection
-            tokens = tokens + self.branch2_ffn(self.branch2_attn_norm(tokens))  # FFN with residual
-            
-            # Back to 3D: (B, N, C) -> (B, C, D, H, W)
-            tokens = tokens.view(b, d, h, w, c).permute(0, 4, 1, 2, 3).contiguous()
-            
-            # Reduction
-            out2 = self.branch2_reduce(tokens)
-            
-            # Concat
-            out = torch.cat([out1, out2], dim=1)
-        
-        # Channel Shuffle
+        stem_out = self.stem(x)
+
+        # Conv branch
+        conv_feat = self.conv_branch(stem_out)
+
+        # Transformer branch
+        trans_local = self.transformer_local(stem_out)
+        b, c, d, h, w = trans_local.shape
+        orig_d, orig_h, orig_w = d, h, w
+        p = self.patch_size
+        d_pad = (p - d % p) % p
+        h_pad = (p - h % p) % p
+        w_pad = (p - w % p) % p
+        if d_pad or h_pad or w_pad:
+            trans_local = F.pad(trans_local, (0, w_pad, 0, h_pad, 0, d_pad))
+            d += d_pad
+            h += h_pad
+            w += w_pad
+        Dz, Hy, Wx = d // p, h // p, w // p
+        trans_local = trans_local.view(b, c, Dz, p, Hy, p, Wx, p)
+        trans_local = trans_local.permute(0, 2, 4, 6, 3, 5, 7, 1).contiguous()
+        tokens = trans_local.view(b, Dz * Hy * Wx, -1)
+        tokens = self.patch_embed(tokens)
+        pos = self._positional_encoding(Dz, Hy, Wx, tokens.device, tokens.dtype)
+        tokens = tokens + pos.unsqueeze(0)
+        tokens_norm = self.transformer_norm(tokens)
+        attn_out, _ = self.transformer_attn(tokens_norm, tokens_norm, tokens_norm)
+        tokens = tokens + attn_out
+        tokens = tokens + self.transformer_ffn(self.transformer_norm(tokens))
+        tokens = tokens.view(b, Dz, Hy, Wx, p, p, p, -1)
+        tokens = tokens.permute(0, 7, 1, 4, 2, 5, 3, 6).contiguous().view(b, c, d, h, w)
+        if d_pad or h_pad or w_pad:
+            tokens = tokens[:, :, :orig_d, :orig_h, :orig_w]
+        trans_feat = self.transformer_reduce(tokens)
+
+        # Concat -> shuffle -> fuse
+        out = torch.cat([conv_feat, trans_feat], dim=1)
         out = channel_shuffle_3d(out, groups=2)
-        return out
+        out = self.fuse(out)
+
+        # Residual add
+        out = out + self.shortcut(x)
+        return torch.relu(out)
+
+    def _positional_encoding(self, Dz: int, Hy: int, Wx: int, device, dtype):
+        z = torch.linspace(-1.0, 1.0, Dz, device=device, dtype=dtype)
+        y = torch.linspace(-1.0, 1.0, Hy, device=device, dtype=dtype)
+        x = torch.linspace(-1.0, 1.0, Wx, device=device, dtype=dtype)
+        grid = torch.stack(torch.meshgrid(z, y, x, indexing='ij'), dim=-1)  # (Dz,Hy,Wx,3)
+        pos = grid.view(-1, 3)
+        return self.pos_mlp(pos)
 
 
 class Down3DShuffleNetV2Hybrid(nn.Module):
