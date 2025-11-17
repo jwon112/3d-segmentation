@@ -31,6 +31,7 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         self.out_channels = out_channels
         mid_channels = out_channels // 2
         expanded_channels = max(int(mid_channels * expand_ratio), mid_channels)
+        self.expanded_channels = expanded_channels
         self.patch_size = patch_size
 
         # Stem: 3x3 depthwise (stride) + 1x1 conv
@@ -130,8 +131,10 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         attn_out, _ = self.transformer_attn(tokens_norm, tokens_norm, tokens_norm)
         tokens = tokens + attn_out
         tokens = tokens + self.transformer_ffn(self.transformer_norm(tokens))
-        tokens = tokens.view(b, Dz, Hy, Wx, p, p, p, -1)
-        tokens = tokens.permute(0, 7, 1, 4, 2, 5, 3, 6).contiguous().view(b, c, d, h, w)
+        tokens = tokens.view(b, Dz, Hy, Wx, p, p, p, self.expanded_channels)
+        tokens = tokens.permute(0, 7, 1, 4, 2, 5, 3, 6).contiguous().view(
+            b, self.expanded_channels, d, h, w
+        )
         if d_pad or h_pad or w_pad:
             tokens = tokens[:, :, :orig_d, :orig_h, :orig_w]
         trans_feat = self.transformer_reduce(tokens)

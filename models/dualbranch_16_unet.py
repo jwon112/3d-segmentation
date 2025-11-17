@@ -19,7 +19,7 @@ class DualBranchUNet3D_ShuffleHybrid(nn.Module):
     """
 
     def __init__(self, n_channels: int = 2, n_classes: int = 4, norm: str = 'bn', bilinear: bool = False,
-                 size: str = 's', hybrid_expand_ratio: float = 4.0, hybrid_num_heads: int = 4, hybrid_mlp_ratio: int = 2,
+                 size: str = 's', hybrid_expand_ratio: float = 2.0, hybrid_num_heads: int = 4, hybrid_mlp_ratio: int = 2,
                  hybrid_patch_size: int = 4):
         super().__init__()
         assert n_channels == 2
