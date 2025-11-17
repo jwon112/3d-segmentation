@@ -121,9 +121,9 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
             h += h_pad
             w += w_pad
         Dz, Hy, Wx = d // p, h // p, w // p
-        trans_local = trans_local.view(b, c, Dz, p, Hy, p, Wx, p)
+        trans_local = trans_local.view(b, self.expanded_channels, Dz, p, Hy, p, Wx, p)
         trans_local = trans_local.permute(0, 2, 4, 6, 3, 5, 7, 1).contiguous()
-        tokens = trans_local.view(b, Dz * Hy * Wx, -1)
+        tokens = trans_local.view(b, Dz * Hy * Wx, self.expanded_channels * (p ** 3))
         tokens = self.patch_embed(tokens)
         pos = self._positional_encoding(Dz, Hy, Wx, tokens.device, tokens.dtype)
         tokens = tokens + pos.unsqueeze(0)
@@ -131,8 +131,8 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         attn_out, _ = self.transformer_attn(tokens_norm, tokens_norm, tokens_norm)
         tokens = tokens + attn_out
         tokens = tokens + self.transformer_ffn(self.transformer_norm(tokens))
-        tokens = tokens.view(b, Dz, Hy, Wx, p, p, p, self.expanded_channels)
-        tokens = tokens.permute(0, 7, 1, 4, 2, 5, 3, 6).contiguous().view(
+        tokens = tokens.view(b, Dz, Hy, Wx, self.expanded_channels, p, p, p)
+        tokens = tokens.permute(0, 4, 1, 5, 2, 6, 3, 7).contiguous().view(
             b, self.expanded_channels, d, h, w
         )
         if d_pad or h_pad or w_pad:
