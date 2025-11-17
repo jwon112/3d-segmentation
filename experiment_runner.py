@@ -32,6 +32,53 @@ from visualization import create_comprehensive_analysis, create_interactive_3d_p
 from utils.gradcam_utils import generate_gradcam_for_model
 
 
+def _extract_hybrid_stats(model):
+    real_model = model.module if hasattr(model, 'module') else model
+    if not getattr(real_model, 'log_hybrid_stats', False):
+        return None
+    if not hasattr(real_model, 'get_hybrid_stats'):
+        return None
+    stats = real_model.get_hybrid_stats()
+    if not stats:
+        return None
+    return stats
+
+
+def log_hybrid_stats_epoch(model, epoch: int, rank: int):
+    stats = _extract_hybrid_stats(model)
+    if not stats or not is_main_process(rank):
+        return
+    latest_entries = []
+    for key in sorted(stats.keys()):
+        values = stats[key]
+        if not values:
+            continue
+        latest_entries.append(f"{key}={values[-1]:.6f}")
+    if latest_entries:
+        print(f"[HybridStats][Epoch {epoch}] " + " | ".join(latest_entries))
+
+
+def save_hybrid_stats_to_csv(model, results_dir: str, model_name: str, seed: int, rank: int):
+    stats = _extract_hybrid_stats(model)
+    if not stats or not is_main_process(rank):
+        return
+    rows = []
+    for key, values in stats.items():
+        for idx, value in enumerate(values):
+            rows.append({
+                'key': key,
+                'step': idx,
+                'value': value
+            })
+    if not rows:
+        return
+    df = pd.DataFrame(rows)
+    os.makedirs(results_dir, exist_ok=True)
+    csv_path = os.path.join(results_dir, f"hybrid_stats_{model_name}_seed_{seed}.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"[HybridStats] Saved stats to {csv_path}")
+
+
 def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
                 sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True, results_dir=None, ckpt_path=None):
     """모델 훈련 함수
@@ -273,7 +320,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         if is_main_process(rank):
             checkpoint_msg = " [BEST]" if checkpoint_saved else ""
             print(f"Epoch {epoch+1}/{epochs} | Train Loss {tr_loss:.4f} Dice {tr_dice:.4f} | Val Loss {va_loss:.4f} Dice {va_dice:.4f} (WT {va_wt:.4f} | TC {va_tc:.4f} | ET {va_et:.4f}){checkpoint_msg}")
+        log_hybrid_stats_epoch(model, epoch + 1, rank)
     
+    save_hybrid_stats_to_csv(model, results_dir, model_name, seed, rank)
     return train_losses, val_dices, epoch_results, best_epoch, best_val_dice, best_val_wt, best_val_tc, best_val_et
 
 
