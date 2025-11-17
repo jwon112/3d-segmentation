@@ -156,17 +156,20 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
 
 class Down3DShuffleNetV2Hybrid(nn.Module):
     """Downsampling using ShuffleNetV2 Hybrid unit (stride=2)."""
-    def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn', 
-                 expand_ratio: float = 4.0, num_heads: int = 4, mlp_ratio: int = 2):
+    def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn',
+                 expand_ratio: float = 4.0, num_heads: int = 4, mlp_ratio: int = 2,
+                 patch_size: int = 4):
         super().__init__()
         # First unit: stride=2 for downsampling
-        self.unit1 = ShuffleNetV2HybridUnit3D(in_channels, out_channels, stride=2, 
-                                               norm=norm, expand_ratio=expand_ratio, 
-                                               num_heads=num_heads, mlp_ratio=mlp_ratio)
+        self.unit1 = ShuffleNetV2HybridUnit3D(in_channels, out_channels, stride=2,
+                                              norm=norm, expand_ratio=expand_ratio,
+                                              num_heads=num_heads, mlp_ratio=mlp_ratio,
+                                              patch_size=patch_size)
         # Second unit: stride=1 for feature refinement
-        self.unit2 = ShuffleNetV2HybridUnit3D(out_channels, out_channels, stride=1, 
-                                               norm=norm, expand_ratio=expand_ratio, 
-                                               num_heads=num_heads, mlp_ratio=mlp_ratio)
+        self.unit2 = ShuffleNetV2HybridUnit3D(out_channels, out_channels, stride=1,
+                                              norm=norm, expand_ratio=expand_ratio,
+                                              num_heads=num_heads, mlp_ratio=mlp_ratio,
+                                              patch_size=patch_size)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.unit1(x)
