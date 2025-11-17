@@ -269,8 +269,9 @@ class DualBranchUNet3D_Dilated125_Both_Mobile(nn.Module):
         self.expand_ratio = expand_ratio
         self.size = size
         
-        # Get channel configuration
-        channels = get_dualbranch_channels(size)
+        # Get channel configuration (Stage 4 fused, Stage 5 single branch)
+        from .channel_configs import get_dualbranch_channels_stage4_fused
+        channels = get_dualbranch_channels_stage4_fused(size)
         
         # Stage 1 stems (MobileNetV2 blocks)
         self.stem_flair = MobileNetV2Block3D(1, channels['stem'], stride=1, expand_ratio=self.expand_ratio, norm=self.norm)
@@ -288,7 +289,7 @@ class DualBranchUNet3D_Dilated125_Both_Mobile(nn.Module):
         self.branch_flair4 = Down3DStrideDilated_1_2_5(channels['branch3'], channels['branch4'], norm=self.norm)
         self.branch_t1ce4 = Down3DStrideDilated_1_2_5(channels['branch3'], channels['branch4'], norm=self.norm)
         
-        # Stage 5 fused branch with MobileViT
+        # Stage 5 fused branch with MobileViT (input: branch4*2, output: down5)
         factor = 2 if self.bilinear else 1
         fused_channels = channels['branch4'] * 2
         self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
