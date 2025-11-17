@@ -3,6 +3,8 @@ import torch.nn as nn
 
 from .model_3d_unet import Up3D, OutConv3D
 from .dualbranch_14_unet import Stem3x3
+from collections import defaultdict
+
 from .modules.shufflenet_modules import Down3DShuffleNetV2
 from .modules.shufflenet_hybrid_modules import Down3DShuffleNetV2Hybrid
 from .channel_configs import get_dualbranch_channels_stage4_fused
@@ -20,13 +22,16 @@ class DualBranchUNet3D_ShuffleHybrid(nn.Module):
 
     def __init__(self, n_channels: int = 2, n_classes: int = 4, norm: str = 'bn', bilinear: bool = False,
                  size: str = 's', hybrid_expand_ratio: float = 2.0, hybrid_num_heads: int = 4, hybrid_mlp_ratio: int = 2,
-                 hybrid_patch_size: int = 4, force_hybrid_layernorm: bool = False):
+                 hybrid_patch_size: int = 4, force_hybrid_layernorm: bool = False,
+                 log_hybrid_stats: bool = False):
         super().__init__()
         assert n_channels == 2
         self.norm = norm or 'bn'
         self.bilinear = bilinear
         self.size = size
         self.force_hybrid_layernorm = force_hybrid_layernorm
+        self.log_hybrid_stats = log_hybrid_stats
+        self.hybrid_stats = defaultdict(list) if self.log_hybrid_stats else None
 
         channels = get_dualbranch_channels_stage4_fused(size)
 
@@ -43,26 +48,31 @@ class DualBranchUNet3D_ShuffleHybrid(nn.Module):
         self.branch_t1ce3 = Down3DShuffleNetV2(channels['branch2'], channels['branch3'], norm=self.norm)
 
         # Stage 4
+        hybrid_kwargs = dict(
+            norm=self.norm,
+            expand_ratio=hybrid_expand_ratio,
+            num_heads=hybrid_num_heads,
+            mlp_ratio=hybrid_mlp_ratio,
+            patch_size=hybrid_patch_size,
+            force_layernorm=self.force_hybrid_layernorm,
+            log_stats=self.log_hybrid_stats,
+            stats_dict=self.hybrid_stats,
+        )
+
         self.branch_flair4 = Down3DShuffleNetV2Hybrid(
-            channels['branch3'], channels['branch4'], norm=self.norm,
-            expand_ratio=hybrid_expand_ratio, num_heads=hybrid_num_heads,
-            mlp_ratio=hybrid_mlp_ratio, patch_size=hybrid_patch_size,
-            force_layernorm=self.force_hybrid_layernorm
+            channels['branch3'], channels['branch4'], stats_prefix='stage4/flair/',
+            **hybrid_kwargs,
         )
         self.branch_t1ce4 = Down3DShuffleNetV2Hybrid(
-            channels['branch3'], channels['branch4'], norm=self.norm,
-            expand_ratio=hybrid_expand_ratio, num_heads=hybrid_num_heads,
-            mlp_ratio=hybrid_mlp_ratio, patch_size=hybrid_patch_size,
-            force_layernorm=self.force_hybrid_layernorm
+            channels['branch3'], channels['branch4'], stats_prefix='stage4/t1ce/',
+            **hybrid_kwargs,
         )
 
         # Stage 5 (single branch)
         fused_stage4_channels = channels['branch4'] * 2
         self.down5 = Down3DShuffleNetV2Hybrid(
-            fused_stage4_channels, channels['down5'], norm=self.norm,
-            expand_ratio=hybrid_expand_ratio, num_heads=hybrid_num_heads,
-            mlp_ratio=hybrid_mlp_ratio, patch_size=hybrid_patch_size,
-            force_layernorm=self.force_hybrid_layernorm
+            fused_stage4_channels, channels['down5'], stats_prefix='stage5/fused/',
+            **hybrid_kwargs,
         )
 
         # Decoder
@@ -116,6 +126,9 @@ class DualBranchUNet3D_ShuffleHybrid(nn.Module):
         x = self.up4(x, x1)
         x = self.up5(x, x_input[:, :2])
         return self.outc(x)
+
+    def get_hybrid_stats(self):
+        return self.hybrid_stats
 
 
 class DualBranchUNet3D_ShuffleHybrid_XS(DualBranchUNet3D_ShuffleHybrid):

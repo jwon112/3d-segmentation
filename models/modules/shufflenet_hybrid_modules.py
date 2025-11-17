@@ -13,6 +13,7 @@ ShuffleNetV2 + Transformer 하이브리드 블록
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Optional, Dict
 
 from ..model_3d_unet import _make_norm3d
 from .shufflenet_modules import channel_shuffle_3d
@@ -31,12 +32,16 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, stride: int = 1,
                  norm: str = 'bn', expand_ratio: float = 4.0,
                  num_heads: int = 4, mlp_ratio: int = 2, patch_size: int = 4,
-                 force_layernorm: bool = False):
+                 force_layernorm: bool = False, log_stats: bool = False,
+                 stats_dict: Optional[Dict[str, list]] = None, stats_prefix: str = ''):
         super().__init__()
         self.stride = stride
         self.out_channels = out_channels
         self.force_layernorm = force_layernorm
         self.norm_type = norm or 'bn'
+        self.log_stats = log_stats
+        self.stats_dict = stats_dict
+        self.stats_prefix = stats_prefix
         norm_fn = (lambda c: _make_layernorm3d(c)) if self.force_layernorm else (lambda c: _make_norm3d(self.norm_type, c))
         mid_channels = out_channels // 2
         if mid_channels == 0:
@@ -142,7 +147,8 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         pos = self._positional_encoding(Dz, Hy, Wx, tokens.device, tokens.dtype)
         tokens = tokens + pos.unsqueeze(0)
         tokens_norm = self.transformer_norm(tokens)
-        attn_out, _ = self.transformer_attn(tokens_norm, tokens_norm, tokens_norm)
+        attn_out, attn_weights = self.transformer_attn(tokens_norm, tokens_norm, tokens_norm)
+        self._record_stat('attn_weights', attn_weights)
         tokens = tokens + attn_out
         tokens = tokens + self.transformer_ffn(self.transformer_norm(tokens))
         tokens = tokens.view(b, Dz, Hy, Wx, self.expanded_channels)
@@ -153,6 +159,7 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         if d_pad or h_pad or w_pad:
             tokens = tokens[:, :, :orig_d, :orig_h, :orig_w]
         trans_feat = self.transformer_reduce(tokens)
+        self._record_stat('trans_feat', trans_feat)
 
         # Concat -> shuffle -> fuse
         out = torch.cat([conv_feat, trans_feat], dim=1)
@@ -162,6 +169,17 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         # Residual add
         out = out + self.shortcut(x)
         return torch.relu(out)
+
+    def _record_stat(self, name: str, tensor: torch.Tensor) -> None:
+        if not self.log_stats or self.stats_dict is None:
+            return
+        key_mean = f"{self.stats_prefix}{name}/mean"
+        key_std = f"{self.stats_prefix}{name}/std"
+        det = tensor.detach()
+        mean_val = det.float().mean().item()
+        std_val = det.float().std(unbiased=False).item()
+        self.stats_dict.setdefault(key_mean, []).append(mean_val)
+        self.stats_dict.setdefault(key_std, []).append(std_val)
 
     def _positional_encoding(self, Dz: int, Hy: int, Wx: int, device, dtype):
         z = torch.linspace(-1.0, 1.0, Dz, device=device, dtype=dtype)
@@ -176,20 +194,26 @@ class Down3DShuffleNetV2Hybrid(nn.Module):
     """Downsampling using ShuffleNetV2 Hybrid unit (stride=2)."""
     def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn',
                  expand_ratio: float = 4.0, num_heads: int = 4, mlp_ratio: int = 2,
-                 patch_size: int = 4, force_layernorm: bool = False):
+                 patch_size: int = 4, force_layernorm: bool = False,
+                 log_stats: bool = False, stats_dict: Optional[Dict[str, list]] = None,
+                 stats_prefix: str = ''):
         super().__init__()
         # First unit: stride=2 for downsampling
         self.unit1 = ShuffleNetV2HybridUnit3D(in_channels, out_channels, stride=2,
                                               norm=norm, expand_ratio=expand_ratio,
                                               num_heads=num_heads, mlp_ratio=mlp_ratio,
                                               patch_size=patch_size,
-                                              force_layernorm=force_layernorm)
+                                              force_layernorm=force_layernorm,
+                                              log_stats=log_stats, stats_dict=stats_dict,
+                                              stats_prefix=f"{stats_prefix}unit1/")
         # Second unit: stride=1 for feature refinement
         self.unit2 = ShuffleNetV2HybridUnit3D(out_channels, out_channels, stride=1,
                                               norm=norm, expand_ratio=expand_ratio,
                                               num_heads=num_heads, mlp_ratio=mlp_ratio,
                                               patch_size=patch_size,
-                                              force_layernorm=force_layernorm)
+                                              force_layernorm=force_layernorm,
+                                              log_stats=log_stats, stats_dict=stats_dict,
+                                              stats_prefix=f"{stats_prefix}unit2/")
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.unit1(x)
