@@ -98,6 +98,7 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         )
         patch_dim = (patch_size ** 3) * expanded_channels
         self.patch_embed = nn.Linear(patch_dim, expanded_channels)
+        self.patch_restore = nn.Linear(expanded_channels, patch_dim)
         self.pos_mlp = nn.Sequential(
             nn.Linear(3, expanded_channels),
             nn.GELU(),
@@ -151,8 +152,8 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         self._record_stat('attn_weights', attn_weights)
         tokens = tokens + attn_out
         tokens = tokens + self.transformer_ffn(self.transformer_norm(tokens))
-        tokens = tokens.view(b, Dz, Hy, Wx, self.expanded_channels)
-        tokens = tokens.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, -1, -1, p, p, p)
+        tokens = self.patch_restore(tokens.view(b * Dz * Hy * Wx, self.expanded_channels))
+        tokens = tokens.view(b, Dz, Hy, Wx, self.expanded_channels, p, p, p)
         tokens = tokens.permute(0, 4, 1, 5, 2, 6, 3, 7).contiguous().view(
             b, self.expanded_channels, d, h, w
         )
