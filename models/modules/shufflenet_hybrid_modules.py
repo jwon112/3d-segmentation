@@ -12,11 +12,11 @@ ShuffleNetV2 + Transformer 하이브리드 블록
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from typing import Optional, Dict
 
 from ..model_3d_unet import _make_norm3d
 from .shufflenet_modules import channel_shuffle_3d
+from .mvit_modules import MobileViT3DBlock
 
 
 def _make_layernorm3d(channels: int) -> nn.Module:
@@ -32,6 +32,8 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, stride: int = 1,
                  norm: str = 'bn', expand_ratio: float = 4.0,
                  num_heads: int = 4, mlp_ratio: int = 2, patch_size: int = 4,
+                 num_transformer_layers: int = 2,
+                 attn_dropout: float = 0.0, ffn_dropout: float = 0.0,
                  force_layernorm: bool = False, log_stats: bool = False,
                  stats_dict: Optional[Dict[str, list]] = None, stats_prefix: str = ''):
         super().__init__()
@@ -52,7 +54,6 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         self.trans_in_channels = in_channels - self.conv_in_channels
         if self.conv_in_channels == 0 or self.trans_in_channels == 0:
             raise ValueError("in_channels must be >= 2 to split channels for hybrid unit.")
-        self.patch_size = patch_size
 
         # Conv branch (local)
         self.conv_branch = nn.Sequential(
@@ -66,43 +67,27 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         )
 
         # Transformer branch (MobileViT 스타일)
-        self.transformer_stem = nn.Sequential(
-            nn.Conv3d(self.trans_in_channels, self.trans_in_channels, kernel_size=3, stride=stride, padding=1,
-                      groups=self.trans_in_channels, bias=False),
-            norm_fn(self.trans_in_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(self.trans_in_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            norm_fn(mid_channels),
-            nn.ReLU(inplace=True),
-        )
-        self.transformer_local = nn.Sequential(
-            nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=1, padding=1,
-                      groups=mid_channels, bias=False),
-            norm_fn(mid_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(mid_channels, expanded_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            norm_fn(expanded_channels),
-            nn.ReLU(inplace=True),
-        )
-        self.transformer_norm = nn.LayerNorm(expanded_channels)
-        self.transformer_attn = nn.MultiheadAttention(expanded_channels, num_heads=num_heads, batch_first=True)
-        self.transformer_ffn = nn.Sequential(
-            nn.Linear(expanded_channels, expanded_channels * mlp_ratio),
-            nn.GELU(),
-            nn.Linear(expanded_channels * mlp_ratio, expanded_channels),
-        )
-        self.transformer_reduce = nn.Sequential(
-            nn.Conv3d(expanded_channels, mid_channels, kernel_size=1, stride=1, padding=0, bias=False),
-            norm_fn(mid_channels),
-            nn.ReLU(inplace=True),
-        )
-        patch_dim = (patch_size ** 3) * expanded_channels
-        self.patch_embed = nn.Linear(patch_dim, expanded_channels)
-        self.patch_restore = nn.Linear(expanded_channels, patch_dim)
-        self.pos_mlp = nn.Sequential(
-            nn.Linear(3, expanded_channels),
-            nn.GELU(),
-            nn.Linear(expanded_channels, expanded_channels),
+        if stride == 1 and self.trans_in_channels == mid_channels:
+            self.transformer_align = nn.Identity()
+        else:
+            kernel_size = 3 if stride > 1 else 1
+            padding = 1 if stride > 1 else 0
+            self.transformer_align = nn.Sequential(
+                nn.Conv3d(self.trans_in_channels, mid_channels, kernel_size=kernel_size,
+                          stride=stride, padding=padding, bias=False),
+                norm_fn(mid_channels),
+                nn.ReLU(inplace=True),
+            )
+        self.transformer_mvit = MobileViT3DBlock(
+            channels=mid_channels,
+            hidden_dim=expanded_channels,
+            num_heads=num_heads,
+            mlp_ratio=mlp_ratio,
+            norm=self.norm_type,
+            patch_size=patch_size,
+            num_transformer_layers=num_transformer_layers,
+            attn_dropout=attn_dropout,
+            ffn_dropout=ffn_dropout,
         )
 
         # Fusion after concat + shuffle
@@ -127,39 +112,8 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         conv_feat = self.conv_branch(x_conv)
 
         # Transformer branch
-        trans_feat_input = self.transformer_stem(x_trans)
-        trans_local = self.transformer_local(trans_feat_input)
-        b, c, d, h, w = trans_local.shape
-        orig_d, orig_h, orig_w = d, h, w
-        p = self.patch_size
-        d_pad = (p - d % p) % p
-        h_pad = (p - h % p) % p
-        w_pad = (p - w % p) % p
-        if d_pad or h_pad or w_pad:
-            trans_local = F.pad(trans_local, (0, w_pad, 0, h_pad, 0, d_pad))
-            d += d_pad
-            h += h_pad
-            w += w_pad
-        Dz, Hy, Wx = d // p, h // p, w // p
-        trans_local = trans_local.view(b, self.expanded_channels, Dz, p, Hy, p, Wx, p)
-        trans_local = trans_local.permute(0, 2, 4, 6, 1, 3, 5, 7).contiguous()
-        tokens = trans_local.view(b, Dz * Hy * Wx, self.expanded_channels * (p ** 3))
-        tokens = self.patch_embed(tokens)
-        pos = self._positional_encoding(Dz, Hy, Wx, tokens.device, tokens.dtype)
-        tokens = tokens + pos.unsqueeze(0)
-        tokens_norm = self.transformer_norm(tokens)
-        attn_out, attn_weights = self.transformer_attn(tokens_norm, tokens_norm, tokens_norm)
-        self._record_stat('attn_weights', attn_weights)
-        tokens = tokens + attn_out
-        tokens = tokens + self.transformer_ffn(self.transformer_norm(tokens))
-        tokens = self.patch_restore(tokens.view(b * Dz * Hy * Wx, self.expanded_channels))
-        tokens = tokens.view(b, Dz, Hy, Wx, self.expanded_channels, p, p, p)
-        tokens = tokens.permute(0, 4, 1, 5, 2, 6, 3, 7).contiguous().view(
-            b, self.expanded_channels, d, h, w
-        )
-        if d_pad or h_pad or w_pad:
-            tokens = tokens[:, :, :orig_d, :orig_h, :orig_w]
-        trans_feat = self.transformer_reduce(tokens)
+        trans_feat_input = self.transformer_align(x_trans)
+        trans_feat = self.transformer_mvit(trans_feat_input)
         self._record_stat('trans_feat', trans_feat)
 
         # Concat -> shuffle -> fuse
@@ -182,20 +136,13 @@ class ShuffleNetV2HybridUnit3D(nn.Module):
         self.stats_dict.setdefault(key_mean, []).append(mean_val)
         self.stats_dict.setdefault(key_std, []).append(std_val)
 
-    def _positional_encoding(self, Dz: int, Hy: int, Wx: int, device, dtype):
-        z = torch.linspace(-1.0, 1.0, Dz, device=device, dtype=dtype)
-        y = torch.linspace(-1.0, 1.0, Hy, device=device, dtype=dtype)
-        x = torch.linspace(-1.0, 1.0, Wx, device=device, dtype=dtype)
-        grid = torch.stack(torch.meshgrid(z, y, x, indexing='ij'), dim=-1)  # (Dz,Hy,Wx,3)
-        pos = grid.view(-1, 3)
-        return self.pos_mlp(pos)
-
-
 class Down3DShuffleNetV2Hybrid(nn.Module):
     """Downsampling using ShuffleNetV2 Hybrid unit (stride=2)."""
     def __init__(self, in_channels: int, out_channels: int, norm: str = 'bn',
                  expand_ratio: float = 4.0, num_heads: int = 4, mlp_ratio: int = 2,
-                 patch_size: int = 4, force_layernorm: bool = False,
+                 patch_size: int = 4, num_transformer_layers: int = 2,
+                 attn_dropout: float = 0.0, ffn_dropout: float = 0.0,
+                 force_layernorm: bool = False,
                  log_stats: bool = False, stats_dict: Optional[Dict[str, list]] = None,
                  stats_prefix: str = ''):
         super().__init__()
@@ -204,6 +151,9 @@ class Down3DShuffleNetV2Hybrid(nn.Module):
                                               norm=norm, expand_ratio=expand_ratio,
                                               num_heads=num_heads, mlp_ratio=mlp_ratio,
                                               patch_size=patch_size,
+                                              num_transformer_layers=num_transformer_layers,
+                                              attn_dropout=attn_dropout,
+                                              ffn_dropout=ffn_dropout,
                                               force_layernorm=force_layernorm,
                                               log_stats=log_stats, stats_dict=stats_dict,
                                               stats_prefix=f"{stats_prefix}unit1/")
@@ -212,6 +162,9 @@ class Down3DShuffleNetV2Hybrid(nn.Module):
                                               norm=norm, expand_ratio=expand_ratio,
                                               num_heads=num_heads, mlp_ratio=mlp_ratio,
                                               patch_size=patch_size,
+                                              num_transformer_layers=num_transformer_layers,
+                                              attn_dropout=attn_dropout,
+                                              ffn_dropout=ffn_dropout,
                                               force_layernorm=force_layernorm,
                                               log_stats=log_stats, stats_dict=stats_dict,
                                               stats_prefix=f"{stats_prefix}unit2/")
