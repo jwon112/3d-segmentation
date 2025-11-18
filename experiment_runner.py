@@ -519,7 +519,7 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     }
 
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False):
     """3D Segmentation 통합 실험 실행
     
     Args:
@@ -541,6 +541,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_dir = f"baseline_results/integrated_experiment_results_{timestamp}"
     os.makedirs(results_dir, exist_ok=True)
+    print(f"Train data augmentation: {'MRI augmentations' if use_mri_augmentation else 'None'}")
     
     # 사용 가능한 모델들
     # Size suffix를 지원하는 모델 prefix들 (xs, s, m, l 모두 지원)
@@ -704,7 +705,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         rank=rank,
                         use_4modalities=use_4modalities,  # 모델에 따라 설정
                         use_5fold=use_5fold,  # 5-fold CV 사용 여부
-                        fold_idx=fold_idx  # fold 인덱스 (None이면 일반 분할)
+                        fold_idx=fold_idx,  # fold 인덱스 (None이면 일반 분할)
+                        use_mri_augmentation=use_mri_augmentation
                     )
 
                     # 모델 생성

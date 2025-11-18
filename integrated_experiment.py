@@ -57,6 +57,8 @@ if __name__ == "__main__":
                        help='PyTorch tensor sharing strategy for DataLoader workers. file_system avoids /dev/shm pressure.')
     parser.add_argument('--use_5fold', action='store_true', default=False,
                        help='Use 5-fold cross-validation instead of simple train/val/test split')
+    parser.add_argument('--use_mri_augmentation', action='store_true', default=False,
+                       help='Apply MRI-specific data augmentations to training patches (default: False)')
     
     args = parser.parse_args()
     
@@ -73,6 +75,7 @@ if __name__ == "__main__":
     print(f"Dataset version: {args.dataset_version}")
     print(f"Dimension: {args.dim}")
     print(f"Loss function: {'nnU-Net style (Soft Dice Squared + Dice 70%%/CE 30%%)' if use_nnunet_loss else 'Standard (Dice 50%%/CE 50%%)'}")
+    print(f"MRI Augmentation: {'Enabled' if args.use_mri_augmentation else 'Disabled'}")
     print(f"Results will be saved in: baseline_results/ folder")
     if args.use_5fold:
         print(f"Using 5-fold cross-validation")
@@ -88,7 +91,9 @@ if __name__ == "__main__":
 
     try:
         results_dir, results_df = run_integrated_experiment(
-            args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim, args.use_pretrained, use_nnunet_loss, args.num_workers, args.dataset_version, args.use_5fold
+            args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim,
+            args.use_pretrained, use_nnunet_loss, args.num_workers, args.dataset_version, args.use_5fold,
+            use_mri_augmentation=args.use_mri_augmentation
         )
         
         if results_dir and results_df is not None:

@@ -190,10 +190,11 @@ class BratsPatchDataset3D(Dataset):
     이 전략은 포그라운드 학습을 보장하면서도 전체 데이터 분포를 유지합니다.
     """
     def __init__(self, base_dataset: BratsDataset3D, patch_size=(128, 128, 128),
-                 samples_per_volume: int = 16):
+                 samples_per_volume: int = 16, augment: bool = False):
         self.base_dataset = base_dataset
         self.patch_size = patch_size
         self.samples_per_volume = samples_per_volume
+        self.augment = augment
 
         # 인덱스 매핑: (volume_index, sample_idx, sampling_type)
         # sampling_type: 0=포그라운드 오버샘플링, 1=완전 무작위
@@ -266,6 +267,41 @@ class BratsPatchDataset3D(Dataset):
 
         img_patch = image[:, sy:sy+ph, sx:sx+pw, sz:sz+pd]
         msk_patch = mask[sy:sy+ph, sx:sx+pw, sz:sz+pd]
+
+        img_patch, msk_patch = self._maybe_augment(img_patch, msk_patch)
+        return img_patch, msk_patch
+
+    def _maybe_augment(self, img_patch: torch.Tensor, msk_patch: torch.Tensor):
+        if not self.augment:
+            return img_patch, msk_patch
+
+        # Spatial flips
+        if torch.rand(1).item() < 0.5:
+            img_patch = torch.flip(img_patch, dims=(1,))
+            msk_patch = torch.flip(msk_patch, dims=(0,))
+        if torch.rand(1).item() < 0.5:
+            img_patch = torch.flip(img_patch, dims=(2,))
+            msk_patch = torch.flip(msk_patch, dims=(1,))
+        if torch.rand(1).item() < 0.5:
+            img_patch = torch.flip(img_patch, dims=(3,))
+            msk_patch = torch.flip(msk_patch, dims=(2,))
+
+        # Random 90-degree rotation around axial plane
+        if torch.rand(1).item() < 0.5:
+            k = torch.randint(0, 4, (1,)).item()
+            img_patch = torch.rot90(img_patch, k=k, dims=(1, 2))
+            msk_patch = torch.rot90(msk_patch, k=k, dims=(0, 1))
+
+        # Random intensity scaling/shift (per volume)
+        if torch.rand(1).item() < 0.5:
+            scale = 1.0 + 0.1 * torch.randn(1).item()
+            shift = 0.05 * torch.randn(1).item()
+            img_patch = img_patch * scale + shift
+
+        # Random Gaussian noise
+        if torch.rand(1).item() < 0.3:
+            noise = torch.randn_like(img_patch) * 0.03
+            img_patch = img_patch + noise
 
         return img_patch, msk_patch
 
@@ -414,7 +450,8 @@ class BratsDataset2D(Dataset):
 def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None, 
                      train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, dim='3d',
                      distributed=False, world_size=None, rank=None, dataset_version='brats2021', seed=None,
-                     use_4modalities=False, use_5fold=False, fold_idx=None):
+                     use_4modalities=False, use_5fold=False, fold_idx=None,
+                     use_mri_augmentation=False):
     """
     데이터 로더 생성
     
@@ -432,6 +469,7 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
         use_4modalities: True면 4개 모달리티 (t1, t1ce, t2, flair), False면 2개 (t1ce, flair)
         use_5fold: True면 5-fold cross-validation 사용 (기본값: False)
         fold_idx: 5-fold CV 사용 시 fold 인덱스 (0-4, None이면 모든 fold 실행)
+        use_mri_augmentation: True면 학습 패치에 MRI-friendly augmentation 적용
     
     Returns:
         train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler
@@ -591,6 +629,7 @@ def get_data_loaders(data_dir, batch_size=1, num_workers=0, max_samples=None,
             base_dataset=train_dataset.dataset if hasattr(train_dataset, 'dataset') else train_dataset,
             patch_size=(128, 128, 128),
             samples_per_volume=16,
+            augment=use_mri_augmentation,
         )
     
     # Distributed samplers
