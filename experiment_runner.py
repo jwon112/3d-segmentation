@@ -563,6 +563,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         'dualbranch_15_dilated125_both_': ['xs', 's', 'm', 'l'],
         'dualbranch_16_shufflenet_hybrid_': ['xs', 's', 'm', 'l'],
         'dualbranch_16_shufflenet_hybrid_ln_': ['xs', 's', 'm', 'l'],
+        'dualbranch_17_shufflenet_pamlite_': ['xs', 's', 'm', 'l'],
     }
     
     # Size suffix를 지원하는 dualbranch_14 backbone들
@@ -736,6 +737,50 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         print(f"Model size: {model_size_mb:.2f} MB")
                         print("=" * 50)
                     
+                    # 입력 크기 설정 (PAM, Latency 공용)
+                    if dim == '2d':
+                        input_size = (1, n_channels, *INPUT_SIZE_2D)
+                    else:
+                        input_size = (1, n_channels, *INPUT_SIZE_3D)
+
+                    # PAM 계산 (모델 정보 출력 직후 바로 측정)
+                    pam_train_list = []
+                    pam_inference_list = []
+                    pam_train_stages = {}
+                    pam_inference_stages = {}
+                    if is_main_process(rank):
+                        try:
+                            pam_train_list, pam_train_stages = calculate_pam(
+                                model, input_size=input_size, mode='train', stage_wise=True, device=device
+                            )
+                            pam_inference_list, pam_inference_stages = calculate_pam(
+                                model, input_size=input_size, mode='inference', stage_wise=True, device=device
+                            )
+                            if pam_train_list:
+                                pam_train_mean = sum(pam_train_list) / len(pam_train_list)
+                                print(f"PAM (Train, batch_size=1): {pam_train_mean / 1024**2:.2f} MB (mean of {len(pam_train_list)} runs)")
+                            if pam_inference_list:
+                                pam_inference_mean = sum(pam_inference_list) / len(pam_inference_list)
+                                print(f"PAM (Inference, batch_size=1): {pam_inference_mean / 1024**2:.2f} MB (mean of {len(pam_inference_list)} runs)")
+                            if pam_train_stages:
+                                print("PAM (Train) by stage:")
+                                for stage_name, mem_list in sorted(pam_train_stages.items()):
+                                    if mem_list:
+                                        mem_mean = sum(mem_list) / len(mem_list)
+                                        print(f"  {stage_name}: {mem_mean / 1024**2:.2f} MB")
+                            if pam_inference_stages:
+                                print("PAM (Inference) by stage:")
+                                for stage_name, mem_list in sorted(pam_inference_stages.items()):
+                                    if mem_list:
+                                        mem_mean = sum(mem_list) / len(mem_list)
+                                        print(f"  {stage_name}: {mem_mean / 1024**2:.2f} MB")
+                        except Exception as e:
+                            print(f"Warning: Failed to calculate PAM: {e}")
+                            pam_train_list = []
+                            pam_inference_list = []
+                            pam_train_stages = {}
+                            pam_inference_stages = {}
+                    
                     # 체크포인트 저장 경로 (실험 결과 폴더 내부)
                     if use_5fold:
                         ckpt_path = os.path.join(results_dir, f"{model_name}_seed_{seed}_fold_{fold_idx}_best.pth")
@@ -757,51 +802,6 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
                     if is_main_process(rank):
                         print(f"FLOPs: {flops:,}")
-                    
-                    # PAM 계산 (rank 0에서만, batch_size=1로 고정, 여러 번 측정)
-                    pam_train_list = []
-                    pam_inference_list = []
-                    pam_train_stages = {}
-                    pam_inference_stages = {}
-                    if is_main_process(rank):
-                        if dim == '2d':
-                            input_size = (1, n_channels, *INPUT_SIZE_2D)
-                        else:
-                            input_size = (1, n_channels, *INPUT_SIZE_3D)
-                        
-                        try:
-                            pam_train_list, pam_train_stages = calculate_pam(
-                                model, input_size=input_size, mode='train', stage_wise=True, device=device
-                            )
-                            pam_inference_list, pam_inference_stages = calculate_pam(
-                                model, input_size=input_size, mode='inference', stage_wise=True, device=device
-                            )
-                            if pam_train_list:
-                                pam_train_mean = sum(pam_train_list) / len(pam_train_list)
-                                print(f"PAM (Train, batch_size=1): {pam_train_mean / 1024**2:.2f} MB (mean of {len(pam_train_list)} runs)")
-                            if pam_inference_list:
-                                pam_inference_mean = sum(pam_inference_list) / len(pam_inference_list)
-                                print(f"PAM (Inference, batch_size=1): {pam_inference_mean / 1024**2:.2f} MB (mean of {len(pam_inference_list)} runs)")
-                            
-                            # Stage별 PAM 출력
-                            if pam_train_stages:
-                                print(f"PAM (Train) by stage:")
-                                for stage_name, mem_list in sorted(pam_train_stages.items()):
-                                    if mem_list:
-                                        mem_mean = sum(mem_list) / len(mem_list)
-                                        print(f"  {stage_name}: {mem_mean / 1024**2:.2f} MB")
-                            if pam_inference_stages:
-                                print(f"PAM (Inference) by stage:")
-                                for stage_name, mem_list in sorted(pam_inference_stages.items()):
-                                    if mem_list:
-                                        mem_mean = sum(mem_list) / len(mem_list)
-                                        print(f"  {stage_name}: {mem_mean / 1024**2:.2f} MB")
-                        except Exception as e:
-                            print(f"Warning: Failed to calculate PAM: {e}")
-                            pam_train_list = []
-                            pam_inference_list = []
-                            pam_train_stages = {}
-                            pam_inference_stages = {}
                     
                     # Inference Latency 계산 (rank 0에서만, batch_size=1로 고정, 여러 번 측정)
                     inference_latency_list = []
