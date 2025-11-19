@@ -115,13 +115,13 @@ class DualBranchUNet3D_MobileNetV2_Expand2(nn.Module):
         self.branch_t1ce4 = Down3DMobileNetV2_Expand2(channels['branch3'], channels['branch4'], norm=self.norm)
         
         # Stage 5: 16×16×16 -> 8×8×8 (dual-branch with MobileViT)
-        self.branch_flair5 = Down3DMobileNetV2_Expand2(channels['branch4'], channels['branch5'], norm=self.norm, num_heads=4, mlp_ratio=2)
-        self.branch_t1ce5 = Down3DMobileNetV2_Expand2(channels['branch4'], channels['branch5'], norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.branch_flair5 = Down3DMobileNetV2_Expand2(channels['branch4'], channels['branch5'], norm=self.norm)
+        self.branch_t1ce5 = Down3DMobileNetV2_Expand2(channels['branch4'], channels['branch5'], norm=self.norm)
         
         # Stage 6: 8×8×8 -> 4×4×4 (dual-branch MobileViT)
         branch6_channels = channels['down6'] // 2
-        self.branch_flair6 = Down3DMobileNetV2_Expand2(channels['branch5'], branch6_channels, norm=self.norm, num_heads=4, mlp_ratio=2)
-        self.branch_t1ce6 = Down3DMobileNetV2_Expand2(channels['branch5'], branch6_channels, norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.branch_flair6 = Down3DMobileNetV2_Expand2(channels['branch5'], branch6_channels, norm=self.norm)
+        self.branch_t1ce6 = Down3DMobileNetV2_Expand2(channels['branch5'], branch6_channels, norm=self.norm)
         
         # Bottleneck fusion
         self.bottleneck_fuse = DoubleConv3D(channels['down6'], channels['down6'], norm=self.norm)
