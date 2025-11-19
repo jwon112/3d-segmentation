@@ -722,6 +722,10 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         base_name, size = parse_model_size(model_name)
         from models.dualbranch_17_unet import DualBranchUNet3D_ShufflePamLite
         return DualBranchUNet3D_ShufflePamLite(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_17_shufflenet_pamlite_v3_'):
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_17_unet import DualBranchUNet3D_ShufflePamLiteV3
+        return DualBranchUNet3D_ShufflePamLiteV3(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
     # 모달리티 비교 실험 모델들
     elif model_name == 'unet3d_2modal_s':
         # 단일 분기, 2채널 (t1ce, flair) concat

@@ -7,6 +7,9 @@ from .modules.shufflenet_pamlite_modules import (
     ShuffleNetV2PamLiteUnit3D,
     Down3DShuffleNetV2PamLite,
 )
+from .modules.shufflenet_hybrid_modules import (
+    Down3DShuffleNetV2HybridV3,
+)
 from .channel_configs import get_dualbranch_channels_stage4_fused
 
 
@@ -117,11 +120,145 @@ class DualBranchUNet3D_ShufflePamLite_Large(DualBranchUNet3D_ShufflePamLite):
         super().__init__(size='l', **kwargs)
 
 
+class DualBranchUNet3D_ShufflePamLiteV3(nn.Module):
+    """Dual-branch UNet with ShuffleNet Hybrid v3 blocks (Stage1-4 dual branch, Stage5 single branch)."""
+
+    def __init__(self, n_channels: int = 2, n_classes: int = 4, norm: str = 'bn', bilinear: bool = False,
+                 size: str = 's', expand_ratio: float = 2.0, num_heads: int = 4, mlp_ratio: int = 2,
+                 patch_size: int = 4, num_transformer_layers: int = 2):
+        super().__init__()
+        assert n_channels == 2
+        self.norm = norm or 'bn'
+        self.bilinear = bilinear
+
+        channels = get_dualbranch_channels_stage4_fused(size)
+
+        # Stage 1 stems
+        self.stem_flair = Stem3x3(1, channels['stem'], norm=self.norm)
+        self.stem_t1ce = Stem3x3(1, channels['stem'], norm=self.norm)
+
+        # Stage 2 Hybrid v3
+        self.branch_flair2 = Down3DShuffleNetV2HybridV3(channels['stem'], channels['branch2'], norm=self.norm,
+                                                        expand_ratio=expand_ratio, num_heads=num_heads,
+                                                        mlp_ratio=mlp_ratio, patch_size=patch_size,
+                                                        num_transformer_layers=num_transformer_layers)
+        self.branch_t1ce2 = Down3DShuffleNetV2HybridV3(channels['stem'], channels['branch2'], norm=self.norm,
+                                                       expand_ratio=expand_ratio, num_heads=num_heads,
+                                                       mlp_ratio=mlp_ratio, patch_size=patch_size,
+                                                       num_transformer_layers=num_transformer_layers)
+
+        # Stage 3 Hybrid v3
+        self.branch_flair3 = Down3DShuffleNetV2HybridV3(channels['branch2'], channels['branch3'], norm=self.norm,
+                                                        expand_ratio=expand_ratio, num_heads=num_heads,
+                                                        mlp_ratio=mlp_ratio, patch_size=patch_size,
+                                                        num_transformer_layers=num_transformer_layers)
+        self.branch_t1ce3 = Down3DShuffleNetV2HybridV3(channels['branch2'], channels['branch3'], norm=self.norm,
+                                                       expand_ratio=expand_ratio, num_heads=num_heads,
+                                                       mlp_ratio=mlp_ratio, patch_size=patch_size,
+                                                       num_transformer_layers=num_transformer_layers)
+
+        # Stage 4 Hybrid v3
+        self.branch_flair4 = Down3DShuffleNetV2HybridV3(channels['branch3'], channels['branch4'], norm=self.norm,
+                                                        expand_ratio=expand_ratio, num_heads=num_heads,
+                                                        mlp_ratio=mlp_ratio, patch_size=patch_size,
+                                                        num_transformer_layers=num_transformer_layers)
+        self.branch_t1ce4 = Down3DShuffleNetV2HybridV3(channels['branch3'], channels['branch4'], norm=self.norm,
+                                                       expand_ratio=expand_ratio, num_heads=num_heads,
+                                                       mlp_ratio=mlp_ratio, patch_size=patch_size,
+                                                       num_transformer_layers=num_transformer_layers)
+
+        # Stage 5 single branch (input: concat Stage4 outputs)
+        fused_stage4_channels = channels['branch4'] * 2
+        self.down5 = Down3DShuffleNetV2HybridV3(fused_stage4_channels, channels['down5'], norm=self.norm,
+                                                expand_ratio=expand_ratio, num_heads=num_heads,
+                                                mlp_ratio=mlp_ratio, patch_size=patch_size,
+                                                num_transformer_layers=num_transformer_layers)
+
+        # Decoder
+        factor = 2 if self.bilinear else 1
+        if self.bilinear:
+            self.up1 = Up3D(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm,
+                            skip_channels=fused_stage4_channels)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm,
+                            skip_channels=channels['branch3'] * 2)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm,
+                            skip_channels=channels['branch2'] * 2)
+            self.up4 = Up3D(channels['branch2'], channels['stem'] // factor, self.bilinear, norm=self.norm,
+                            skip_channels=channels['stem'] * 2)
+            self.up5 = Up3D(channels['stem'], channels['out'], self.bilinear, norm=self.norm, skip_channels=2)
+        else:
+            self.up1 = Up3D(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm,
+                            skip_channels=fused_stage4_channels)
+            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm,
+                            skip_channels=channels['branch3'] * 2)
+            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm,
+                            skip_channels=channels['branch2'] * 2)
+            self.up4 = Up3D(channels['branch2'], channels['stem'] // factor, self.bilinear, norm=self.norm,
+                            skip_channels=channels['stem'] * 2)
+            self.up5 = Up3D(channels['stem'], channels['out'], self.bilinear, norm=self.norm, skip_channels=2)
+
+        self.outc = OutConv3D(channels['out'], n_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_input = x
+
+        s1_flair = self.stem_flair(x[:, :1])
+        s1_t1ce = self.stem_t1ce(x[:, 1:2])
+        x1 = torch.cat([s1_flair, s1_t1ce], dim=1)
+
+        b2_flair = self.branch_flair2(s1_flair)
+        b2_t1ce = self.branch_t1ce2(s1_t1ce)
+        x2 = torch.cat([b2_flair, b2_t1ce], dim=1)
+
+        b3_flair = self.branch_flair3(b2_flair)
+        b3_t1ce = self.branch_t1ce3(b2_t1ce)
+        x3 = torch.cat([b3_flair, b3_t1ce], dim=1)
+
+        b4_flair = self.branch_flair4(b3_flair)
+        b4_t1ce = self.branch_t1ce4(b3_t1ce)
+        x4 = torch.cat([b4_flair, b4_t1ce], dim=1)
+
+        x5 = self.down5(x4)
+
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x = self.up4(x, x1)
+        x = self.up5(x, x_input[:, :2])
+
+        return self.outc(x)
+
+
+class DualBranchUNet3D_ShufflePamLiteV3_XS(DualBranchUNet3D_ShufflePamLiteV3):
+    def __init__(self, **kwargs):
+        super().__init__(size='xs', **kwargs)
+
+
+class DualBranchUNet3D_ShufflePamLiteV3_Small(DualBranchUNet3D_ShufflePamLiteV3):
+    def __init__(self, **kwargs):
+        super().__init__(size='s', **kwargs)
+
+
+class DualBranchUNet3D_ShufflePamLiteV3_Medium(DualBranchUNet3D_ShufflePamLiteV3):
+    def __init__(self, **kwargs):
+        super().__init__(size='m', **kwargs)
+
+
+class DualBranchUNet3D_ShufflePamLiteV3_Large(DualBranchUNet3D_ShufflePamLiteV3):
+    def __init__(self, **kwargs):
+        super().__init__(size='l', **kwargs)
+
+
 __all__ = [
     'DualBranchUNet3D_ShufflePamLite',
     'DualBranchUNet3D_ShufflePamLite_XS',
     'DualBranchUNet3D_ShufflePamLite_Small',
     'DualBranchUNet3D_ShufflePamLite_Medium',
     'DualBranchUNet3D_ShufflePamLite_Large',
+    'DualBranchUNet3D_ShufflePamLiteV3',
+    'DualBranchUNet3D_ShufflePamLiteV3_XS',
+    'DualBranchUNet3D_ShufflePamLiteV3_Small',
+    'DualBranchUNet3D_ShufflePamLiteV3_Medium',
+    'DualBranchUNet3D_ShufflePamLiteV3_Large',
 ]
 
