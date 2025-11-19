@@ -48,7 +48,8 @@ DUALBRANCH_CHANNELS = {
         'branch2': 16,       # Stage 2: branch channels (each branch) - stride=2
         'branch3': 32,       # Stage 3: branch channels (each branch) - stride=2
         'branch4': 64,       # Stage 4: branch channels (each branch) - stride=2
-        'down5': 128,        # Stage 5: branch channels (each branch) - stride=2 (bottleneck, MobileViT)
+        'branch5': 128,      # Stage 5: branch channels (each branch) - stride=2 (per-branch bottleneck)
+        'down6': 512,        # Stage 6: fused branch channels - stride=2 (input: branch5, output: branch5*4)
         'out': 16,           # Output channels (decoder final)
     },
     's': {
@@ -56,7 +57,8 @@ DUALBRANCH_CHANNELS = {
         'branch2': 32,       # Stage 2: branch channels (each branch) - stride=2
         'branch3': 64,       # Stage 3: branch channels (each branch) - stride=2
         'branch4': 128,      # Stage 4: branch channels (each branch) - stride=2
-        'down5': 256,        # Stage 5: branch channels (each branch) - stride=2 (bottleneck, MobileViT)
+        'branch5': 256,      # Stage 5: branch channels (each branch) - stride=2 (per-branch bottleneck)
+        'down6': 1024,       # Stage 6: fused branch channels - stride=2 (input: branch5, output: branch5*4)
         'out': 32,           # Output channels (decoder final)
     },
     'm': {
@@ -64,7 +66,8 @@ DUALBRANCH_CHANNELS = {
         'branch2': 64,       # Stage 2: branch channels (each branch) - stride=2
         'branch3': 128,      # Stage 3: branch channels (each branch) - stride=2
         'branch4': 256,      # Stage 4: branch channels (each branch) - stride=2
-        'down5': 512,        # Stage 5: branch channels (each branch) - stride=2 (bottleneck, MobileViT)
+        'branch5': 512,      # Stage 5: branch channels (each branch) - stride=2 (per-branch bottleneck)
+        'down6': 2048,       # Stage 6: fused branch channels - stride=2 (input: branch5, output: branch5*4)
         'out': 64,           # Output channels (decoder final)
     },
     'l': {
@@ -72,7 +75,8 @@ DUALBRANCH_CHANNELS = {
         'branch2': 128,      # Stage 2: branch channels (each branch) - stride=2
         'branch3': 256,      # Stage 3: branch channels (each branch) - stride=2
         'branch4': 512,      # Stage 4: branch channels (each branch) - stride=2
-        'down5': 1024,       # Stage 5: branch channels (each branch) - stride=2 (bottleneck, MobileViT)
+        'branch5': 1024,     # Stage 5: branch channels (each branch) - stride=2 (per-branch bottleneck)
+        'down6': 4096,       # Stage 6: fused branch channels - stride=2 (input: branch5, output: branch5*4)
         'out': 128,          # Output channels (decoder final)
     },
 }

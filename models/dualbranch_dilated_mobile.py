@@ -124,18 +124,18 @@ class DualBranchUNet3D_DilatedMobile(nn.Module):
         # Stage 5 fused branch with MobileViT
         factor = 2 if self.bilinear else 1
         fused_channels = channels['branch4'] * 2
-        self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.down5 = Down3DStrideMViT(fused_channels, channels['branch5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Decoder
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
         if self.bilinear:
-            self.up1 = Up3D(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch5'], channels['branch4'] // factor, self.bilinear, norm=self.norm)
             self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
+            self.up1 = Up3D(channels['branch5'], channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
             self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
@@ -208,18 +208,18 @@ class DualBranchUNet3D_Dilated123_Mobile(nn.Module):
         # Stage 5 fused branch with MobileViT
         factor = 2 if self.bilinear else 1
         fused_channels = channels['branch4'] * 2
-        self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.down5 = Down3DStrideMViT(fused_channels, channels['branch5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Decoder
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
         if self.bilinear:
-            self.up1 = Up3D(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch5'], channels['branch4'] // factor, self.bilinear, norm=self.norm)
             self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
+            self.up1 = Up3D(channels['branch5'], channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
             self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
@@ -289,21 +289,21 @@ class DualBranchUNet3D_Dilated125_Both_Mobile(nn.Module):
         self.branch_flair4 = Down3DStrideDilated_1_2_5(channels['branch3'], channels['branch4'], norm=self.norm)
         self.branch_t1ce4 = Down3DStrideDilated_1_2_5(channels['branch3'], channels['branch4'], norm=self.norm)
         
-        # Stage 5 fused branch with MobileViT (input: branch4*2, output: down5)
+        # Stage 5 fused branch with MobileViT (input: branch4*2, output: branch5)
         factor = 2 if self.bilinear else 1
         fused_channels = channels['branch4'] * 2
-        self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.down5 = Down3DStrideMViT(fused_channels, channels['branch5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Decoder
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
         if self.bilinear:
-            self.up1 = Up3D(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm)
+            self.up1 = Up3D(channels['branch5'], channels['branch4'] // factor, self.bilinear, norm=self.norm)
             self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
+            self.up1 = Up3D(channels['branch5'], channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
             self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
             self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
             self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
