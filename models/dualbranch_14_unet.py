@@ -16,7 +16,7 @@ from .modules.shufflenet_modules import (
     Down3DShuffleNetV2_LK,
 )
 from .modules.convnext_modules import ConvNeXtBlock3D, Down3DConvNeXt
-from .modules.cross_attention_3d import BidirectionalCrossAttention3D
+from .modules.cross_attention_3d import BidirectionalCrossAttentionTransformer3D
 
 
 # ============================================================================
@@ -89,7 +89,13 @@ class DualBranchUNet3D_MobileNetV2_Expand2(nn.Module):
         self.branch_t1ce5 = Down3DStrideMViT(channels['branch4'], channels['down5'], norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Cross Attention for feature fusion at bottleneck (Stage 5 output)
-        self.cross_attn = BidirectionalCrossAttention3D(channels['down5'], num_heads=8, norm=self.norm)
+        self.cross_attn = BidirectionalCrossAttentionTransformer3D(
+            channels=channels['down5'],
+            num_heads=8,
+            norm=self.norm,
+            patch_size=2,
+            num_transformer_layers=2,
+        )
         
         # Decoder (5 stages: up1, up2, up3, up4, up5)
         factor = 2 if self.bilinear else 1
@@ -188,7 +194,13 @@ class DualBranchUNet3D_GhostNet(nn.Module):
         self.branch_t1ce5 = Down3DStrideMViT(channels['branch4'], channels['down5'], norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Cross Attention for feature fusion at bottleneck (Stage 5 output)
-        self.cross_attn = BidirectionalCrossAttention3D(channels['down5'], num_heads=8, norm=self.norm)
+        self.cross_attn = BidirectionalCrossAttentionTransformer3D(
+            channels=channels['down5'],
+            num_heads=8,
+            norm=self.norm,
+            patch_size=2,
+            num_transformer_layers=2,
+        )
         
         # Decoder (5 stages: up1, up2, up3, up4, up5)
         factor = 2 if self.bilinear else 1
@@ -287,7 +299,13 @@ class DualBranchUNet3D_Dilated(nn.Module):
         self.branch_t1ce5 = Down3DStrideMViT(channels['branch4'], channels['down5'], norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Cross Attention for feature fusion at bottleneck (Stage 5 output)
-        self.cross_attn = BidirectionalCrossAttention3D(channels['down5'], num_heads=8, norm=self.norm)
+        self.cross_attn = BidirectionalCrossAttentionTransformer3D(
+            channels=channels['down5'],
+            num_heads=8,
+            norm=self.norm,
+            patch_size=2,
+            num_transformer_layers=2,
+        )
         
         # Decoder (5 stages: up1, up2, up3, up4, up5)
         factor = 2 if self.bilinear else 1
@@ -386,7 +404,13 @@ class DualBranchUNet3D_ConvNeXt(nn.Module):
         self.branch_t1ce5 = Down3DStrideMViT(channels['branch4'], channels['down5'], norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Cross Attention for feature fusion at bottleneck (Stage 5 output)
-        self.cross_attn = BidirectionalCrossAttention3D(channels['down5'], num_heads=8, norm=self.norm)
+        self.cross_attn = BidirectionalCrossAttentionTransformer3D(
+            channels=channels['down5'],
+            num_heads=8,
+            norm=self.norm,
+            patch_size=2,
+            num_transformer_layers=2,
+        )
         
         # Decoder (5 stages: up1, up2, up3, up4, up5)
         factor = 2 if self.bilinear else 1
@@ -582,7 +606,13 @@ class DualBranchUNet3D_ShuffleNetV2_CrossAttn(nn.Module):
         self.branch_t1ce5 = Down3DStrideMViT(channels['branch4'], channels['down5'], norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Cross Attention for feature fusion at bottleneck (Stage 5 output)
-        self.cross_attn = BidirectionalCrossAttention3D(channels['down5'], num_heads=8, norm=self.norm)
+        self.cross_attn = BidirectionalCrossAttentionTransformer3D(
+            channels=channels['down5'],
+            num_heads=8,
+            norm=self.norm,
+            patch_size=2,
+            num_transformer_layers=2,
+        )
         
         # Decoder (5 stages: up1, up2, up3, up4, up5)
         # Stage 5 output is fused via Cross Attention (output channels = channels['down5'])
@@ -681,7 +711,13 @@ class DualBranchUNet3D_ShuffleNetV2_Dilated(nn.Module):
         self.branch_t1ce5 = Down3DShuffleNetV2_Dilated(channels['branch4'], channels['down5'], norm=self.norm, dilation_rates=[1, 2, 5])
         
         # Cross Attention for feature fusion at bottleneck (Stage 5 output)
-        self.cross_attn = BidirectionalCrossAttention3D(channels['down5'], num_heads=8, norm=self.norm)
+        self.cross_attn = BidirectionalCrossAttentionTransformer3D(
+            channels=channels['down5'],
+            num_heads=8,
+            norm=self.norm,
+            patch_size=2,
+            num_transformer_layers=2,
+        )
         
         # Decoder (5 stages: up1, up2, up3, up4, up5)
         factor = 2 if self.bilinear else 1
@@ -779,7 +815,13 @@ class DualBranchUNet3D_ShuffleNetV2_LK(nn.Module):
         self.branch_t1ce5 = Down3DShuffleNetV2_LK(channels['branch4'], channels['down5'], norm=self.norm)
         
         # Cross Attention for feature fusion at bottleneck (Stage 5 output)
-        self.cross_attn = BidirectionalCrossAttention3D(channels['down5'], num_heads=8, norm=self.norm)
+        self.cross_attn = BidirectionalCrossAttentionTransformer3D(
+            channels=channels['down5'],
+            num_heads=8,
+            norm=self.norm,
+            patch_size=2,
+            num_transformer_layers=2,
+        )
         
         # Decoder (5 stages: up1, up2, up3, up4, up5)
         factor = 2 if self.bilinear else 1

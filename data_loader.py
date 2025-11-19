@@ -272,33 +272,45 @@ class BratsPatchDataset3D(Dataset):
         return img_patch, msk_patch
 
     def _maybe_augment(self, img_patch: torch.Tensor, msk_patch: torch.Tensor):
+        """
+        MRI-friendly augmentation for brain images.
+        
+        BRATS 데이터셋은 Axial view로 저장되어 있으며, 뇌는 좌우 대칭 구조입니다.
+        - 좌우 반전만 의미가 있음 (실제로 좌우 반전된 뇌가 존재할 수 있음)
+        - Rotation은 실제로 일어나지 않으므로 제거
+        - 상하/앞뒤 flip은 해부학적으로 의미가 없으므로 제거
+        
+        Note: BRATS 데이터가 90도 회전되어 저장되어 있으므로,
+        좌우 대칭은 H-axis flip (dims=(1,))을 사용합니다.
+        """
         if not self.augment:
             return img_patch, msk_patch
 
-        # Spatial flips
+        # 좌우 대칭 flip만 적용 (뇌의 좌우 대칭 특성 활용)
+        # BRATS 데이터 방향: (C, H, W, D) = (C, 좌우, 상하, 앞뒤) - 90도 회전되어 있음
+        # 좌우 대칭 = H-axis flip (dims=(1,))
         if torch.rand(1).item() < 0.5:
+            # H-axis flip (좌우 반전)
             img_patch = torch.flip(img_patch, dims=(1,))
             msk_patch = torch.flip(msk_patch, dims=(0,))
-        if torch.rand(1).item() < 0.5:
-            img_patch = torch.flip(img_patch, dims=(2,))
-            msk_patch = torch.flip(msk_patch, dims=(1,))
-        if torch.rand(1).item() < 0.5:
-            img_patch = torch.flip(img_patch, dims=(3,))
-            msk_patch = torch.flip(msk_patch, dims=(2,))
 
-        # Random 90-degree rotation around axial plane
-        if torch.rand(1).item() < 0.5:
-            k = torch.randint(0, 4, (1,)).item()
-            img_patch = torch.rot90(img_patch, k=k, dims=(1, 2))
-            msk_patch = torch.rot90(msk_patch, k=k, dims=(0, 1))
-
+        # Intensity augmentation (실제 스캐너 차이나 노이즈 모델링)
         # Random intensity scaling/shift (per volume)
         if torch.rand(1).item() < 0.5:
             scale = 1.0 + 0.1 * torch.randn(1).item()
             shift = 0.05 * torch.randn(1).item()
             img_patch = img_patch * scale + shift
 
-        # Random Gaussian noise
+        # Gamma correction (contrast variation 모델링)
+        # MRI 스캐너의 contrast 차이를 모델링
+        if torch.rand(1).item() < 0.3:
+            # gamma 값: 0.7 ~ 1.3 범위 (1.0이 원본)
+            gamma = 0.7 + 0.6 * torch.rand(1).item()
+            # 값이 음수일 수 있으므로 절댓값 사용 후 sign 복원
+            sign = torch.sign(img_patch)
+            img_patch = sign * (torch.abs(img_patch) ** gamma)
+
+        # Random Gaussian noise (스캐너 노이즈 모델링)
         if torch.rand(1).item() < 0.3:
             noise = torch.randn_like(img_patch) * 0.03
             img_patch = img_patch + noise
