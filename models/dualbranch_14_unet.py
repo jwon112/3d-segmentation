@@ -124,10 +124,7 @@ class DualBranchUNet3D_MobileNetV2_Expand2(nn.Module):
         self.branch_t1ce6 = Down3DStrideMViT(channels['branch5'], branch6_channels, norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Bottleneck fusion
-        self.bottleneck_fuse = nn.Sequential(
-            DoubleConv3D(channels['down6'], channels['down6'], norm=self.norm),
-            nn.ReLU(inplace=True),
-        )
+        self.bottleneck_fuse = DoubleConv3D(channels['down6'], channels['down6'], norm=self.norm)
         
         # Decoder (6 stages: up1, up2, up3, up4, up5, up6)
         fused_channels = channels['branch5'] * 2
