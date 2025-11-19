@@ -562,6 +562,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         'dualbranch_12_unet_': ['xs', 's', 'm', 'l'],
         'dualbranch_13_unet_': ['xs', 's', 'm', 'l'],
         'dualbranch_15_dilated125_both_': ['xs', 's', 'm', 'l'],
+        'dualbranch_15_dilated125_both_shuffle_': ['xs', 's', 'm', 'l'],
         'dualbranch_16_shufflenet_hybrid_': ['xs', 's', 'm', 'l'],
         'dualbranch_16_shufflenet_hybrid_ln_': ['xs', 's', 'm', 'l'],
         'dualbranch_17_shufflenet_pamlite_': ['xs', 's', 'm', 'l'],

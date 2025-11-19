@@ -693,6 +693,11 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 return model_class(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
             else:
                 raise ValueError(f"Unknown backbone in dualbranch_14: {backbone}")
+    elif model_name.startswith('dualbranch_15_dilated125_both_shuffle_'):
+        # Dual-branch UNet with dilated both branches (rate 1,2,5) + MobileNetV2 with shuffle in skip connections - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_dilated_mobile import DualBranchUNet3D_Dilated125_Both_Mobile_Shuffle
+        return DualBranchUNet3D_Dilated125_Both_Mobile_Shuffle(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
     elif model_name.startswith('dualbranch_15_dilated125_both_'):
         # Dual-branch UNet with dilated both branches (rate 1,2,5) + MobileNetV2 - Support xs, s, m, l sizes
         base_name, size = parse_model_size(model_name)

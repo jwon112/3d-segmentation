@@ -4,7 +4,7 @@ import torch.nn as nn
 from .dualbranch_mobilenet import MobileNetV2Block3D
 from .dualbranch_basic import Down3DStrideDilated
 from .model_3d_unet import Up3D, OutConv3D, DoubleConv3D, _make_norm3d
-from .channel_configs import get_dualbranch_channels
+from .channel_configs import get_dualbranch_channels, get_dualbranch_channels_stage4_fused
 from .modules.mvit_modules import Down3DStrideMViT
 from .modules.ghostnet_modules import GhostBottleneck3D, Down3DGhostNet
 from .modules.shufflenet_modules import (
@@ -96,7 +96,7 @@ class DualBranchUNet3D_MobileNetV2_Expand2(nn.Module):
         self.size = size
         
         # Get channel configuration
-        channels = get_dualbranch_channels(size)
+        channels = get_dualbranch_channels_stage4_fused(size)
         
         # Stage 1: Stem (no downsampling, 128×128×128 -> 128×128×128)
         self.stem_flair = Stem3x3(1, channels['stem'], norm=self.norm)
