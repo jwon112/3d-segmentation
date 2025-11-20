@@ -357,19 +357,19 @@ class DualBranchUNet3D_Dilated125_Both_Mobile_Shuffle(nn.Module):
         # Encoder: 각 branch 독립적으로 처리 (dual branch의 의의 유지)
         x1_flair = self.stem_flair(x[:, :1])
         x1_t1ce = self.stem_t1ce(x[:, 1:2])
-        x1_skip = torch.cat([x1_flair, x1_t1ce], dim=1)  # Skip connection: 원본 정보 유지
+        x1_skip = channel_shuffle_3d(torch.cat([x1_flair, x1_t1ce], dim=1), groups=2)  # Skip connection: shuffle 적용
         
         b_flair = self.branch_flair(x1_flair)
         b_t1ce = self.branch_t1ce(x1_t1ce)
-        x2_skip = torch.cat([b_flair, b_t1ce], dim=1)  # Skip connection: 원본 정보 유지
+        x2_skip = channel_shuffle_3d(torch.cat([b_flair, b_t1ce], dim=1), groups=2)  # Skip connection: shuffle 적용
         
         b2_flair = self.branch_flair3(b_flair)
         b2_t1ce = self.branch_t1ce3(b_t1ce)
-        x3_skip = torch.cat([b2_flair, b2_t1ce], dim=1)  # Skip connection: 원본 정보 유지
+        x3_skip = channel_shuffle_3d(torch.cat([b2_flair, b2_t1ce], dim=1), groups=2)  # Skip connection: shuffle 적용
         
         b3_flair = self.branch_flair4(b2_flair)
         b3_t1ce = self.branch_t1ce4(b2_t1ce)
-        x4_skip = torch.cat([b3_flair, b3_t1ce], dim=1)  # Skip connection: 원본 정보 유지
+        x4_skip = channel_shuffle_3d(torch.cat([b3_flair, b3_t1ce], dim=1), groups=2)  # Skip connection: shuffle 적용
         
         x5 = self.down5(x4_skip)
         
