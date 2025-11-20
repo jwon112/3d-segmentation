@@ -1,6 +1,6 @@
 """
-ShuffleNetV2 Modules
-ShuffleNetV2 스타일의 3D 모듈들
+ShuffleNet Modules
+ShuffleNetV1 및 ShuffleNetV2 스타일의 3D 모듈들
 """
 
 import torch
@@ -33,6 +33,98 @@ def channel_shuffle_3d(x: torch.Tensor, groups: int) -> torch.Tensor:
     
     return x
 
+
+# ============================================================================
+# ShuffleNetV1 Modules
+# ============================================================================
+
+class ShuffleNetV1Unit3D(nn.Module):
+    """3D ShuffleNetV1 Unit.
+    
+    ShuffleNetV1의 핵심 블록:
+    - Stride=1: Pointwise Group Conv -> Channel Shuffle -> Depthwise Conv -> Pointwise Group Conv + Residual
+    - Stride=2: Pointwise Group Conv -> Channel Shuffle -> Depthwise Conv (stride=2) -> Pointwise Group Conv
+    
+    Reference:
+        ShuffleNet: An Extremely Efficient Convolutional Neural Network for Mobile Devices (Zhang et al., CVPR 2018)
+    """
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, groups: int = 1, norm: str = 'bn'):
+        super().__init__()
+        self.stride = stride
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.groups = groups
+        
+        # Pointwise Group Convolution
+        mid_channels = out_channels // 4  # ShuffleNetV1에서 일반적으로 사용하는 비율
+        
+        self.conv1 = nn.Conv3d(in_channels, mid_channels, kernel_size=1, stride=1, padding=0, 
+                               groups=groups, bias=False)
+        self.bn1 = _make_norm3d(norm, mid_channels)
+        
+        # Depthwise Convolution
+        self.conv2 = nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=stride, padding=1,
+                               groups=mid_channels, bias=False)
+        self.bn2 = _make_norm3d(norm, mid_channels)
+        
+        # Pointwise Group Convolution
+        self.conv3 = nn.Conv3d(mid_channels, out_channels, kernel_size=1, stride=1, padding=0,
+                               groups=groups, bias=False)
+        self.bn3 = _make_norm3d(norm, out_channels)
+        
+        self.relu = nn.ReLU(inplace=True)
+        
+        # Residual connection for stride=1 only
+        if stride == 1:
+            assert in_channels == out_channels, "For stride=1, in_channels must equal out_channels"
+            self.use_residual = True
+        else:
+            # For stride=2, no residual connection (channels change)
+            self.use_residual = False
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Pointwise Group Conv
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        
+        # Channel Shuffle
+        out = channel_shuffle_3d(out, groups=self.groups)
+        
+        # Depthwise Conv
+        out = self.conv2(out)
+        out = self.bn2(out)
+        
+        # Pointwise Group Conv
+        out = self.conv3(out)
+        out = self.bn3(out)
+        
+        # Residual connection (only for stride=1)
+        if self.use_residual:
+            out = out + x
+        
+        out = self.relu(out)
+        return out
+
+
+class Down3DShuffleNetV1(nn.Module):
+    """Downsampling using ShuffleNetV1 unit (stride=2)."""
+    def __init__(self, in_channels: int, out_channels: int, groups: int = 1, norm: str = 'bn'):
+        super().__init__()
+        # First unit: stride=2 for downsampling
+        self.unit1 = ShuffleNetV1Unit3D(in_channels, out_channels, stride=2, groups=groups, norm=norm)
+        # Second unit: stride=1 for feature refinement
+        self.unit2 = ShuffleNetV1Unit3D(out_channels, out_channels, stride=1, groups=groups, norm=norm)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.unit1(x)
+        x = self.unit2(x)
+        return x
+
+
+# ============================================================================
+# ShuffleNetV2 Modules
+# ============================================================================
 
 class ShuffleNetV2Unit3D(nn.Module):
     """3D ShuffleNetV2 Unit.
