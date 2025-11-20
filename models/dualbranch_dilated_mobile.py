@@ -14,13 +14,53 @@ from .dualbranch_basic import Down3DStrideDilated
 from .dualbranch_mobilenet import MobileNetV2Block3D, Down3DMobileNetV2
 from .modules.mvit_modules import Down3DStrideMViT
 from .modules.shufflenet_modules import channel_shuffle_3d
-from .model_3d_unet import Up3D, OutConv3D, _make_norm3d
+from .model_3d_unet import Up3D, OutConv3D, _make_norm3d, DoubleConv3D
 from .channel_configs import get_dualbranch_channels
+import torch.nn.functional as F
 
 
 # ============================================================================
 # Building Blocks
 # ============================================================================
+
+class Up3DShuffle(nn.Module):
+    """3D Upsampling 블록 with Channel Shuffle for modality fusion
+    
+    Upsampling 후 skip connection과 concat한 다음 shuffle을 적용하여
+    두 모달리티(FLAIR, T1CE) 정보를 융합합니다.
+    """
+    def __init__(self, in_channels, out_channels, bilinear=True, norm: str = 'bn', skip_channels=None):
+        super().__init__()
+        
+        if bilinear:
+            self.up = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
+            if skip_channels is None:
+                skip_channels = in_channels // 2
+            total_channels = in_channels + skip_channels
+            self.conv = DoubleConv3D(total_channels, out_channels, in_channels // 2, norm=norm)
+        else:
+            self.up = nn.ConvTranspose3d(in_channels, in_channels // 2, kernel_size=2, stride=2)
+            if skip_channels is None:
+                skip_channels = in_channels // 2
+            total_channels = (in_channels // 2) + skip_channels
+            self.conv = DoubleConv3D(total_channels, out_channels, norm=norm)
+
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        
+        # 크기 맞추기
+        diffZ = x2.size()[2] - x1.size()[2]
+        diffY = x2.size()[3] - x1.size()[3]
+        diffX = x2.size()[4] - x1.size()[4]
+
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
+                        diffY // 2, diffY - diffY // 2,
+                        diffZ // 2, diffZ - diffZ // 2])
+        
+        # Concat 후 shuffle로 모달리티 융합
+        x = torch.cat([x2, x1], dim=1)
+        x = channel_shuffle_3d(x, groups=2)
+        return self.conv(x)
 
 class Down3DStrideDilated_1_2_3(nn.Module):
     """Downsampling with stride-2 Conv and dilated convolutions (rate 1, 2, 3) for wider ERF.
@@ -397,11 +437,13 @@ class DualBranchUNet3D_Dilated125_Both_Mobile_Large(DualBranchUNet3D_Dilated125_
 # ============================================================================
 
 class DualBranchUNet3D_Dilated125_Both_Mobile_Shuffle(nn.Module):
-    """Dual-branch UNet with dilated both branches (rate 1,2,5) + MobileNetV2 backbone with shuffle in skip connections
+    """Dual-branch UNet with dilated both branches (rate 1,2,5) + MobileNetV2 backbone with shuffle in decoder
     
     - Both branches: Dilated convolutions (rate 1, 2, 5)
     - Stage 5: Fused branch with MobileViT
-    - Skip connections: Channel shuffle applied after concatenation
+    - Encoder: 각 branch 독립적으로 처리 (dual branch의 의의 유지)
+    - Skip connections: 원본 정보 유지 (shuffle 없음)
+    - Decoder: Upsampling 후 concat한 다음 shuffle로 모달리티 융합 수행
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -440,44 +482,47 @@ class DualBranchUNet3D_Dilated125_Both_Mobile_Shuffle(nn.Module):
         fused_channels = channels['branch4'] * 2
         self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
         
-        # Decoder
+        # Decoder: Up3DShuffle 사용 (concat 후 shuffle로 모달리티 융합)
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
         if self.bilinear:
-            self.up1 = Up3D(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
+            self.up1 = Up3DShuffle(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm)
+            self.up2 = Up3DShuffle(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm)
+            self.up3 = Up3DShuffle(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm)
+            self.up4 = Up3DShuffle(channels['branch2'], channels['out'], self.bilinear, norm=self.norm)
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3D(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
-            self.up2 = Up3D(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
-            self.up3 = Up3D(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
-            self.up4 = Up3D(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
+            self.up1 = Up3DShuffle(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels)
+            self.up2 = Up3DShuffle(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2)
+            self.up3 = Up3DShuffle(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2)
+            self.up4 = Up3DShuffle(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Encoder: 각 branch 독립적으로 처리 (dual branch의 의의 유지)
         x1_flair = self.stem_flair(x[:, :1])
         x1_t1ce = self.stem_t1ce(x[:, 1:2])
-        x1 = channel_shuffle_3d(torch.cat([x1_flair, x1_t1ce], dim=1), groups=2)
+        x1_skip = torch.cat([x1_flair, x1_t1ce], dim=1)  # Skip connection: 원본 정보 유지
         
         b_flair = self.branch_flair(x1_flair)
         b_t1ce = self.branch_t1ce(x1_t1ce)
-        x2 = channel_shuffle_3d(torch.cat([b_flair, b_t1ce], dim=1), groups=2)
+        x2_skip = torch.cat([b_flair, b_t1ce], dim=1)  # Skip connection: 원본 정보 유지
         
         b2_flair = self.branch_flair3(b_flair)
         b2_t1ce = self.branch_t1ce3(b_t1ce)
-        x3 = channel_shuffle_3d(torch.cat([b2_flair, b2_t1ce], dim=1), groups=2)
+        x3_skip = torch.cat([b2_flair, b2_t1ce], dim=1)  # Skip connection: 원본 정보 유지
         
         b3_flair = self.branch_flair4(b2_flair)
         b3_t1ce = self.branch_t1ce4(b2_t1ce)
-        x4 = channel_shuffle_3d(torch.cat([b3_flair, b3_t1ce], dim=1), groups=2)
+        x4_skip = torch.cat([b3_flair, b3_t1ce], dim=1)  # Skip connection: 원본 정보 유지
         
-        x5 = self.down5(x4)
+        x5 = self.down5(x4_skip)
         
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
+        # Decoder: Up3DShuffle 내부에서 concat 후 shuffle로 모달리티 융합 수행
+        x = self.up1(x5, x4_skip)
+        x = self.up2(x, x3_skip)
+        x = self.up3(x, x2_skip)
+        x = self.up4(x, x1_skip)
+        
         return self.outc(x)
 
 
