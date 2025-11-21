@@ -22,11 +22,12 @@ from utils.experiment_utils import (
 
 # Import losses and metrics
 from losses import combined_loss, combined_loss_nnunet_style
-from metrics import calculate_wt_tc_et_dice
+from metrics import calculate_wt_tc_et_dice, calculate_wt_tc_et_hd95
 
 # Import data loader and visualization
 from data_loader import get_data_loaders
 from visualization import create_comprehensive_analysis, create_interactive_3d_plot
+from models.modules.se_modules import SEBlock3D
 
 # Import Grad-CAM utilities
 from utils.gradcam_utils import generate_gradcam_for_model
@@ -330,11 +331,35 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                    sw_patch_size=(128, 128, 128), sw_overlap=0.25, results_dir: str = None):
     """모델 평가 함수"""
     model.eval()
+    real_model = model.module if hasattr(model, 'module') else model
     test_dice = 0.0
     test_wt_sum = test_tc_sum = test_et_sum = 0.0
     n_te = 0
     precision_scores = []
     recall_scores = []
+    hd95_wt_sum = hd95_tc_sum = hd95_et_sum = 0.0
+    hd95_wt_count = hd95_tc_count = hd95_et_count = 0
+    save_examples = results_dir is not None
+    rank0 = True
+    if distributed and hasattr(torch, 'distributed') and torch.distributed.is_available():
+        if torch.distributed.is_initialized():
+            rank0 = torch.distributed.get_rank() == 0
+    save_examples = save_examples and rank0
+
+    collect_se = (results_dir is not None) and rank0
+    se_blocks = []
+    se_excitation_data = {}
+    if collect_se:
+        for name, module in real_model.named_modules():
+            if isinstance(module, SEBlock3D):
+                se_blocks.append((name, module))
+                se_excitation_data[name] = []
+    example_dir = None
+    example_limit = 10
+    examples_saved = 0
+    if save_examples:
+        example_dir = os.path.join(results_dir, f'qualitative_examples_{model_name}')
+        os.makedirs(example_dir, exist_ok=True)
     
     # 모달리티별 어텐션 가중치 수집 (quadbranch_4modal_attention_unet_s만)
     collect_attention = (model_name == 'quadbranch_4modal_attention_unet_s')
@@ -344,6 +369,8 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
         import matplotlib.pyplot as plt
         import seaborn as sns
         from sklearn.metrics import confusion_matrix
+        from matplotlib.colors import ListedColormap
+        seg_cmap = ListedColormap(['black', '#ff0000', '#00ff00', '#0000ff'])
         cm_accum = np.zeros((4, 4), dtype=np.int64)
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
@@ -411,6 +438,24 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             
             # Precision, Recall 계산 (클래스별)
             pred = torch.argmax(logits, dim=1)
+            hd95_batch = calculate_wt_tc_et_hd95(pred, labels)
+            if hd95_batch.size > 0:
+                for hd_wt, hd_tc, hd_et in hd95_batch:
+                    if np.isfinite(hd_wt):
+                        hd95_wt_sum += float(hd_wt)
+                        hd95_wt_count += 1
+                    if np.isfinite(hd_tc):
+                        hd95_tc_sum += float(hd_tc)
+                        hd95_tc_count += 1
+                    if np.isfinite(hd_et):
+                        hd95_et_sum += float(hd_et)
+                        hd95_et_count += 1
+
+            if collect_se and se_blocks:
+                for block_name, block_module in se_blocks:
+                    excitation = getattr(block_module, 'last_excitation', None)
+                    if excitation is not None:
+                        se_excitation_data[block_name].append(excitation.clone())
             pred_np = pred.cpu().numpy()
             labels_np = labels.cpu().numpy()
             # Accumulate 4-class confusion matrix (0..3)
@@ -429,6 +474,68 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                     
                 precision_scores.append(precision)
                 recall_scores.append(recall)
+
+            # 예시 이미지 저장
+            if save_examples and examples_saved < example_limit:
+                inputs_np = inputs.detach().cpu().numpy()
+                for bi in range(bsz):
+                    if examples_saved >= example_limit:
+                        break
+                    input_sample = inputs_np[bi]
+                    label_sample = labels_np[bi]
+                    pred_sample = pred_np[bi]
+
+                    if input_sample.ndim == 4:  # (C, D, H, W)
+                        depth_dim = input_sample.shape[1]
+                        slice_idx = depth_dim // 2
+                        channel_idx = min(input_sample.shape[0] - 1, 3)
+                        image_slice = input_sample[channel_idx, slice_idx, :, :]
+                        if label_sample.ndim == 3:
+                            label_slice = label_sample[:, :, slice_idx]
+                            pred_slice = pred_sample[:, :, slice_idx]
+                        else:
+                            label_slice = label_sample
+                            pred_slice = pred_sample
+                    else:  # (C, H, W)
+                        channel_idx = min(input_sample.shape[0] - 1, 3)
+                        image_slice = input_sample[channel_idx]
+                        if label_sample.ndim == 3:
+                            slice_idx = label_sample.shape[2] // 2
+                            label_slice = label_sample[:, :, slice_idx]
+                            pred_slice = pred_sample[:, :, slice_idx]
+                        else:
+                            label_slice = label_sample
+                            pred_slice = pred_sample
+
+                    img_min, img_max = image_slice.min(), image_slice.max()
+                    if img_max > img_min:
+                        image_display = (image_slice - img_min) / (img_max - img_min)
+                    else:
+                        image_display = image_slice
+
+                    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+                    axes[0].imshow(image_display, cmap='gray')
+                    axes[0].set_title('Input (sample slice)')
+                    axes[0].axis('off')
+
+                    axes[1].imshow(image_display, cmap='gray')
+                    axes[1].imshow(label_slice, cmap=seg_cmap, alpha=0.6, vmin=0, vmax=3)
+                    axes[1].set_title('Ground Truth')
+                    axes[1].axis('off')
+
+                    axes[2].imshow(image_display, cmap='gray')
+                    axes[2].imshow(pred_slice, cmap=seg_cmap, alpha=0.6, vmin=0, vmax=3)
+                    axes[2].set_title('Prediction')
+                    axes[2].axis('off')
+
+                    plt.tight_layout()
+                    example_path = os.path.join(
+                        example_dir, f"{model_name}_example_{examples_saved + 1:02d}.png"
+                    )
+                    plt.savefig(example_path, dpi=200, bbox_inches='tight')
+                    plt.close(fig)
+                    examples_saved += 1
+
     
     test_dice /= max(1, n_te)
     test_wt = test_wt_sum / max(1, n_te)
@@ -441,7 +548,33 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
         dist.all_reduce(td, op=dist.ReduceOp.SUM)
         td = td / world_size
         test_dice, test_wt, test_tc, test_et = td.tolist()
+        hd_tensor = torch.tensor(
+            [
+                hd95_wt_sum,
+                hd95_wt_count,
+                hd95_tc_sum,
+                hd95_tc_count,
+                hd95_et_sum,
+                hd95_et_count,
+            ],
+            device=device,
+        )
+        dist.all_reduce(hd_tensor, op=dist.ReduceOp.SUM)
+        (
+            hd95_wt_sum,
+            hd95_wt_count,
+            hd95_tc_sum,
+            hd95_tc_count,
+            hd95_et_sum,
+            hd95_et_count,
+        ) = hd_tensor.tolist()
         # Confusion matrix reduction is non-trivial without custom gather; skip CM plot on non-main ranks
+    hd95_wt = (hd95_wt_sum / hd95_wt_count) if hd95_wt_count > 0 else None
+    hd95_tc = (hd95_tc_sum / hd95_tc_count) if hd95_tc_count > 0 else None
+    hd95_et = (hd95_et_sum / hd95_et_count) if hd95_et_count > 0 else None
+    total_sum = hd95_wt_sum + hd95_tc_sum + hd95_et_sum
+    total_count = hd95_wt_count + hd95_tc_count + hd95_et_count
+    hd95_mean = (total_sum / total_count) if total_count > 0 else None
     
     # Background 제외한 평균 (클래스 1, 2, 3만)
     avg_precision = np.mean(precision_scores[1::4])  # 클래스별로 평균
@@ -509,11 +642,55 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     except Exception as _e:
         print(f"Warning: failed to save confusion matrix: {_e}")
 
+    # Save SE excitation statistics and histograms
+    if collect_se and se_blocks:
+        se_summary_rows = []
+        for block_name, data_list in se_excitation_data.items():
+            if not data_list:
+                continue
+            try:
+                block_tensor = torch.cat(data_list, dim=0)
+            except RuntimeError:
+                block_tensor = torch.cat([d.cpu() for d in data_list], dim=0)
+            block_np = block_tensor.numpy()
+            channel_means = block_np.mean(axis=0)
+            channel_stds = block_np.std(axis=0)
+            for ch_idx, (m, s) in enumerate(zip(channel_means, channel_stds)):
+                se_summary_rows.append({
+                    'block_name': block_name,
+                    'channel': ch_idx,
+                    'mean_excitation': float(m),
+                    'std_excitation': float(s)
+                })
+            if results_dir:
+                safe_name = block_name.replace('.', '_')
+                hist_path = os.path.join(
+                    results_dir, f'se_excitation_hist_{model_name}_{safe_name}.png'
+                )
+                plt.figure(figsize=(6, 4))
+                plt.hist(block_np.flatten(), bins=40, range=(0, 1), color='steelblue', alpha=0.8)
+                plt.title(f'SE Excitation Histogram\n{model_name} - {block_name}')
+                plt.xlabel('Excitation Weight')
+                plt.ylabel('Frequency')
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(hist_path, dpi=300, bbox_inches='tight')
+                plt.close()
+        if se_summary_rows and results_dir:
+            se_df = pd.DataFrame(se_summary_rows)
+            csv_path = os.path.join(results_dir, f'se_excitation_summary_{model_name}.csv')
+            se_df.to_csv(csv_path, index=False)
+            print(f"SE excitation summary saved to: {csv_path}")
+
     return {
         'dice': test_dice,
         'wt': test_wt,
         'tc': test_tc,
         'et': test_et,
+        'hd95_wt': hd95_wt,
+        'hd95_tc': hd95_tc,
+        'hd95_et': hd95_et,
+        'hd95_mean': hd95_mean,
         'precision': avg_precision,
         'recall': avg_recall
     }

@@ -1,5 +1,7 @@
 import torch
 import torch.nn.functional as F
+import numpy as np
+from scipy.ndimage import distance_transform_edt, binary_erosion, generate_binary_structure
 
 
 def calculate_dice_score(pred, target, smooth=1e-5, num_classes=4):
@@ -94,4 +96,88 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5):
     tc = dice_bin(pred_tc, tgt_tc)
     et = dice_bin(pred_et, tgt_et)
     return torch.stack([wt, tc, et])
+
+
+def _compute_surface_distances(mask_a: np.ndarray, mask_b: np.ndarray, spacing: tuple) -> np.ndarray:
+    """Compute pairwise surface distances between two binary masks."""
+    if not mask_a.any() and not mask_b.any():
+        return np.zeros(1, dtype=np.float32)
+
+    structure = generate_binary_structure(mask_a.ndim, 1)
+
+    def extract_surface(mask: np.ndarray) -> np.ndarray:
+        if not mask.any():
+            return mask
+        eroded = binary_erosion(mask, structure=structure, border_value=0)
+        surface = mask ^ eroded
+        if not surface.any():
+            return mask
+        return surface
+
+    surface_a = extract_surface(mask_a)
+    surface_b = extract_surface(mask_b)
+
+    if not surface_a.any() or not surface_b.any():
+        # One side empty - return max possible distance (diagonal of volume)
+        diag = np.sqrt(np.sum((np.array(mask_a.shape) * np.array(spacing)) ** 2))
+        return np.array([diag], dtype=np.float32)
+
+    dt_b = distance_transform_edt(~surface_b, sampling=spacing)
+    dt_a = distance_transform_edt(~surface_a, sampling=spacing)
+
+    distances_a_to_b = dt_b[surface_a]
+    distances_b_to_a = dt_a[surface_b]
+
+    return np.concatenate([distances_a_to_b, distances_b_to_a]).astype(np.float32)
+
+
+def _hd95_for_region(pred_region: np.ndarray, gt_region: np.ndarray, spacing: tuple) -> float:
+    if not gt_region.any() and not pred_region.any():
+        return 0.0
+    if not gt_region.any() or not pred_region.any():
+        diag = np.sqrt(np.sum((np.array(pred_region.shape) * np.array(spacing)) ** 2))
+        return diag
+    distances = _compute_surface_distances(pred_region, gt_region, spacing)
+    if distances.size == 0:
+        return 0.0
+    return float(np.percentile(distances, 95))
+
+
+def calculate_wt_tc_et_hd95(pred: torch.Tensor, target: torch.Tensor, spacing=None) -> np.ndarray:
+    """
+    Calculate 95th percentile Hausdorff Distance (HD95) for WT, TC, ET regions.
+
+    Args:
+        pred: Predicted labels (B, H, W[, D])
+        target: Ground truth labels (B, H, W[, D])
+        spacing: tuple of voxel spacings. If None, isotropic spacing of 1 is used.
+
+    Returns:
+        numpy array of shape (B, 3) containing HD95 for WT, TC, ET per sample.
+    """
+    if spacing is None:
+        spacing = tuple([1.0] * (target.dim() - 1))
+    elif isinstance(spacing, (int, float)):
+        spacing = tuple([float(spacing)] * (target.dim() - 1))
+
+    pred_np = pred.detach().cpu().numpy()
+    target_np = target.detach().cpu().numpy()
+
+    batch_scores = []
+    for pred_sample, target_sample in zip(pred_np, target_np):
+        pred_wt = ((pred_sample == 1) | (pred_sample == 2) | (pred_sample == 3))
+        pred_tc = ((pred_sample == 1) | (pred_sample == 3))
+        pred_et = (pred_sample == 3)
+
+        tgt_wt = ((target_sample == 1) | (target_sample == 2) | (target_sample == 3))
+        tgt_tc = ((target_sample == 1) | (target_sample == 3))
+        tgt_et = (target_sample == 3)
+
+        wt_hd = _hd95_for_region(pred_wt, tgt_wt, spacing)
+        tc_hd = _hd95_for_region(pred_tc, tgt_tc, spacing)
+        et_hd = _hd95_for_region(pred_et, tgt_et, spacing)
+
+        batch_scores.append([wt_hd, tc_hd, et_hd])
+
+    return np.array(batch_scores, dtype=np.float32)
 

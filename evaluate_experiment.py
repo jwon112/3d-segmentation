@@ -207,6 +207,10 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         'test_wt': metrics.get('wt', None),
         'test_tc': metrics.get('tc', None),
         'test_et': metrics.get('et', None),
+        'test_hd95_mean': metrics.get('hd95_mean', None),
+        'test_hd95_wt': metrics.get('hd95_wt', None),
+        'test_hd95_tc': metrics.get('hd95_tc', None),
+        'test_hd95_et': metrics.get('hd95_et', None),
         'val_dice': None,  # 평가 전용이므로 val_dice는 없음
         'val_wt': None,
         'val_tc': None,
@@ -218,6 +222,8 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     
     if is_main_process(rank):
         print(f"Test Dice: {metrics['dice']:.4f} (WT {metrics['wt']:.4f} | TC {metrics['tc']:.4f} | ET {metrics['et']:.4f})")
+        if all(v is not None for v in [metrics.get('hd95_wt'), metrics.get('hd95_tc'), metrics.get('hd95_et')]):
+            print(f"HD95 (mm): WT {metrics['hd95_wt']:.2f} | TC {metrics['hd95_tc']:.2f} | ET {metrics['hd95_et']:.2f}")
         print(f"Precision: {metrics['precision']:.4f} | Recall: {metrics['recall']:.4f}")
     
     # Stage별 PAM 결과도 함께 반환

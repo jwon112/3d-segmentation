@@ -151,6 +151,8 @@ def create_model_comparison_chart(results_df, results_dir):
         'total_params': ['mean'],
         'flops': ['mean']
     }
+    if 'test_hd95_mean' in results_df.columns:
+        agg_dict['test_hd95_mean'] = ['mean', 'std']
     # PAM이 있는 경우에만 추가
     if 'pam_train' in results_df.columns:
         agg_dict['pam_train'] = ['mean', 'std']
@@ -387,6 +389,30 @@ def create_wt_tc_et_summary(results_df, results_dir):
         plt.tight_layout()
         plt.savefig(outp, dpi=300, bbox_inches='tight')
         print(f"WT/TC/ET test summary saved to: {outp}")
+        plt.close()
+
+    # HD95 summary (WT/TC/ET)
+    hd_cols = {'test_hd95_wt', 'test_hd95_tc', 'test_hd95_et'}
+    if hd_cols.issubset(set(results_df.columns)):
+        fig, ax = plt.subplots(1, 1, figsize=(14, 6))
+        x = np.arange(len(models))
+        width = 0.22
+        means_wt = [results_df[results_df['model_name'] == m]['test_hd95_wt'].mean() for m in models]
+        means_tc = [results_df[results_df['model_name'] == m]['test_hd95_tc'].mean() for m in models]
+        means_et = [results_df[results_df['model_name'] == m]['test_hd95_et'].mean() for m in models]
+        ax.bar(x - width, means_wt, width, label='WT')
+        ax.bar(x,         means_tc, width, label='TC')
+        ax.bar(x + width, means_et, width, label='ET')
+        ax.set_xticks(x)
+        ax.set_xticklabels([m.upper() for m in models], rotation=30)
+        ax.set_ylabel('HD95 (voxels)')
+        ax.set_title('WT/TC/ET Test HD95 Summary (lower is better)')
+        ax.grid(True, axis='y', alpha=0.3)
+        ax.legend()
+        outp = os.path.join(results_dir, 'wt_tc_et_hd95_summary_test.png')
+        plt.tight_layout()
+        plt.savefig(outp, dpi=300, bbox_inches='tight')
+        print(f"WT/TC/ET HD95 summary saved to: {outp}")
         plt.close()
 
     # Val summary
@@ -676,6 +702,8 @@ def create_interactive_3d_plot(results_df, results_dir):
         agg_dict['precision'] = 'mean'
     if 'recall' in results_df.columns:
         agg_dict['recall'] = 'mean'
+    if 'test_hd95_mean' in results_df.columns:
+        agg_dict['test_hd95_mean'] = 'mean'
     
     model_stats = results_df.groupby('model_name').agg(agg_dict).round(4)
     
@@ -704,6 +732,8 @@ def create_interactive_3d_plot(results_df, results_dir):
             hover_parts.append(f"Precision: {row['precision']:.4f}")
         if 'recall' in row:
             hover_parts.append(f"Recall: {row['recall']:.4f}")
+        if 'test_hd95_mean' in row:
+            hover_parts.append(f"HD95: {row['test_hd95_mean']:.2f}")
         hover_texts.append("<br>".join(hover_parts))
     
     # 3D 산점도 생성

@@ -39,6 +39,9 @@ class SEBlock3D(nn.Module):
         """
         b, c, _, _, _ = x.size()
         y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1, 1)
+        y = self.fc(y).view(b, c)
+        # Store latest excitation weights for logging/analysis
+        self.last_excitation = y.detach().cpu()
+        y = y.view(b, c, 1, 1, 1)
         return x * y.expand_as(x)
 
