@@ -223,8 +223,9 @@ class DualBranchUNet3D_Dilated125_Both_Mobile(nn.Module):
         # Stage 5 fused branch with MobileViT (input: branch4*2, output: down5)
         factor = 2 if self.bilinear else 1
         fused_channels = channels['branch4'] * 2
-        self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
-        
+        #self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.down5 = MobileNetV2Block3D(fused_channels, channels['down5'], stride=1, expand_ratio=2.0, norm=self.norm)
+
         # Decoder: Up3DSE 사용 (SE 블록 포함)
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
         if self.bilinear:
