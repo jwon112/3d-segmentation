@@ -752,6 +752,42 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         # 4개 분기 (t1, t1ce, t2, flair) - 채널 어텐션 포함
         from models.model_3d_unet_modal_comparison import QuadBranchUNet3D_4Modal_Attention_Small
         return QuadBranchUNet3D_4Modal_Attention_Small(n_classes=n_classes, norm=norm)
+    # Quad-Branch UNet models (new implementation)
+    elif model_name.startswith('quadbranch_unet_'):
+        # 기본 Quad-Branch UNet (attention 없음)
+        base_name, size = parse_model_size(model_name)
+        from models.quadbranch_unet import QuadBranchUNet3D
+        return QuadBranchUNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
+    elif model_name.startswith('quadbranch_channel_centralized_concat_'):
+        # Channel Attention (Centralized, Concat only)
+        base_name, size = parse_model_size(model_name)
+        from models.quadbranch_unet_attention import QuadBranchUNet3D_Channel_Centralized_Concat
+        return QuadBranchUNet3D_Channel_Centralized_Concat(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size, reduction=8)
+    elif model_name.startswith('quadbranch_channel_distributed_concat_'):
+        # Channel Attention (Distributed, Concat only)
+        base_name, size = parse_model_size(model_name)
+        from models.quadbranch_unet_attention import QuadBranchUNet3D_Channel_Distributed_Concat
+        return QuadBranchUNet3D_Channel_Distributed_Concat(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size, reduction=16)
+    elif model_name.startswith('quadbranch_channel_distributed_conv_'):
+        # Channel Attention (Distributed, Conv fusion)
+        base_name, size = parse_model_size(model_name)
+        from models.quadbranch_unet_attention import QuadBranchUNet3D_Channel_Distributed_Conv
+        return QuadBranchUNet3D_Channel_Distributed_Conv(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size, reduction=16)
+    elif model_name.startswith('quadbranch_spatial_centralized_concat_'):
+        # Spatial Attention (Centralized, Concat only)
+        base_name, size = parse_model_size(model_name)
+        from models.quadbranch_unet_attention import QuadBranchUNet3D_Spatial_Centralized_Concat
+        return QuadBranchUNet3D_Spatial_Centralized_Concat(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
+    elif model_name.startswith('quadbranch_spatial_distributed_concat_'):
+        # Spatial Attention (Distributed, Concat only)
+        base_name, size = parse_model_size(model_name)
+        from models.quadbranch_unet_attention import QuadBranchUNet3D_Spatial_Distributed_Concat
+        return QuadBranchUNet3D_Spatial_Distributed_Concat(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
+    elif model_name.startswith('quadbranch_spatial_distributed_conv_'):
+        # Spatial Attention (Distributed, Conv fusion)
+        base_name, size = parse_model_size(model_name)
+        from models.quadbranch_unet_attention import QuadBranchUNet3D_Spatial_Distributed_Conv
+        return QuadBranchUNet3D_Spatial_Distributed_Conv(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
     else:
         raise ValueError(f"Unknown model: {model_name}")
 

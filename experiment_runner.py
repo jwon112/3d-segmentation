@@ -567,6 +567,13 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         'dualbranch_16_shufflenet_hybrid_ln_': ['xs', 's', 'm', 'l'],
         'dualbranch_17_shufflenet_pamlite_': ['xs', 's', 'm', 'l'],
         'dualbranch_17_shufflenet_pamlite_v3_': ['xs', 's', 'm', 'l'],
+        'quadbranch_unet_': ['xs', 's', 'm', 'l'],
+        'quadbranch_channel_centralized_concat_': ['xs', 's', 'm', 'l'],
+        'quadbranch_channel_distributed_concat_': ['xs', 's', 'm', 'l'],
+        'quadbranch_channel_distributed_conv_': ['xs', 's', 'm', 'l'],
+        'quadbranch_spatial_centralized_concat_': ['xs', 's', 'm', 'l'],
+        'quadbranch_spatial_distributed_concat_': ['xs', 's', 'm', 'l'],
+        'quadbranch_spatial_distributed_conv_': ['xs', 's', 'm', 'l'],
     }
     
     # Size suffix를 지원하는 dualbranch_14 backbone들
@@ -687,7 +694,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     set_seed(seed)
                     
                     # 모델에 따라 use_4modalities 및 n_channels 결정
-                    use_4modalities = model_name in ['unet3d_4modal_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s']
+                    use_4modalities = (model_name in ['unet3d_4modal_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s'] or
+                                      model_name.startswith('quadbranch_'))
                     if use_4modalities:
                         n_channels = 4
                     else:

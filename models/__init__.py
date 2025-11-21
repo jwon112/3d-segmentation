@@ -30,6 +30,24 @@ from .model_swin_unetr import (
 
 from .mobileunetr import MobileUNETR
 
+from .quadbranch_unet import (
+    QuadBranchUNet3D,
+    QuadBranchUNet3D_XS,
+    QuadBranchUNet3D_Small,
+    QuadBranchUNet3D_Medium,
+    QuadBranchUNet3D_Large,
+)
+
+from .quadbranch_unet_attention import (
+    QuadBranchAttentionBase,
+    QuadBranchUNet3D_Channel_Centralized_Concat,
+    QuadBranchUNet3D_Channel_Distributed_Concat,
+    QuadBranchUNet3D_Channel_Distributed_Conv,
+    QuadBranchUNet3D_Spatial_Centralized_Concat,
+    QuadBranchUNet3D_Spatial_Distributed_Concat,
+    QuadBranchUNet3D_Spatial_Distributed_Conv,
+)
+
 __all__ = [
     # U-Net models
     'UNet3D_Medium',
@@ -56,4 +74,18 @@ __all__ = [
     
     # MobileUNETR models
     'MobileUNETR',
+    
+    # Quad-Branch UNet models
+    'QuadBranchUNet3D',
+    'QuadBranchUNet3D_XS',
+    'QuadBranchUNet3D_Small',
+    'QuadBranchUNet3D_Medium',
+    'QuadBranchUNet3D_Large',
+    'QuadBranchAttentionBase',
+    'QuadBranchUNet3D_Channel_Centralized_Concat',
+    'QuadBranchUNet3D_Channel_Distributed_Concat',
+    'QuadBranchUNet3D_Channel_Distributed_Conv',
+    'QuadBranchUNet3D_Spatial_Centralized_Concat',
+    'QuadBranchUNet3D_Spatial_Distributed_Concat',
+    'QuadBranchUNet3D_Spatial_Distributed_Conv',
 ]

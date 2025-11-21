@@ -36,7 +36,8 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     """저장된 체크포인트를 로드하여 평가만 수행"""
     
     # 모델에 따라 use_4modalities 및 n_channels 결정
-    use_4modalities = model_name in ['unet3d_4modal_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s']
+    use_4modalities = (model_name in ['unet3d_4modal_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s'] or
+                      model_name.startswith('quadbranch_'))
     if use_4modalities:
         n_channels = 4
     else:

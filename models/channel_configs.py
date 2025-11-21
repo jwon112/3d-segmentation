@@ -83,6 +83,46 @@ DUALBRANCH_CHANNELS = {
 
 
 # ============================================================================
+# Quad-Branch UNet Channel Configurations
+# ============================================================================
+
+QUADBRANCH_CHANNELS = {
+    'xs': {
+        'stem': 8,           # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 16,       # Stage 2: branch channels (each branch) - stride=2
+        'branch3': 32,       # Stage 3: branch channels (each branch) - stride=2
+        'branch4': 64,       # Stage 4: branch channels (each branch) - stride=2
+        'down5': 256,        # Stage 5: single branch channels - stride=2 (input: branch4*4=256, output: 256)
+        'out': 16,           # Output channels (decoder final)
+    },
+    's': {
+        'stem': 16,          # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 32,       # Stage 2: branch channels (each branch) - stride=2
+        'branch3': 64,       # Stage 3: branch channels (each branch) - stride=2
+        'branch4': 128,      # Stage 4: branch channels (each branch) - stride=2
+        'down5': 512,        # Stage 5: single branch channels - stride=2 (input: branch4*4=512, output: 512)
+        'out': 32,           # Output channels (decoder final)
+    },
+    'm': {
+        'stem': 32,          # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 64,       # Stage 2: branch channels (each branch) - stride=2
+        'branch3': 128,      # Stage 3: branch channels (each branch) - stride=2
+        'branch4': 256,      # Stage 4: branch channels (each branch) - stride=2
+        'down5': 1024,       # Stage 5: single branch channels - stride=2 (input: branch4*4=1024, output: 1024)
+        'out': 64,           # Output channels (decoder final)
+    },
+    'l': {
+        'stem': 64,          # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 128,      # Stage 2: branch channels (each branch) - stride=2
+        'branch3': 256,      # Stage 3: branch channels (each branch) - stride=2
+        'branch4': 512,      # Stage 4: branch channels (each branch) - stride=2
+        'down5': 2048,       # Stage 5: single branch channels - stride=2 (input: branch4*4=2048, output: 2048)
+        'out': 128,          # Output channels (decoder final)
+    },
+}
+
+
+# ============================================================================
 # Dual-Branch UNet Channel Configurations (Stage 4 fused, Stage 5 single branch)
 # ============================================================================
 
@@ -170,6 +210,27 @@ def get_dualbranch_channels_stage4_fused(size: str) -> Dict:
     if size not in DUALBRANCH_CHANNELS_STAGE4_FUSED:
         raise ValueError(f"Unknown size: {size}. Must be one of {list(DUALBRANCH_CHANNELS_STAGE4_FUSED.keys())}")
     return DUALBRANCH_CHANNELS_STAGE4_FUSED[size]
+
+
+def get_quadbranch_channels(size: str) -> Dict:
+    """
+    Get Quad-Branch UNet channel configuration for given size.
+    
+    This configuration is for models with 4 modality branches:
+    - Stage 1: 4 modality-specific stems (each branch independently)
+    - Stage 2-4: 4 modality-specific branches (each branch independently)
+    - Stage 5+: Single fused branch (Stage 4 outputs are concatenated before Stage 5)
+    
+    Args:
+        size: 'xs', 's', 'm', or 'l'
+    
+    Returns:
+        Dictionary with channel configuration
+        Note: Stage 5 input channels = branch4 * 4 (after concatenation of 4 branches)
+    """
+    if size not in QUADBRANCH_CHANNELS:
+        raise ValueError(f"Unknown size: {size}. Must be one of {list(QUADBRANCH_CHANNELS.keys())}")
+    return QUADBRANCH_CHANNELS[size]
 
 
 def parse_model_size(model_name: str) -> Tuple[str, str]:
