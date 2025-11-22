@@ -1,0 +1,144 @@
+"""
+Experiment Configuration
+실험 설정 및 모델 리스트 관리
+"""
+
+from typing import List, Dict, Optional
+
+
+# ============================================================================
+# Model Configuration
+# ============================================================================
+
+# Size suffix를 지원하는 모델 prefix들 (xs, s, m, l 모두 지원)
+SIZE_SUFFIX_MODELS = {
+    'unet3d_': ['xs', 's', 'm', 'l'],
+    'unet3d_stride_': ['xs', 's', 'm', 'l'],
+    'dualbranch_01_unet_': ['xs', 's', 'm', 'l'],
+    'dualbranch_02_unet_': ['xs', 's', 'm', 'l'],
+    'dualbranch_03_unet_': ['xs', 's', 'm', 'l'],
+    'dualbranch_04_unet_': ['xs', 's', 'm', 'l'],
+    'dualbranch_05_unet_': ['xs', 's', 'm', 'l'],
+    'dualbranch_06_unet_': ['xs', 's', 'm', 'l'],
+    'dualbranch_07_unet_': ['xs', 's', 'm', 'l'],
+    'dualbranch_08_unet_': ['xs', 's', 'm', 'l'],
+    'dualbranch_09_unet_': ['xs', 's', 'm', 'l'],
+    'dualbranch_10_unet_': ['xs', 's', 'm', 'l'],
+    'dualbranch_11_unet_': ['xs', 's', 'm', 'l'],
+    'dualbranch_12_unet_': ['xs', 's', 'm', 'l'],
+    'dualbranch_13_unet_': ['xs', 's', 'm', 'l'],
+    'dualbranch_15_dilated125_both_': ['xs', 's', 'm', 'l'],
+    'dualbranch_15_dilated125_both_shuffle_': ['xs', 's', 'm', 'l'],
+    'dualbranch_16_shufflenet_hybrid_': ['xs', 's', 'm', 'l'],
+    'dualbranch_16_shufflenet_hybrid_ln_': ['xs', 's', 'm', 'l'],
+    'dualbranch_17_shufflenet_pamlite_': ['xs', 's', 'm', 'l'],
+    'dualbranch_17_shufflenet_pamlite_v3_': ['xs', 's', 'm', 'l'],
+    'dualbranch_18_shufflenet_v1_': ['xs', 's', 'm', 'l'],
+    'quadbranch_unet_': ['xs', 's', 'm', 'l'],
+    'quadbranch_channel_centralized_concat_': ['xs', 's', 'm', 'l'],
+    'quadbranch_channel_distributed_concat_': ['xs', 's', 'm', 'l'],
+    'quadbranch_channel_distributed_conv_': ['xs', 's', 'm', 'l'],
+    'quadbranch_spatial_centralized_concat_': ['xs', 's', 'm', 'l'],
+    'quadbranch_spatial_distributed_concat_': ['xs', 's', 'm', 'l'],
+    'quadbranch_spatial_distributed_conv_': ['xs', 's', 'm', 'l'],
+}
+
+# Size suffix를 지원하는 dualbranch_14 backbone들
+DUALBRANCH_14_BACKBONES = [
+    'mobilenetv2_expand2', 'ghostnet', 'dilated', 'convnext', 
+    'shufflenetv2', 'shufflenetv2_crossattn', 'shufflenetv2_dilated', 'shufflenetv2_lk'
+]
+
+# Size suffix를 지원하지 않는 모델들 (고정 이름)
+FIXED_NAME_MODELS = [
+    'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d',
+    'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s',
+    'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s'
+]
+
+# 4개 모달리티를 사용하는 모델들
+MODELS_WITH_4_MODALITIES = [
+    'unet3d_4modal_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s'
+]
+
+
+# ============================================================================
+# Model List Generation
+# ============================================================================
+
+def get_all_available_models() -> List[str]:
+    """모든 사용 가능한 모델 리스트 생성"""
+    available_models = []
+    
+    # Size suffix를 지원하는 모델들 생성
+    for prefix, sizes in SIZE_SUFFIX_MODELS.items():
+        for size in sizes:
+            available_models.append(f"{prefix}{size}")
+    
+    # dualbranch_14 모델들 생성
+    for backbone in DUALBRANCH_14_BACKBONES:
+        for size in ['xs', 's', 'm', 'l']:
+            available_models.append(f"dualbranch_14_{backbone}_{size}")
+    
+    # 고정 이름 모델들 추가
+    available_models.extend(FIXED_NAME_MODELS)
+    
+    return available_models
+
+
+def validate_and_filter_models(models: Optional[List[str]]) -> List[str]:
+    """사용자가 지정한 모델들을 검증하고 필터링"""
+    if models is None:
+        return get_all_available_models()
+    
+    available_models = []
+    for model_name in models:
+        # 고정 이름 모델인지 확인
+        if model_name in FIXED_NAME_MODELS:
+            available_models.append(model_name)
+            continue
+        
+        # Size suffix를 지원하는 모델 prefix인지 확인
+        is_valid = False
+        for prefix, sizes in SIZE_SUFFIX_MODELS.items():
+            if model_name.startswith(prefix):
+                # Size suffix 추출
+                suffix = model_name[len(prefix):]
+                if suffix in sizes:
+                    is_valid = True
+                    break
+        
+        # dualbranch_14 모델인지 확인
+        if not is_valid and model_name.startswith('dualbranch_14_'):
+            parts = model_name.split('_', 2)
+            if len(parts) >= 3:
+                backbone_and_size = parts[2]
+                for size in ['xs', 's', 'm', 'l']:
+                    if backbone_and_size.endswith(f'_{size}'):
+                        backbone = backbone_and_size[:-len(f'_{size}')]
+                        if backbone in DUALBRANCH_14_BACKBONES:
+                            is_valid = True
+                            break
+        
+        if is_valid:
+            available_models.append(model_name)
+        else:
+            print(f"Warning: Invalid model name '{model_name}' will be skipped.")
+    
+    return available_models
+
+
+def get_n_channels_for_model(model_name: str) -> int:
+    """모델 이름에 따라 필요한 입력 채널 수 반환"""
+    if model_name in MODELS_WITH_4_MODALITIES or model_name.startswith('quadbranch_'):
+        return 4
+    return 2
+
+
+def get_model_config(model_name: str) -> Dict:
+    """모델 설정 정보 반환"""
+    return {
+        'n_channels': get_n_channels_for_model(model_name),
+        'use_4modalities': get_n_channels_for_model(model_name) == 4,
+    }
+

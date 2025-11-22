@@ -32,6 +32,21 @@ from models.modules.se_modules import SEBlock3D
 # Import Grad-CAM utilities
 from utils.gradcam_utils import generate_gradcam_for_model
 
+# Import experiment configuration
+from utils.experiment_config import (
+    validate_and_filter_models,
+    get_n_channels_for_model,
+    get_model_config
+)
+
+# Import result utilities
+from utils.result_utils import (
+    create_result_dict,
+    create_stage_pam_result,
+    create_epoch_result_dict,
+    save_results_to_csv
+)
+
 
 def _extract_hybrid_stats(model):
     real_model = model.module if hasattr(model, 'module') else model
@@ -720,91 +735,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     os.makedirs(results_dir, exist_ok=True)
     print(f"Train data augmentation: {'MRI augmentations' if use_mri_augmentation else 'None'}")
     
-    # 사용 가능한 모델들
-    # Size suffix를 지원하는 모델 prefix들 (xs, s, m, l 모두 지원)
-    size_suffix_models = {
-        'unet3d_': ['xs', 's', 'm', 'l'],
-        'unet3d_stride_': ['xs', 's', 'm', 'l'],
-        'dualbranch_01_unet_': ['xs', 's', 'm', 'l'],
-        'dualbranch_02_unet_': ['xs', 's', 'm', 'l'],
-        'dualbranch_03_unet_': ['xs', 's', 'm', 'l'],
-        'dualbranch_04_unet_': ['xs', 's', 'm', 'l'],
-        'dualbranch_05_unet_': ['xs', 's', 'm', 'l'],
-        'dualbranch_06_unet_': ['xs', 's', 'm', 'l'],
-        'dualbranch_07_unet_': ['xs', 's', 'm', 'l'],
-        'dualbranch_08_unet_': ['xs', 's', 'm', 'l'],
-        'dualbranch_09_unet_': ['xs', 's', 'm', 'l'],
-        'dualbranch_10_unet_': ['xs', 's', 'm', 'l'],
-        'dualbranch_11_unet_': ['xs', 's', 'm', 'l'],
-        'dualbranch_12_unet_': ['xs', 's', 'm', 'l'],
-        'dualbranch_13_unet_': ['xs', 's', 'm', 'l'],
-        'dualbranch_15_dilated125_both_': ['xs', 's', 'm', 'l'],
-        'dualbranch_15_dilated125_both_shuffle_': ['xs', 's', 'm', 'l'],
-        'dualbranch_16_shufflenet_hybrid_': ['xs', 's', 'm', 'l'],
-        'dualbranch_16_shufflenet_hybrid_ln_': ['xs', 's', 'm', 'l'],
-        'dualbranch_17_shufflenet_pamlite_': ['xs', 's', 'm', 'l'],
-        'dualbranch_17_shufflenet_pamlite_v3_': ['xs', 's', 'm', 'l'],
-        'quadbranch_unet_': ['xs', 's', 'm', 'l'],
-        'quadbranch_channel_centralized_concat_': ['xs', 's', 'm', 'l'],
-        'quadbranch_channel_distributed_concat_': ['xs', 's', 'm', 'l'],
-        'quadbranch_channel_distributed_conv_': ['xs', 's', 'm', 'l'],
-        'quadbranch_spatial_centralized_concat_': ['xs', 's', 'm', 'l'],
-        'quadbranch_spatial_distributed_concat_': ['xs', 's', 'm', 'l'],
-        'quadbranch_spatial_distributed_conv_': ['xs', 's', 'm', 'l'],
-    }
-    
-    # Size suffix를 지원하는 dualbranch_14 backbone들
-    dualbranch_14_backbones = ['mobilenetv2_expand2', 'ghostnet', 'dilated', 'convnext', 
-                                'shufflenetv2', 'shufflenetv2_crossattn', 'shufflenetv2_dilated', 'shufflenetv2_lk']
-    
-    # Size suffix를 지원하지 않는 모델들 (고정 이름)
-    fixed_name_models = ['unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d',
-                         'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s',
-                         'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s']
-    
-    # 동적으로 available_models 생성
-    if models is None:
-        available_models = []
-        # Size suffix를 지원하는 모델들 생성
-        for prefix, sizes in size_suffix_models.items():
-            for size in sizes:
-                available_models.append(f"{prefix}{size}")
-        # dualbranch_14 모델들 생성
-        for backbone in dualbranch_14_backbones:
-            for size in ['xs', 's', 'm', 'l']:
-                available_models.append(f"dualbranch_14_{backbone}_{size}")
-        # 고정 이름 모델들 추가
-        available_models.extend(fixed_name_models)
-    else:
-        # 사용자가 지정한 모델들을 필터링 (prefix 기반으로 검증)
-        available_models = []
-        for model_name in models:
-            # 고정 이름 모델인지 확인
-            if model_name in fixed_name_models:
-                available_models.append(model_name)
-                continue
-            # Size suffix를 지원하는 모델 prefix인지 확인
-            is_valid = False
-            for prefix, sizes in size_suffix_models.items():
-                if model_name.startswith(prefix):
-                    # Size suffix 추출
-                    suffix = model_name[len(prefix):]
-                    if suffix in sizes:
-                        is_valid = True
-                        break
-            # dualbranch_14 모델인지 확인
-            if not is_valid and model_name.startswith('dualbranch_14_'):
-                parts = model_name.split('_', 2)
-                if len(parts) >= 3:
-                    backbone_and_size = parts[2]
-                    for size in ['xs', 's', 'm', 'l']:
-                        if backbone_and_size.endswith(f'_{size}'):
-                            backbone = backbone_and_size[:-len(f'_{size}')]
-                            if backbone in dualbranch_14_backbones:
-                                is_valid = True
-                                break
-            if is_valid:
-                available_models.append(model_name)
+    # 사용 가능한 모델들 검증 및 필터링
+    available_models = validate_and_filter_models(models)
     
     # 결과 저장용
     all_results = []
@@ -865,39 +797,56 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
             # 각 모델별로 실험
             for model_name in available_models:
                 try:
-                    print(f"\nTraining {model_name.upper()}...")
+                    if is_main_process(rank):
+                        print(f"\nTraining {model_name.upper()}...")
                     
                     # 모델별 결정성 보장: 모델 초기화/샘플링 RNG 고정
                     set_seed(seed)
                     
                     # 모델에 따라 use_4modalities 및 n_channels 결정
-                    use_4modalities = (model_name in ['unet3d_4modal_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s'] or
-                                      model_name.startswith('quadbranch_'))
-                    if use_4modalities:
-                        n_channels = 4
-                    else:
-                        n_channels = 2
+                    model_config = get_model_config(model_name)
+                    n_channels = model_config['n_channels']
+                    use_4modalities = model_config['use_4modalities']
                     
                     # 데이터 로더 생성 (모델별로 use_4modalities 설정)
-                    train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
-                        data_dir=data_path,
-                        batch_size=batch_size,
-                        num_workers=num_workers,  # /dev/shm 2GB 환경에서 기본 2 권장
-                        max_samples=None,  # 전체 데이터 사용
-                        dim=dim,  # 2D 또는 3D
-                        dataset_version=dataset_version,  # 데이터셋 버전
-                        seed=seed,  # 데이터 분할을 위한 seed
-                        distributed=distributed,
-                        world_size=world_size,
-                        rank=rank,
-                        use_4modalities=use_4modalities,  # 모델에 따라 설정
-                        use_5fold=use_5fold,  # 5-fold CV 사용 여부
-                        fold_idx=fold_idx,  # fold 인덱스 (None이면 일반 분할)
-                        use_mri_augmentation=use_mri_augmentation
-                    )
+                    try:
+                        train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
+                            data_dir=data_path,
+                            batch_size=batch_size,
+                            num_workers=num_workers,  # /dev/shm 2GB 환경에서 기본 2 권장
+                            max_samples=None,  # 전체 데이터 사용
+                            dim=dim,  # 2D 또는 3D
+                            dataset_version=dataset_version,  # 데이터셋 버전
+                            seed=seed,  # 데이터 분할을 위한 seed
+                            distributed=distributed,
+                            world_size=world_size,
+                            rank=rank,
+                            use_4modalities=use_4modalities,  # 모델에 따라 설정
+                            use_5fold=use_5fold,  # 5-fold CV 사용 여부
+                            fold_idx=fold_idx,  # fold 인덱스 (None이면 일반 분할)
+                            use_mri_augmentation=use_mri_augmentation
+                        )
+                    except Exception as e:
+                        if is_main_process(rank):
+                            print(f"Error creating data loaders for {model_name}: {e}")
+                            import traceback
+                            traceback.print_exc()
+                        continue
 
                     # 모델 생성
-                    model = get_model(model_name, n_channels=n_channels, n_classes=4, dim=dim, use_pretrained=use_pretrained)
+                    try:
+                        if is_main_process(rank):
+                            print(f"Creating model: {model_name}...")
+                        model = get_model(model_name, n_channels=n_channels, n_classes=4, dim=dim, use_pretrained=use_pretrained)
+                        if is_main_process(rank):
+                            print(f"Model {model_name} created successfully.")
+                    except Exception as e:
+                        if is_main_process(rank):
+                            print(f"Error creating model {model_name}: {e}")
+                            import traceback
+                            print("Full traceback:")
+                            traceback.print_exc()
+                        continue
                     # DDP wrap
                     if distributed:
                         from torch.nn.parallel import DistributedDataParallel as DDP
@@ -1102,86 +1051,68 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     pam_inference_mean = sum(pam_inference_list) / len(pam_inference_list) if pam_inference_list else 0
                     latency_mean = sum(inference_latency_list) / len(inference_latency_list) if inference_latency_list else 0
                     
-                    result = {
-                        'dataset': dataset_version,
-                        'seed': seed,
-                        'fold': fold_idx if use_5fold else None,
-                        'model_name': model_name,
-                        'total_params': total_params,
-                        'flops': flops,
-                        'pam_train': pam_train_mean,  # bytes, batch_size=1 기준 (평균값)
-                        'pam_inference': pam_inference_mean,  # bytes, batch_size=1 기준 (평균값)
-                        'inference_latency_ms': latency_mean,  # milliseconds, batch_size=1 기준 (평균값)
-                        'test_dice': metrics['dice'],  # WT/TC/ET 평균
-                        'test_wt': metrics.get('wt', None),
-                        'test_tc': metrics.get('tc', None),
-                        'test_et': metrics.get('et', None),
-                        'val_dice': best_val_dice,  # WT/TC/ET 평균
-                        'val_wt': best_val_wt,
-                        'val_tc': best_val_tc,
-                        'val_et': best_val_et,
-                        'precision': metrics['precision'],
-                        'recall': metrics['recall'],
-                        'best_epoch': best_epoch
-                    }
                     if is_main_process(rank):
+                        # 메인 결과 저장
+                        result = create_result_dict(
+                            dataset_version=dataset_version,
+                            seed=seed,
+                            fold_idx=fold_idx if use_5fold else None,
+                            model_name=model_name,
+                            total_params=total_params,
+                            flops=flops,
+                            pam_train_mean=pam_train_mean,
+                            pam_inference_mean=pam_inference_mean,
+                            latency_mean=latency_mean,
+                            metrics=metrics,
+                            best_val_dice=best_val_dice,
+                            best_val_wt=best_val_wt,
+                            best_val_tc=best_val_tc,
+                            best_val_et=best_val_et,
+                            best_epoch=best_epoch
+                        )
                         all_results.append(result)
                         
                         # Stage별 PAM 결과 저장
                         if pam_train_stages:
                             for stage_name, mem_list in pam_train_stages.items():
-                                if mem_list:
-                                    mem_mean = sum(mem_list) / len(mem_list)
-                                    mem_std = (sum((x - mem_mean) ** 2 for x in mem_list) / len(mem_list)) ** 0.5 if len(mem_list) > 1 else 0.0
-                                    stage_pam_result = {
-                                        'dataset': dataset_version,
-                                        'seed': seed,
-                                        'fold': fold_idx if use_5fold else None,
-                                        'model_name': model_name,
-                                        'mode': 'train',
-                                        'stage_name': stage_name,
-                                        'pam_mean': mem_mean,  # bytes
-                                        'pam_std': mem_std,  # bytes
-                                        'num_runs': len(mem_list)
-                                    }
-                                    all_stage_pam_results.append(stage_pam_result)
+                                stage_result = create_stage_pam_result(
+                                    dataset_version=dataset_version,
+                                    seed=seed,
+                                    fold_idx=fold_idx if use_5fold else None,
+                                    model_name=model_name,
+                                    mode='train',
+                                    stage_name=stage_name,
+                                    mem_list=mem_list
+                                )
+                                if stage_result:
+                                    all_stage_pam_results.append(stage_result)
                         
                         if pam_inference_stages:
                             for stage_name, mem_list in pam_inference_stages.items():
-                                if mem_list:
-                                    mem_mean = sum(mem_list) / len(mem_list)
-                                    mem_std = (sum((x - mem_mean) ** 2 for x in mem_list) / len(mem_list)) ** 0.5 if len(mem_list) > 1 else 0.0
-                                    stage_pam_result = {
-                                        'dataset': dataset_version,
-                                        'seed': seed,
-                                        'fold': fold_idx if use_5fold else None,
-                                        'model_name': model_name,
-                                        'mode': 'inference',
-                                        'stage_name': stage_name,
-                                        'pam_mean': mem_mean,  # bytes
-                                        'pam_std': mem_std,  # bytes
-                                        'num_runs': len(mem_list)
-                                    }
-                                    all_stage_pam_results.append(stage_pam_result)
+                                stage_result = create_stage_pam_result(
+                                    dataset_version=dataset_version,
+                                    seed=seed,
+                                    fold_idx=fold_idx if use_5fold else None,
+                                    model_name=model_name,
+                                    mode='inference',
+                                    stage_name=stage_name,
+                                    mem_list=mem_list
+                                )
+                                if stage_result:
+                                    all_stage_pam_results.append(stage_result)
                     
                     # 모든 epoch 결과 저장 (test_dice는 최종 평가 값으로 업데이트)
-                    for epoch_result in epoch_results:
-                        epoch_data = {
-                            'dataset': dataset_version,
-                            'seed': seed,
-                            'fold': fold_idx if use_5fold else None,
-                            'model_name': model_name,
-                            'epoch': epoch_result['epoch'],
-                            'train_loss': epoch_result['train_loss'],
-                            'train_dice': epoch_result['train_dice'],
-                            'val_loss': epoch_result['val_loss'],
-                            'val_dice': epoch_result['val_dice'],
-                            'val_wt': epoch_result.get('val_wt', None),
-                            'val_tc': epoch_result.get('val_tc', None),
-                            'val_et': epoch_result.get('val_et', None),
-                            'test_dice': metrics['dice'] if epoch_result['epoch'] == best_epoch else None  # Best epoch에만 최종 test dice 기록
-                        }
-                        if is_main_process(rank):
+                    if is_main_process(rank):
+                        for epoch_result in epoch_results:
+                            epoch_data = create_epoch_result_dict(
+                                dataset_version=dataset_version,
+                                seed=seed,
+                                fold_idx=fold_idx if use_5fold else None,
+                                model_name=model_name,
+                                epoch_result=epoch_result,
+                                best_epoch=best_epoch,
+                                test_dice=metrics['dice']
+                            )
                             all_epochs_results.append(epoch_data)
                     
                     if is_main_process(rank):
@@ -1189,42 +1120,49 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         print(f"Final Test Dice: {metrics['dice']:.4f} (WT {metrics['wt']:.4f} | TC {metrics['tc']:.4f} | ET {metrics['et']:.4f}) | Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
                 
                 except Exception as e:
+                    # 모든 프로세스에서 에러 로깅 (디버깅을 위해)
+                    import traceback
+                    error_msg = f"[Rank {rank}] Error with {model_name}: {e}"
+                    print(error_msg)
+                    print(f"[Rank {rank}] Full traceback:")
+                    traceback.print_exc()
+                    # Main process에서만 추가 정보 출력
                     if is_main_process(rank):
-                        print(f"Error with {model_name}: {e}")
-                        import traceback
-                        print("Full traceback:")
-                        traceback.print_exc()
+                        print(f"\n{'='*60}")
+                        print(f"FAILED: {model_name.upper()}")
+                        print(f"Error: {e}")
+                        print(f"{'='*60}\n")
                     continue
     
     # 결과를 DataFrame으로 변환
-    results_df = pd.DataFrame(all_results)
+    results_df = pd.DataFrame(all_results) if all_results else pd.DataFrame()
     
     # 결과가 비어있는 경우 처리
     if results_df.empty:
-        print("Warning: No results were collected. All experiments failed.")
+        if is_main_process(rank) or not distributed:
+            print("\n" + "="*80)
+            print("WARNING: No results were collected. All experiments failed.")
+            print("="*80)
+            print("Please check the error messages above for details.")
+            print("Common issues:")
+            print("  - Model import errors (check if model file exists)")
+            print("  - Invalid model name or parameters")
+            print("  - Data loading errors")
+            print("  - CUDA/device errors")
+            print("="*80 + "\n")
         return results_dir, results_df
     
     # CSV로 저장
-    if is_main_process(0) or not distributed:
-        csv_path = os.path.join(results_dir, "integrated_experiment_results.csv")
-        results_df.to_csv(csv_path, index=False)
-        print(f"Results saved to: {csv_path}")
+    save_results_to_csv(
+        results_dir=results_dir,
+        all_results=all_results,
+        all_epochs_results=all_epochs_results,
+        all_stage_pam_results=all_stage_pam_results,
+        is_main_process=(is_main_process(0) or not distributed)
+    )
     
-    # 모든 epoch 결과 저장
-    epochs_df = None
-    if all_epochs_results:
-        epochs_df = pd.DataFrame(all_epochs_results)
-        if is_main_process(0) or not distributed:
-            epochs_csv_path = os.path.join(results_dir, "all_epochs_results.csv")
-            epochs_df.to_csv(epochs_csv_path, index=False)
-            print(f"All epochs results saved to: {epochs_csv_path}")
-    
-    # Stage별 PAM 결과 저장
-    if all_stage_pam_results and (is_main_process(0) or not distributed):
-        stage_pam_df = pd.DataFrame(all_stage_pam_results)
-        stage_pam_csv_path = os.path.join(results_dir, "stage_wise_pam_results.csv")
-        stage_pam_df.to_csv(stage_pam_csv_path, index=False)
-        print(f"Stage-wise PAM results saved to: {stage_pam_csv_path}")
+    # Epochs DataFrame 생성 (분석용)
+    epochs_df = pd.DataFrame(all_epochs_results) if all_epochs_results else None
     
     # 모델별 성능 비교 분석
     if is_main_process(0) or not distributed:
