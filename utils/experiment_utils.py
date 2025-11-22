@@ -492,32 +492,114 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         dim: '2d' 또는 '3d'
         patch_size: 하이퍼파라미터 (None이면 모델별 기본값 사용)
         use_pretrained: pretrained 가중치 사용 여부 (MobileUNETR의 경우)
+    
+    Raises:
+        ValueError: 모델 이름이 알려지지 않았거나 비어있는 경우, 또는 파라미터가 유효하지 않은 경우
+        ImportError: 모델 모듈을 import할 수 없는 경우
+        RuntimeError: 모델 생성 중 오류가 발생한 경우
     """
+    # 파라미터 검증
+    if not model_name:
+        raise ValueError("model_name cannot be empty")
+    if not isinstance(model_name, str):
+        raise ValueError(f"model_name must be a string, got {type(model_name)}")
+    if n_channels <= 0:
+        raise ValueError(f"n_channels must be positive, got {n_channels}")
+    if n_classes <= 0:
+        raise ValueError(f"n_classes must be positive, got {n_classes}")
+    if dim not in ['2d', '3d']:
+        raise ValueError(f"dim must be '2d' or '3d', got '{dim}'")
+    if norm not in ['bn', 'in', 'gn', 'ln']:
+        raise ValueError(f"norm must be one of ['bn', 'in', 'gn', 'ln'], got '{norm}'")
+    
     # Add parent directory to path for imports
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
-    # Import models
-    from models import (
-        UNETR_Simplified, 
-        SwinUNETR_Simplified,
-        MobileUNETR,
-    )
-    from models.mobileunetr_3d import MobileUNETR_3D_Wrapper
-    from models.channel_configs import parse_model_size
+    try:
+        from models.channel_configs import parse_model_size
+    except ImportError as e:
+        raise ImportError(f"Failed to import parse_model_size: {e}")
+    
+    # 지원하는 모델 목록 정의 (패턴 기반)
+    SUPPORTED_MODEL_PATTERNS = [
+        'unet3d_', 'unet3d_stride_', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d',
+        'dualbranch_01_unet_', 'dualbranch_02_unet_', 'dualbranch_03_unet_', 'dualbranch_04_unet_',
+        'dualbranch_05_unet_', 'dualbranch_06_unet_', 'dualbranch_07_unet_', 'dualbranch_08_unet_',
+        'dualbranch_09_unet_', 'dualbranch_10_unet_', 'dualbranch_11_unet_', 'dualbranch_12_unet_',
+        'dualbranch_13_unet_', 'dualbranch_14_', 'dualbranch_15_dilated125_both_',
+        'dualbranch_15_dilated125_both_shuffle_', 'dualbranch_16_shufflenet_hybrid_',
+        'dualbranch_16_shufflenet_hybrid_ln_', 'dualbranch_17_shufflenet_pamlite_',
+        'dualbranch_17_shufflenet_pamlite_v3_', 'dualbranch_18_shufflenet_v1_',
+        'quadbranch_unet_', 'quadbranch_channel_centralized_concat_',
+        'quadbranch_channel_distributed_concat_', 'quadbranch_channel_distributed_conv_',
+        'quadbranch_spatial_centralized_concat_', 'quadbranch_spatial_distributed_concat_',
+        'quadbranch_spatial_distributed_conv_',
+        # 특정 모델 이름 (패턴이 아닌 정확한 이름)
+        'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s',
+        'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s'
+    ]
+    
+    # 모델 이름 검증
+    is_supported = False
+    for pattern in SUPPORTED_MODEL_PATTERNS:
+        if model_name.startswith(pattern) or model_name == pattern:
+            is_supported = True
+            break
+    
+    if not is_supported:
+        raise ValueError(
+            f"Unknown model: '{model_name}'\n"
+            f"Supported model patterns: {', '.join(SUPPORTED_MODEL_PATTERNS)}\n"
+            f"Note: Most models support size suffixes: _xs, _s, _m, _l (e.g., 'dualbranch_18_shufflenet_v1_s')"
+        )
+    
+    # Helper function for consistent error handling
+    def _create_model_with_error_handling(model_name, create_func, *args, **kwargs):
+        """모델 생성 시 일관된 에러 처리"""
+        try:
+            return create_func(*args, **kwargs)
+        except ImportError as e:
+            raise ImportError(
+                f"Failed to import model class for '{model_name}': {e}\n"
+                f"Please check if the required model module exists and is properly configured."
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to create model '{model_name}': {e}\n"
+                f"Please check model configuration and parameters."
+            )
+    
+    # Import models (필요한 경우에만, lazy import)
+    UNETR_Simplified = None
+    SwinUNETR_Simplified = None
+    MobileUNETR = None
+    MobileUNETR_3D_Wrapper = None
     
     # 2D 입력인 경우 3D로 확장 (unsqueeze depth dimension)
-    if model_name.startswith('unet3d_'):
+    if model_name.startswith('unet3d_') and not model_name.startswith('unet3d_stride_'):
         if dim == '2d':
             # 2D 데이터는 depth 차원 추가가 필요
             pass
-        base_name, size = parse_model_size(model_name)
-        from models.model_3d_unet import UNet3D
-        return UNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
+        try:
+            base_name, size = parse_model_size(model_name)
+        except Exception as e:
+            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
+        
+        def _create_unet3d():
+            from models.model_3d_unet import UNet3D
+            return UNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
+        return _create_model_with_error_handling(model_name, _create_unet3d)
     elif model_name.startswith('unet3d_stride_'):
         # UNet3D variant with stride-2 conv downsampling - Support xs, s, m, l sizes
-        base_name, size = parse_model_size(model_name)
-        from models.model_3d_unet_stride import UNet3D_Stride
-        return UNet3D_Stride(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
+        try:
+            base_name, size = parse_model_size(model_name)
+        except Exception as e:
+            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
+        
+        def _create_unet3d_stride():
+            from models.model_3d_unet_stride import UNet3D_Stride
+            return UNet3D_Stride(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
+        return _create_model_with_error_handling(model_name, _create_unet3d_stride)
     elif model_name == 'unetr':
         # dim에 따라 img_size 설정
         if dim == '2d':
@@ -530,12 +612,16 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             # patch_size가 지정되지 않으면 기본값 사용 (3D)
             if patch_size is None:
                 patch_size = (16, 16, 16)  # 논문 권장값
-        return UNETR_Simplified(
-            img_size=img_size, 
-            patch_size=patch_size,
-            in_channels=n_channels, 
-            out_channels=n_classes
-        )
+        
+        def _create_unetr():
+            from models import UNETR_Simplified
+            return UNETR_Simplified(
+                img_size=img_size, 
+                patch_size=patch_size,
+                in_channels=n_channels, 
+                out_channels=n_classes
+            )
+        return _create_model_with_error_handling(model_name, _create_unetr)
     elif model_name == 'swin_unetr':
         # dim에 따라 img_size 설정
         if dim == '2d':
@@ -548,12 +634,16 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             # patch_size가 지정되지 않으면 기본값 사용 (3D)
             if patch_size is None:
                 patch_size = (4, 4, 4)
-        return SwinUNETR_Simplified(
-            img_size=img_size, 
-            patch_size=patch_size,
-            in_channels=n_channels, 
-            out_channels=n_classes
-        )
+        
+        def _create_swin_unetr():
+            from models import SwinUNETR_Simplified
+            return SwinUNETR_Simplified(
+                img_size=img_size, 
+                patch_size=patch_size,
+                in_channels=n_channels, 
+                out_channels=n_classes
+            )
+        return _create_model_with_error_handling(model_name, _create_swin_unetr)
     elif model_name == 'mobile_unetr':
         # MobileUNETR는 2D 전용 모델
         if dim != '2d':
@@ -564,13 +654,16 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         if patch_size is None:
             patch_size = (16, 16)  # 2D에서 권장값
         
-        return MobileUNETR(
-            img_size=img_size,
-            patch_size=patch_size,
-            in_channels=n_channels,
-            out_channels=n_classes,
-            use_pretrained=use_pretrained
-        )
+        def _create_mobile_unetr():
+            from models import MobileUNETR
+            return MobileUNETR(
+                img_size=img_size,
+                patch_size=patch_size,
+                in_channels=n_channels,
+                out_channels=n_classes,
+                use_pretrained=use_pretrained
+            )
+        return _create_model_with_error_handling(model_name, _create_mobile_unetr)
     elif model_name == 'mobile_unetr_3d':
         # MobileUNETR 3D 모델
         if dim != '3d':
@@ -581,17 +674,26 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         if patch_size is None:
             patch_size = (2, 2, 2)  # 3D에서 권장값
         
-        return MobileUNETR_3D_Wrapper(
-            img_size=img_size,
-            patch_size=patch_size,
-            in_channels=n_channels,
-            out_channels=n_classes
-        )
+        def _create_mobile_unetr_3d():
+            from models.mobileunetr_3d import MobileUNETR_3D_Wrapper
+            return MobileUNETR_3D_Wrapper(
+                img_size=img_size,
+                patch_size=patch_size,
+                in_channels=n_channels,
+                out_channels=n_classes
+            )
+        return _create_model_with_error_handling(model_name, _create_mobile_unetr_3d)
     elif model_name.startswith('dualbranch_01_unet_'):
         # Dual-branch 3D UNet (v0.1) - Support xs, s, m, l sizes
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_basic import DualBranchUNet3D
-        return DualBranchUNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+        try:
+            base_name, size = parse_model_size(model_name)
+        except Exception as e:
+            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
+        
+        def _create_dualbranch_01():
+            from models.dualbranch_basic import DualBranchUNet3D
+            return DualBranchUNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+        return _create_model_with_error_handling(model_name, _create_dualbranch_01)
     elif model_name.startswith('dualbranch_02_unet_'):
         # Dual-branch 3D UNet (v0.2) - stride-2 convolutional downsampling - Support xs, s, m, l sizes
         base_name, size = parse_model_size(model_name)
@@ -715,9 +817,15 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         )
     elif model_name.startswith('dualbranch_18_shufflenet_v1_'):
         # Dual-branch UNet with ShuffleNet V1 + SE blocks - Support xs, s, m, l sizes
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_shufflenet import DualBranchUNet3D_ShuffleNetV1
-        return DualBranchUNet3D_ShuffleNetV1(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+        try:
+            base_name, size = parse_model_size(model_name)
+        except Exception as e:
+            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
+        
+        def _create_shufflenet_v1():
+            from models.dualbranch_shufflenet import DualBranchUNet3D_ShuffleNetV1
+            return DualBranchUNet3D_ShuffleNetV1(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+        return _create_model_with_error_handling(model_name, _create_shufflenet_v1)
     elif model_name.startswith('dualbranch_16_shufflenet_hybrid_ln_'):
         base_name, size = parse_model_size(model_name)
         from models.dualbranch_16_unet import DualBranchUNet3D_ShuffleHybrid_AllLN
@@ -793,6 +901,10 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         base_name, size = parse_model_size(model_name)
         from models.quadbranch_unet_attention import QuadBranchUNet3D_Spatial_Distributed_Conv
         return QuadBranchUNet3D_Spatial_Distributed_Conv(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
+    # 이 코드는 실행되지 않아야 함 (검증 단계에서 이미 처리됨)
+    # 하지만 방어적 프로그래밍을 위해 남겨둠
+    raise RuntimeError(
+        f"Internal error: Model '{model_name}' passed validation but was not handled. "
+        f"This should not happen. Please report this issue."
+    )
 
