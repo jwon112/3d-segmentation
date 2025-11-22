@@ -34,6 +34,7 @@ SIZE_SUFFIX_MODELS = {
     'dualbranch_17_shufflenet_pamlite_': ['xs', 's', 'm', 'l'],
     'dualbranch_17_shufflenet_pamlite_v3_': ['xs', 's', 'm', 'l'],
     'dualbranch_18_shufflenet_v1_': ['xs', 's', 'm', 'l'],
+    'dualbranch_18_shufflenet_v1_stage3fused_': ['xs', 's', 'm', 'l'],
     'quadbranch_unet_': ['xs', 's', 'm', 'l'],
     'quadbranch_channel_centralized_concat_': ['xs', 's', 'm', 'l'],
     'quadbranch_channel_distributed_concat_': ['xs', 's', 'm', 'l'],
