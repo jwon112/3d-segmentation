@@ -477,13 +477,13 @@ def create_parameter_efficiency_chart(results_df, results_dir):
     
     # 레이아웃 결정: PAM과 Latency에 따라
     if has_pam and has_latency:
-        fig, axes = plt.subplots(2, 3, figsize=(18, 12))  # 2x3 레이아웃
+        fig, axes = plt.subplots(3, 2, figsize=(12, 18))  # 3x2 레이아웃 (세로 3개, 가로 2개)
         axes = axes.flatten()
     elif has_pam or has_latency:
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))  # 2x2 레이아웃
+        fig, axes = plt.subplots(2, 2, figsize=(12, 15))  # 2x2 레이아웃
         axes = axes.flatten()
     else:
-        fig, axes = plt.subplots(1, 2, figsize=(15, 6))  # 1x2 레이아웃
+        fig, axes = plt.subplots(1, 2, figsize=(12, 6))  # 1x2 레이아웃
     
     fig.suptitle('3D Segmentation Model Efficiency Analysis', fontsize=16)
     

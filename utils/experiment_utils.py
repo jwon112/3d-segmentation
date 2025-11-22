@@ -530,6 +530,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         'dualbranch_15_dilated125_both_shuffle_', 'dualbranch_16_shufflenet_hybrid_',
         'dualbranch_16_shufflenet_hybrid_ln_', 'dualbranch_17_shufflenet_pamlite_',
         'dualbranch_17_shufflenet_pamlite_v3_', 'dualbranch_18_shufflenet_v1_',
+        'dualbranch_18_shufflenet_v1_stage3fused_',
         'quadbranch_unet_', 'quadbranch_channel_centralized_concat_',
         'quadbranch_channel_distributed_concat_', 'quadbranch_channel_distributed_conv_',
         'quadbranch_spatial_centralized_concat_', 'quadbranch_spatial_distributed_concat_',
@@ -815,6 +816,17 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             size=size,
             log_hybrid_stats=True,
         )
+    elif model_name.startswith('dualbranch_18_shufflenet_v1_stage3fused_'):
+        # Dual-branch UNet with ShuffleNet V1 - Stage 3 fused at down4 (4-stage structure) - Support xs, s, m, l sizes
+        try:
+            base_name, size = parse_model_size(model_name)
+        except Exception as e:
+            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
+        
+        def _create_shufflenet_v1_stage3fused():
+            from models.dualbranch_shufflenet import DualBranchUNet3D_ShuffleNetV1_Stage3Fused
+            return DualBranchUNet3D_ShuffleNetV1_Stage3Fused(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+        return _create_model_with_error_handling(model_name, _create_shufflenet_v1_stage3fused)
     elif model_name.startswith('dualbranch_18_shufflenet_v1_'):
         # Dual-branch UNet with ShuffleNet V1 + SE blocks - Support xs, s, m, l sizes
         try:

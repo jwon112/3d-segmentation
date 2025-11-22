@@ -123,6 +123,42 @@ QUADBRANCH_CHANNELS = {
 
 
 # ============================================================================
+# Dual-Branch UNet Channel Configurations (Stage 3 fused at down4, 4-stage structure)
+# ============================================================================
+
+DUALBRANCH_CHANNELS_STAGE3_FUSED = {
+    'xs': {
+        'stem': 8,           # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 16,       # Stage 2: branch channels (each branch) - stride=2
+        'branch3': 32,       # Stage 3: branch channels (each branch) - stride=2
+        'down4': 128,        # Stage 4: single branch channels (bottleneck) - stride=2 (input: branch3*2=64, output: 128 = branch3*4)
+        'out': 16,           # Output channels (decoder final)
+    },
+    's': {
+        'stem': 16,          # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 32,       # Stage 2: branch channels (each branch) - stride=2
+        'branch3': 64,       # Stage 3: branch channels (each branch) - stride=2
+        'down4': 256,        # Stage 4: single branch channels (bottleneck) - stride=2 (input: branch3*2=128, output: 256 = branch3*4)
+        'out': 32,           # Output channels (decoder final)
+    },
+    'm': {
+        'stem': 32,          # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 64,       # Stage 2: branch channels (each branch) - stride=2
+        'branch3': 128,      # Stage 3: branch channels (each branch) - stride=2
+        'down4': 512,        # Stage 4: single branch channels (bottleneck) - stride=2 (input: branch3*2=256, output: 512 = branch3*4)
+        'out': 64,           # Output channels (decoder final)
+    },
+    'l': {
+        'stem': 64,          # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 128,      # Stage 2: branch channels (each branch) - stride=2
+        'branch3': 256,      # Stage 3: branch channels (each branch) - stride=2
+        'down4': 1024,       # Stage 4: single branch channels (bottleneck) - stride=2 (input: branch3*2=512, output: 1024 = branch3*4)
+        'out': 128,          # Output channels (decoder final)
+    },
+}
+
+
+# ============================================================================
 # Dual-Branch UNet Channel Configurations (Stage 4 fused, Stage 5 single branch)
 # ============================================================================
 
@@ -190,6 +226,28 @@ def get_dualbranch_channels(size: str) -> Dict:
     if size not in DUALBRANCH_CHANNELS:
         raise ValueError(f"Unknown size: {size}. Must be one of {list(DUALBRANCH_CHANNELS.keys())}")
     return DUALBRANCH_CHANNELS[size]
+
+
+def get_dualbranch_channels_stage3_fused(size: str) -> Dict:
+    """
+    Get Dual-Branch UNet channel configuration for given size (Stage 3 fused at down4, 4-stage structure).
+    
+    This configuration is for models where:
+    - Stage 1-3: Dual-branch structure (each branch independently)
+    - Stage 4: Single branch bottleneck (down4, Stage 3 outputs are concatenated before down4)
+    
+    Structure: stem → branch2 (dual) → branch3 (dual) → down4 (fused bottleneck) → out
+    
+    Args:
+        size: 'xs', 's', 'm', or 'l'
+    
+    Returns:
+        Dictionary with channel configuration
+        Note: down4 input channels = branch3 * 2 (after concatenation)
+    """
+    if size not in DUALBRANCH_CHANNELS_STAGE3_FUSED:
+        raise ValueError(f"Unknown size: {size}. Must be one of {list(DUALBRANCH_CHANNELS_STAGE3_FUSED.keys())}")
+    return DUALBRANCH_CHANNELS_STAGE3_FUSED[size]
 
 
 def get_dualbranch_channels_stage4_fused(size: str) -> Dict:

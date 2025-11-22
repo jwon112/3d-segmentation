@@ -28,6 +28,7 @@ from metrics import calculate_wt_tc_et_dice, calculate_wt_tc_et_hd95
 from data_loader import get_data_loaders
 from visualization import create_comprehensive_analysis, create_interactive_3d_plot
 from models.modules.se_modules import SEBlock3D
+from models.modules.cbam_modules import CBAM3D
 
 # Import Grad-CAM utilities
 from utils.gradcam_utils import generate_gradcam_for_model
@@ -369,6 +370,17 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             if isinstance(module, SEBlock3D):
                 se_blocks.append((name, module))
                 se_excitation_data[name] = []
+    
+    collect_cbam = (results_dir is not None) and rank0
+    cbam_blocks = []
+    cbam_channel_data = {}
+    cbam_spatial_data = {}
+    if collect_cbam:
+        for name, module in real_model.named_modules():
+            if isinstance(module, CBAM3D):
+                cbam_blocks.append((name, module))
+                cbam_channel_data[name] = []
+                cbam_spatial_data[name] = []
     example_dir = None
     example_limit = 10
     examples_saved = 0
@@ -471,6 +483,15 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                     excitation = getattr(block_module, 'last_excitation', None)
                     if excitation is not None:
                         se_excitation_data[block_name].append(excitation.clone())
+                
+                # Collect CBAM weights
+                for block_name, block_module in cbam_blocks:
+                    channel_weights = getattr(block_module, 'last_channel_weights', None)
+                    spatial_weights = getattr(block_module, 'last_spatial_weights', None)
+                    if channel_weights is not None:
+                        cbam_channel_data[block_name].append(channel_weights.clone())
+                    if spatial_weights is not None:
+                        cbam_spatial_data[block_name].append(spatial_weights.clone())
             pred_np = pred.cpu().numpy()
             labels_np = labels.cpu().numpy()
             # Accumulate 4-class confusion matrix (0..3)
@@ -496,51 +517,97 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                 for bi in range(bsz):
                     if examples_saved >= example_limit:
                         break
-                    input_sample = inputs_np[bi]
-                    label_sample = labels_np[bi]
-                    pred_sample = pred_np[bi]
+                    input_sample = inputs_np[bi]  # (C, D, H, W) or (C, H, W)
+                    label_sample = labels_np[bi]  # (D, H, W) or (H, W)
+                    pred_sample = pred_np[bi]     # (D, H, W) or (H, W)
 
-                    if input_sample.ndim == 4:  # (C, D, H, W)
-                        depth_dim = input_sample.shape[1]
-                        slice_idx = depth_dim // 2
-                        channel_idx = min(input_sample.shape[0] - 1, 3)
-                        image_slice = input_sample[channel_idx, slice_idx, :, :]
+                    # 3D 볼륨인 경우: (C, H, W, D) 및 (H, W, D)
+                    if input_sample.ndim == 4:  # (C, H, W, D)
+                        C, H, W, D = input_sample.shape
+                        channel_idx = 0 if C >= 2 else 0  # FLAIR 채널 (2채널이면 0번, 4채널이면 3번)
+                        if C >= 4:
+                            channel_idx = 3  # FLAIR는 4채널일 때 마지막
+                        
+                        # 마스크가 있는 슬라이스 찾기 (배경이 아닌 픽셀이 있는 슬라이스)
+                        valid_slices = []
+                        if label_sample.ndim == 3:  # (H, W, D)
+                            for d_idx in range(D):
+                                label_slice_2d = label_sample[:, :, d_idx]
+                                if (label_slice_2d > 0).any():
+                                    valid_slices.append(d_idx)
+                        else:
+                            # 2D인 경우
+                            if (label_sample > 0).any():
+                                valid_slices = [0]
+                        
+                        # 마스크가 있는 슬라이스가 없으면 스킵
+                        if not valid_slices:
+                            continue
+                        
+                        # 마스크가 있는 슬라이스 중에서 선택 (중간 부분 우선)
+                        if len(valid_slices) > 1:
+                            mid_idx = len(valid_slices) // 2
+                            slice_idx = valid_slices[mid_idx]
+                        else:
+                            slice_idx = valid_slices[0]
+                        
+                        # 이미지 슬라이스 추출: (C, H, W, D) -> (H, W)
+                        image_slice = input_sample[channel_idx, :, :, slice_idx]
+                        
+                        # 라벨/예측 슬라이스 추출: (H, W, D) -> (H, W)
                         if label_sample.ndim == 3:
                             label_slice = label_sample[:, :, slice_idx]
                             pred_slice = pred_sample[:, :, slice_idx]
                         else:
                             label_slice = label_sample
                             pred_slice = pred_sample
-                    else:  # (C, H, W)
-                        channel_idx = min(input_sample.shape[0] - 1, 3)
-                        image_slice = input_sample[channel_idx]
-                        if label_sample.ndim == 3:
-                            slice_idx = label_sample.shape[2] // 2
-                            label_slice = label_sample[:, :, slice_idx]
-                            pred_slice = pred_sample[:, :, slice_idx]
-                        else:
+                    
+                    else:  # 2D: (C, H, W) 및 (H, W)
+                        C, H, W = input_sample.shape
+                        channel_idx = min(C - 1, 0)  # FLAIR 채널
+                        image_slice = input_sample[channel_idx, :, :]
+                        
+                        # 2D인 경우에도 마스크 확인
+                        if label_sample.ndim == 2:
+                            if not (label_sample > 0).any():
+                                continue  # 마스크가 없으면 스킵
                             label_slice = label_sample
                             pred_slice = pred_sample
+                        else:
+                            # 3D 라벨이지만 2D 입력인 경우 (이상한 케이스)
+                            continue
 
+                    # 이미지 정규화
                     img_min, img_max = image_slice.min(), image_slice.max()
                     if img_max > img_min:
                         image_display = (image_slice - img_min) / (img_max - img_min)
                     else:
                         image_display = image_slice
 
-                    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-                    axes[0].imshow(image_display, cmap='gray')
-                    axes[0].set_title('Input (sample slice)')
+                    # 시각화: 원본 이미지 위에 마스크 오버레이
+                    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+                    
+                    # Input: 원본 이미지만
+                    axes[0].imshow(image_display, cmap='gray', origin='lower')
+                    axes[0].set_title(f'Input (FLAIR, slice {slice_idx if input_sample.ndim == 4 else "2D"})')
                     axes[0].axis('off')
 
-                    axes[1].imshow(image_display, cmap='gray')
-                    axes[1].imshow(label_slice, cmap=seg_cmap, alpha=0.6, vmin=0, vmax=3)
-                    axes[1].set_title('Ground Truth')
+                    # Ground Truth: 원본 이미지 + 마스크 오버레이
+                    axes[1].imshow(image_display, cmap='gray', origin='lower')
+                    # 마스크가 있는 부분만 오버레이 (alpha=0.5)
+                    mask_gt = label_slice > 0
+                    if mask_gt.any():
+                        im_gt = axes[1].imshow(label_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=3, origin='lower')
+                    axes[1].set_title('Ground Truth (overlay)')
                     axes[1].axis('off')
 
-                    axes[2].imshow(image_display, cmap='gray')
-                    axes[2].imshow(pred_slice, cmap=seg_cmap, alpha=0.6, vmin=0, vmax=3)
-                    axes[2].set_title('Prediction')
+                    # Prediction: 원본 이미지 + 예측 마스크 오버레이
+                    axes[2].imshow(image_display, cmap='gray', origin='lower')
+                    # 예측 마스크가 있는 부분만 오버레이 (alpha=0.5)
+                    mask_pred = pred_slice > 0
+                    if mask_pred.any():
+                        im_pred = axes[2].imshow(pred_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=3, origin='lower')
+                    axes[2].set_title('Prediction (overlay)')
                     axes[2].axis('off')
 
                     plt.tight_layout()
@@ -696,6 +763,91 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             csv_path = os.path.join(results_dir, f'se_excitation_summary_{model_name}.csv')
             se_df.to_csv(csv_path, index=False)
             print(f"SE excitation summary saved to: {csv_path}")
+
+    # Save CBAM attention statistics and histograms
+    if collect_cbam and cbam_blocks:
+        import matplotlib.pyplot as plt
+        
+        # Channel Attention weights
+        cbam_channel_summary_rows = []
+        for block_name, data_list in cbam_channel_data.items():
+            if not data_list:
+                continue
+            try:
+                block_tensor = torch.cat(data_list, dim=0)
+            except RuntimeError:
+                block_tensor = torch.cat([d.cpu() for d in data_list], dim=0)
+            block_np = block_tensor.numpy()  # (N, C) where N is number of samples
+            channel_means = block_np.mean(axis=0)
+            channel_stds = block_np.std(axis=0)
+            for ch_idx, (m, s) in enumerate(zip(channel_means, channel_stds)):
+                cbam_channel_summary_rows.append({
+                    'block_name': block_name,
+                    'channel': ch_idx,
+                    'mean_channel_weight': float(m),
+                    'std_channel_weight': float(s)
+                })
+            if results_dir:
+                safe_name = block_name.replace('.', '_')
+                hist_path = os.path.join(
+                    results_dir, f'cbam_channel_hist_{model_name}_{safe_name}.png'
+                )
+                plt.figure(figsize=(6, 4))
+                plt.hist(block_np.flatten(), bins=40, range=(0, 1), color='coral', alpha=0.8)
+                plt.title(f'CBAM Channel Attention Histogram\n{model_name} - {block_name}')
+                plt.xlabel('Channel Attention Weight')
+                plt.ylabel('Frequency')
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(hist_path, dpi=300, bbox_inches='tight')
+                plt.close()
+        if cbam_channel_summary_rows and results_dir:
+            cbam_channel_df = pd.DataFrame(cbam_channel_summary_rows)
+            csv_path = os.path.join(results_dir, f'cbam_channel_summary_{model_name}.csv')
+            cbam_channel_df.to_csv(csv_path, index=False)
+            print(f"CBAM channel attention summary saved to: {csv_path}")
+        
+        # Spatial Attention weights
+        cbam_spatial_summary_rows = []
+        for block_name, data_list in cbam_spatial_data.items():
+            if not data_list:
+                continue
+            try:
+                block_tensor = torch.cat(data_list, dim=0)
+            except RuntimeError:
+                block_tensor = torch.cat([d.cpu() for d in data_list], dim=0)
+            block_np = block_tensor.numpy()  # (N, 1, D, H, W) where N is number of samples
+            # Flatten spatial dimensions for statistics
+            spatial_means = block_np.mean(axis=(0, 1))  # Average over batch and channel, shape: (D, H, W)
+            spatial_stds = block_np.std(axis=(0, 1))
+            spatial_flat_means = spatial_means.flatten()
+            spatial_flat_stds = spatial_stds.flatten()
+            for idx, (m, s) in enumerate(zip(spatial_flat_means, spatial_flat_stds)):
+                cbam_spatial_summary_rows.append({
+                    'block_name': block_name,
+                    'spatial_idx': idx,
+                    'mean_spatial_weight': float(m),
+                    'std_spatial_weight': float(s)
+                })
+            if results_dir:
+                safe_name = block_name.replace('.', '_')
+                hist_path = os.path.join(
+                    results_dir, f'cbam_spatial_hist_{model_name}_{safe_name}.png'
+                )
+                plt.figure(figsize=(6, 4))
+                plt.hist(block_np.flatten(), bins=40, range=(0, 1), color='mediumseagreen', alpha=0.8)
+                plt.title(f'CBAM Spatial Attention Histogram\n{model_name} - {block_name}')
+                plt.xlabel('Spatial Attention Weight')
+                plt.ylabel('Frequency')
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(hist_path, dpi=300, bbox_inches='tight')
+                plt.close()
+        if cbam_spatial_summary_rows and results_dir:
+            cbam_spatial_df = pd.DataFrame(cbam_spatial_summary_rows)
+            csv_path = os.path.join(results_dir, f'cbam_spatial_summary_{model_name}.csv')
+            cbam_spatial_df.to_csv(csv_path, index=False)
+            print(f"CBAM spatial attention summary saved to: {csv_path}")
 
     return {
         'dice': test_dice,

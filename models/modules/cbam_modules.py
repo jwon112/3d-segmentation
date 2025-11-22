@@ -59,8 +59,12 @@ class ChannelAttention3D(nn.Module):
         
         # Combine both branches
         out = avg_out + max_out
-        out = self.sigmoid(out).view(b, c, 1, 1, 1)
+        out = self.sigmoid(out)
         
+        # Store latest channel attention weights for logging/analysis
+        self.last_channel_weights = out.detach().cpu()  # (B, C)
+        
+        out = out.view(b, c, 1, 1, 1)
         return x * out.expand_as(x)
 
 
@@ -101,6 +105,9 @@ class SpatialAttention3D(nn.Module):
         out = self.conv(out)  # (B, 1, D, H, W)
         out = self.sigmoid(out)  # (B, 1, D, H, W)
         
+        # Store latest spatial attention weights for logging/analysis
+        self.last_spatial_weights = out.detach().cpu()  # (B, 1, D, H, W)
+        
         return x * out
 
 
@@ -131,5 +138,12 @@ class CBAM3D(nn.Module):
         out = self.channel_attention(x)
         # Then apply spatial attention
         out = self.spatial_attention(out)
+        
+        # Store latest weights from both attention modules for logging/analysis
+        # Channel attention weights are already stored in self.channel_attention.last_channel_weights
+        # Spatial attention weights are already stored in self.spatial_attention.last_spatial_weights
+        self.last_channel_weights = getattr(self.channel_attention, 'last_channel_weights', None)
+        self.last_spatial_weights = getattr(self.spatial_attention, 'last_spatial_weights', None)
+        
         return out
 
