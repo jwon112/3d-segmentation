@@ -713,6 +713,11 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             size=size,
             log_hybrid_stats=True,
         )
+    elif model_name.startswith('dualbranch_18_shufflenet_v1_'):
+        # Dual-branch UNet with ShuffleNet V1 + SE blocks - Support xs, s, m, l sizes
+        base_name, size = parse_model_size(model_name)
+        from models.dualbranch_shufflenet import DualBranchUNet3D_ShuffleNetV1
+        return DualBranchUNet3D_ShuffleNetV1(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
     elif model_name.startswith('dualbranch_16_shufflenet_hybrid_ln_'):
         base_name, size = parse_model_size(model_name)
         from models.dualbranch_16_unet import DualBranchUNet3D_ShuffleHybrid_AllLN
