@@ -483,8 +483,9 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                     excitation = getattr(block_module, 'last_excitation', None)
                     if excitation is not None:
                         se_excitation_data[block_name].append(excitation.clone())
-                
-                # Collect CBAM weights
+            
+            # Collect CBAM weights (독립적으로 실행)
+            if collect_cbam and cbam_blocks:
                 for block_name, block_module in cbam_blocks:
                     channel_weights = getattr(block_module, 'last_channel_weights', None)
                     spatial_weights = getattr(block_module, 'last_spatial_weights', None)
