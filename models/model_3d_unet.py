@@ -14,6 +14,44 @@ def _make_norm3d(norm: str, num_features: int) -> nn.Module:
     return nn.BatchNorm3d(num_features)
 
 
+class HardSwish(nn.Module):
+    """Hard-Swish 활성화 함수
+    
+    MobileNetV3에서 사용된 활성화 함수로, ReLU보다 더 부드러운 비선형성을 제공합니다.
+    x * ReLU6(x + 3) / 6
+    
+    Reference:
+        Searching for MobileNetV3 (Howard et al., ICCV 2019)
+    """
+    def __init__(self, inplace: bool = True):
+        super().__init__()
+        self.inplace = inplace
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * F.relu6(x + 3, inplace=self.inplace) / 6
+
+
+def _make_activation(activation: str = 'relu', inplace: bool = True) -> nn.Module:
+    """활성화 함수 생성 헬퍼 함수
+    
+    Args:
+        activation: 활성화 함수 타입 ('relu', 'hardswish', 'hswish', 'gelu')
+        inplace: inplace 연산 사용 여부
+    
+    Returns:
+        활성화 함수 모듈
+    """
+    activation = (activation or 'relu').lower()
+    if activation in ('hardswish', 'hswish'):
+        return HardSwish(inplace=inplace)
+    elif activation in ('gelu',):
+        return nn.GELU()
+    elif activation in ('relu',):
+        return nn.ReLU(inplace=inplace)
+    else:
+        raise ValueError(f"Unknown activation: {activation}")
+
+
 class DoubleConv3D(nn.Module):
     """3D Double Convolution 블록"""
     def __init__(self, in_channels, out_channels, mid_channels=None, norm: str = 'bn'):

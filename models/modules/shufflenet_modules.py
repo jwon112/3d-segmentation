@@ -6,7 +6,7 @@ ShuffleNetV1 및 ShuffleNetV2 스타일의 3D 모듈들
 import torch
 import torch.nn as nn
 
-from ..model_3d_unet import _make_norm3d
+from ..model_3d_unet import _make_norm3d, _make_activation
 
 
 def channel_shuffle_3d(x: torch.Tensor, groups: int) -> torch.Tensor:
@@ -52,7 +52,7 @@ class ShuffleNetV1Unit3D(nn.Module):
     Reference:
         ShuffleNet: An Extremely Efficient Convolutional Neural Network for Mobile Devices (Zhang et al., CVPR 2018)
     """
-    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, groups: int = 1, norm: str = 'bn', dilation: int = 1):
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, groups: int = 1, norm: str = 'bn', dilation: int = 1, activation: str = 'relu'):
         super().__init__()
         self.stride = stride
         self.in_channels = in_channels
@@ -82,7 +82,7 @@ class ShuffleNetV1Unit3D(nn.Module):
                                groups=groups, bias=False)
         self.bn3 = _make_norm3d(norm, out_channels)
         
-        self.relu = nn.ReLU(inplace=True)
+        self.activation = _make_activation(activation, inplace=True)
         
         # Residual connection for stride=1 only
         if stride == 1:
@@ -96,7 +96,7 @@ class ShuffleNetV1Unit3D(nn.Module):
         # Pointwise Group Conv
         out = self.conv1(x)
         out = self.bn1(out)
-        out = self.relu(out)
+        out = self.activation(out)
         
         # Channel Shuffle
         out = channel_shuffle_3d(out, groups=self.groups)
@@ -113,7 +113,7 @@ class ShuffleNetV1Unit3D(nn.Module):
         if self.use_residual:
             out = out + x
         
-        out = self.relu(out)
+        out = self.activation(out)
         return out
 
 
@@ -128,7 +128,7 @@ class MultiScaleDilatedDepthwise3D(nn.Module):
         dilation_rates: Dilation rate 리스트 (기본값: [1, 2, 5])
         norm: Normalization 타입 ('bn', 'gn', 'in')
     """
-    def __init__(self, channels: int, dilation_rates: list = [1, 2, 5], norm: str = 'bn'):
+    def __init__(self, channels: int, dilation_rates: list = [1, 2, 3], norm: str = 'bn', activation: str = 'relu'):
         super().__init__()
         self.dilation_rates = dilation_rates
         
@@ -140,7 +140,7 @@ class MultiScaleDilatedDepthwise3D(nn.Module):
                 nn.Conv3d(channels, channels, kernel_size=3, stride=1, padding=padding,
                          dilation=dilation, groups=channels, bias=False),
                 _make_norm3d(norm, channels),
-                nn.ReLU(inplace=True),
+                _make_activation(activation, inplace=True),
             )
             self.dilated_convs.append(conv)
         
@@ -149,7 +149,7 @@ class MultiScaleDilatedDepthwise3D(nn.Module):
         self.fusion = nn.Sequential(
             nn.Conv3d(channels, channels, kernel_size=1, stride=1, padding=0, bias=False),
             _make_norm3d(norm, channels),
-            nn.ReLU(inplace=True),
+            _make_activation(activation, inplace=True),
         )
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -179,12 +179,12 @@ class MultiScaleDilatedDepthwise3D(nn.Module):
 
 class Down3DShuffleNetV1(nn.Module):
     """Downsampling using ShuffleNetV1 unit (stride=2)."""
-    def __init__(self, in_channels: int, out_channels: int, groups: int = 1, norm: str = 'bn'):
+    def __init__(self, in_channels: int, out_channels: int, groups: int = 1, norm: str = 'bn', activation: str = 'relu'):
         super().__init__()
         # First unit: stride=2 for downsampling
-        self.unit1 = ShuffleNetV1Unit3D(in_channels, out_channels, stride=2, groups=groups, norm=norm)
+        self.unit1 = ShuffleNetV1Unit3D(in_channels, out_channels, stride=2, groups=groups, norm=norm, activation=activation)
         # Second unit: stride=1 for feature refinement
-        self.unit2 = ShuffleNetV1Unit3D(out_channels, out_channels, stride=1, groups=groups, norm=norm)
+        self.unit2 = ShuffleNetV1Unit3D(out_channels, out_channels, stride=1, groups=groups, norm=norm, activation=activation)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.unit1(x)

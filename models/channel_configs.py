@@ -169,10 +169,10 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
         'branch2': 16,   # Total: 32
         'branch3': 32,   # Total: 64
         'down4': 32,     # Bottleneck Output (Project to 32, Inverted Bottleneck 유지)
-        # Decoder: up1은 64로 압축, up2부터 고정
-        'up1': 16,       # In: 32(Main) + 32(Skip_Compress) -> Out: 16 (압축)
-        'up2': 16,       # In: 16(Main) + 16(Skip_Compress) -> Out: 16 (고정)
-        'up3': 16,       # In: 16(Main) + 16(Skip) -> Out: 16 (고정)
+        # Decoder (bilinear=False): up1은 절반으로 줄이고, up2/up3는 채널 유지하여 skip과 1:1 매칭
+        'up1': 16,       # down4(32) -> ConvTranspose3d(16) + skip_compress(16) -> concat(32) -> Out: 16
+        'up2': 16,       # up1(16) -> ConvTranspose3d(16) + skip_compress(16) -> concat(32) -> Out: 16
+        'up3': 16,       # up2(16) -> ConvTranspose3d(16) + skip(16) -> concat(32) -> Out: 16
         'out': 16,       # Final
     },
     # -------------------------------------------------------
@@ -183,10 +183,10 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
         'branch2': 32,   # Total: 64
         'branch3': 64,   # Total: 128
         'down4': 64,     # Bottleneck Output (Project to 64, Inverted Bottleneck 유지)
-        # Decoder: up1은 32로 압축, up2부터 고정
-        'up1': 32,       # In: 64(Main) + 64(Skip_Compress) -> Out: 32 (압축)
-        'up2': 32,       # In: 32(Main) + 32(Skip_Compress) -> Out: 32 (고정)
-        'up3': 32,       # In: 32(Main) + 32(Skip) -> Out: 32 (고정)
+        # Decoder (bilinear=False): up1은 절반으로 줄이고, up2/up3는 채널 유지하여 skip과 1:1 매칭
+        'up1': 32,       # down4(64) -> ConvTranspose3d(32) + skip_compress(32) -> concat(64) -> Out: 32
+        'up2': 32,       # up1(32) -> ConvTranspose3d(32) + skip_compress(32) -> concat(64) -> Out: 32
+        'up3': 32,       # up2(32) -> ConvTranspose3d(32) + skip(32) -> concat(64) -> Out: 32
         'out': 32,
     },
     # -------------------------------------------------------
@@ -197,10 +197,10 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
         'branch2': 64,   # Total: 128
         'branch3': 128,  # Total: 256
         'down4': 128,    # Bottleneck Output (Project to 128, Inverted Bottleneck 유지)
-        # Decoder: up1은 64로 압축, up2부터 고정
-        'up1': 64,       # In: 128(Main) + 128(Skip_Compress) -> Out: 64 (압축)
-        'up2': 64,       # In: 64(Main) + 64(Skip_Compress) -> Out: 64 (고정)
-        'up3': 64,       # In: 64(Main) + 64(Skip) -> Out: 64 (고정)
+        # Decoder (bilinear=False): up1은 절반으로 줄이고, up2/up3는 채널 유지하여 skip과 1:1 매칭
+        'up1': 64,       # down4(128) -> ConvTranspose3d(64) + skip_compress(64) -> concat(128) -> Out: 64
+        'up2': 64,       # up1(64) -> ConvTranspose3d(64) + skip_compress(64) -> concat(128) -> Out: 64
+        'up3': 64,       # up2(64) -> ConvTranspose3d(64) + skip(64) -> concat(128) -> Out: 64
         'out': 64,
     },
     # -------------------------------------------------------
@@ -211,10 +211,10 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
         'branch2': 128,  # Total: 256
         'branch3': 256,  # Total: 512
         'down4': 256,    # Bottleneck Output (Project to 256, Inverted Bottleneck 유지)
-        # Decoder: up1은 128로 압축, up2부터 고정
-        'up1': 128,      # In: 256(Main) + 256(Skip_Compress) -> Out: 128 (압축)
-        'up2': 128,      # In: 128(Main) + 128(Skip_Compress) -> Out: 128 (고정)
-        'up3': 128,      # In: 128(Main) + 128(Skip) -> Out: 128 (고정)
+        # Decoder (bilinear=False): up1은 절반으로 줄이고, up2/up3는 채널 유지하여 skip과 1:1 매칭
+        'up1': 128,      # down4(256) -> ConvTranspose3d(128) + skip_compress(128) -> concat(256) -> Out: 128
+        'up2': 128,      # up1(128) -> ConvTranspose3d(128) + skip_compress(128) -> concat(256) -> Out: 128
+        'up3': 128,      # up2(128) -> ConvTranspose3d(128) + skip(128) -> concat(256) -> Out: 128
         'out': 128,
     },
 }
@@ -466,6 +466,25 @@ def get_quadbranch_channels(size: str) -> Dict:
     if size not in QUADBRANCH_CHANNELS:
         raise ValueError(f"Unknown size: {size}. Must be one of {list(QUADBRANCH_CHANNELS.keys())}")
     return QUADBRANCH_CHANNELS[size]
+
+
+def get_activation_type(size: str) -> str:
+    """모델 크기에 따라 활성화 함수 타입을 반환합니다.
+    
+    Args:
+        size: 모델 크기 ('xs', 's', 'm', 'l')
+    
+    Returns:
+        활성화 함수 타입 ('hardswish' for xs/s, 'gelu' for m/l)
+    """
+    size = size.lower()
+    if size in ('xs', 's'):
+        return 'hardswish'
+    elif size in ('m', 'l'):
+        return 'gelu'
+    else:
+        # 기본값: hardswish
+        return 'hardswish'
 
 
 def parse_model_size(model_name: str) -> Tuple[str, str]:
