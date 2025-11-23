@@ -381,6 +381,8 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                 cbam_blocks.append((name, module))
                 cbam_channel_data[name] = []
                 cbam_spatial_data[name] = []
+        if rank0:
+            print(f"[CBAM Debug] Found {len(cbam_blocks)} CBAM blocks: {[name for name, _ in cbam_blocks]}")
     example_dir = None
     example_limit = 10
     examples_saved = 0
@@ -409,8 +411,24 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             
             # 3D 테스트: 슬라이딩 윈도우 추론
             # 모든 3D 모델은 전체 볼륨을 처리하기 위해 슬라이딩 윈도우 사용
+            # 단, CBAM/SE 가중치 수집을 위해서는 전체 볼륨에 대해 직접 forward 호출 필요
             if inputs.dim() == 5 and inputs.size(0) == 1:  # 3D 볼륨
-                if collect_attention:
+                # CBAM 또는 SE 가중치 수집이 필요한 경우, 전체 볼륨에 대해 직접 forward 호출
+                if (collect_cbam and len(cbam_blocks) > 0) or (collect_se and len(se_blocks) > 0):
+                    try:
+                        # 전체 볼륨에 대해 직접 forward (가중치 수집을 위해)
+                        logits = model(inputs)
+                    except RuntimeError as e:
+                        # 메모리 부족 시 슬라이딩 윈도우 사용 (가중치 수집 불가)
+                        if "out of memory" in str(e).lower():
+                            if rank0:
+                                print(f"Warning: OOM during CBAM/SE weight collection, using sliding window (weights may not be collected)")
+                            logits = sliding_window_inference_3d(
+                                model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
+                            )
+                        else:
+                            raise
+                elif collect_attention:
                     # 어텐션 가중치 수집을 위해 슬라이딩 윈도우에서 직접 호출
                     # 슬라이딩 윈도우는 어텐션 가중치를 평균내야 하므로, 여기서는 전체 볼륨에 대해 직접 호출
                     real_model = model.module if hasattr(model, 'module') else model
@@ -491,8 +509,14 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                     spatial_weights = getattr(block_module, 'last_spatial_weights', None)
                     if channel_weights is not None:
                         cbam_channel_data[block_name].append(channel_weights.clone())
+                    else:
+                        if rank0 and len(cbam_channel_data[block_name]) == 0:  # 첫 번째 배치에서만 경고
+                            print(f"[CBAM Debug] Warning: No channel weights found for {block_name}")
                     if spatial_weights is not None:
                         cbam_spatial_data[block_name].append(spatial_weights.clone())
+                    else:
+                        if rank0 and len(cbam_spatial_data[block_name]) == 0:  # 첫 번째 배치에서만 경고
+                            print(f"[CBAM Debug] Warning: No spatial weights found for {block_name}")
             pred_np = pred.cpu().numpy()
             labels_np = labels.cpu().numpy()
             # Accumulate 4-class confusion matrix (0..3)
@@ -769,10 +793,19 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     if collect_cbam and cbam_blocks:
         import matplotlib.pyplot as plt
         
+        if rank0:
+            print(f"[CBAM Debug] Saving CBAM statistics: {len(cbam_blocks)} blocks found")
+            for block_name, data_list in cbam_channel_data.items():
+                print(f"[CBAM Debug] Block {block_name}: {len(data_list)} channel weight samples collected")
+            for block_name, data_list in cbam_spatial_data.items():
+                print(f"[CBAM Debug] Block {block_name}: {len(data_list)} spatial weight samples collected")
+        
         # Channel Attention weights
         cbam_channel_summary_rows = []
         for block_name, data_list in cbam_channel_data.items():
             if not data_list:
+                if rank0:
+                    print(f"[CBAM Debug] Warning: No channel data for {block_name}, skipping")
                 continue
             try:
                 block_tensor = torch.cat(data_list, dim=0)
@@ -812,6 +845,8 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
         cbam_spatial_summary_rows = []
         for block_name, data_list in cbam_spatial_data.items():
             if not data_list:
+                if rank0:
+                    print(f"[CBAM Debug] Warning: No spatial data for {block_name}, skipping")
                 continue
             try:
                 block_tensor = torch.cat(data_list, dim=0)
