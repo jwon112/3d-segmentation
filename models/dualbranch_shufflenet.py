@@ -274,8 +274,9 @@ class DualBranchUNet3D_ShuffleNetV1(nn.Module):
             _make_norm3d(self.norm, expanded_channels),
             nn.ReLU(inplace=True),
         )
-        # 2. Multi-Scale Dilated Depth-wise convolution (dilation=[1,2,5]로 다양한 수용 영역 포착)
-        self.down5_depth = MultiScaleDilatedDepthwise3D(expanded_channels, dilation_rates=[1, 2, 5], norm=self.norm)
+        # 2. Multi-Scale Dilated Depth-wise convolution (dilation=[1,2,3]로 다양한 수용 영역 포착)
+        # Stage 5 해상도가 작으므로 dilation=5는 ERF가 과도하게 커짐
+        self.down5_depth = MultiScaleDilatedDepthwise3D(expanded_channels, dilation_rates=[1, 2, 3], norm=self.norm)
         # 3. 압축: 1x1 conv로 down5 채널로 압축
         self.down5_compress = nn.Sequential(
             nn.Conv3d(expanded_channels, channels['down5'], kernel_size=1, stride=1, padding=0, bias=False),
@@ -442,8 +443,9 @@ class DualBranchUNet3D_ShuffleNetV1_Stage3Fused(nn.Module):
             _make_norm3d(self.norm, expanded_channels),
             nn.ReLU(inplace=True),
         )
-        # 2. Multi-Scale Dilated Depth-wise convolution (dilation=[1,2,5]로 다양한 수용 영역 포착)
-        self.down4_depth = MultiScaleDilatedDepthwise3D(expanded_channels, dilation_rates=[1, 2, 5], norm=self.norm)
+        # 2. Multi-Scale Dilated Depth-wise convolution (dilation=[1,2,3]로 다양한 수용 영역 포착)
+        # Stage 4 해상도가 16x16x16이므로 dilation=5는 ERF가 과도하게 커짐 (17x17x17)
+        self.down4_depth = MultiScaleDilatedDepthwise3D(expanded_channels, dilation_rates=[1, 2, 3], norm=self.norm)
         # 3. 압축: 1x1 conv로 down4 채널로 압축
         self.down4_compress = nn.Sequential(
             nn.Conv3d(expanded_channels, channels['down4'], kernel_size=1, stride=1, padding=0, bias=False),
