@@ -86,19 +86,22 @@ class Up3DShuffleNetV1(nn.Module):
         
         # ShuffleNet V1 Units (인코더와 대칭: 2개의 stride=1 unit)
         # DoubleConv3D 스타일의 점진적 압축 구현
-        # 첫 번째 unit: total_channels -> mid_channels (mid_channels = out_channels)
-        # 두 번째 unit: mid_channels -> out_channels
+        # ShuffleNetV1Unit3D는 stride=1일 때 residual connection을 사용하므로 in_channels == out_channels여야 함
+        # 따라서 unit1과 unit2는 채널을 유지하고, 중간에 1x1 conv로 채널을 조정
         if total_channels != out_channels:
-            # 점진적 압축: total_channels -> out_channels -> out_channels
-            mid_channels = out_channels
-            self.unit1 = ShuffleNetV1Unit3D(total_channels, mid_channels, stride=1, groups=groups, norm=norm, activation=activation)
-            self.unit2 = ShuffleNetV1Unit3D(mid_channels, out_channels, stride=1, groups=groups, norm=norm, activation=activation)
-            self.channel_adjust = None
+            # 점진적 압축: total_channels -> total_channels (unit1) -> out_channels (1x1 conv) -> out_channels (unit2)
+            self.unit1 = ShuffleNetV1Unit3D(total_channels, total_channels, stride=1, groups=groups, norm=norm, activation=activation)
+            self.channel_adjust = nn.Sequential(
+                nn.Conv3d(total_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                _make_norm3d(norm, out_channels),
+                _make_activation(activation, inplace=True),
+            )
+            self.unit2 = ShuffleNetV1Unit3D(out_channels, out_channels, stride=1, groups=groups, norm=norm, activation=activation)
         else:
             # 채널 수가 같으면 유지
             self.unit1 = ShuffleNetV1Unit3D(total_channels, total_channels, stride=1, groups=groups, norm=norm, activation=activation)
-            self.unit2 = ShuffleNetV1Unit3D(total_channels, out_channels, stride=1, groups=groups, norm=norm, activation=activation)
             self.channel_adjust = None
+            self.unit2 = ShuffleNetV1Unit3D(total_channels, out_channels, stride=1, groups=groups, norm=norm, activation=activation)
         
         # CBAM 블록 (선택적)
         if self.use_cbam:
@@ -126,6 +129,8 @@ class Up3DShuffleNetV1(nn.Module):
         
         # ShuffleNet V1 Units (인코더와 대칭, 점진적 압축)
         x = self.unit1(x)
+        if self.channel_adjust is not None:
+            x = self.channel_adjust(x)
         x = self.unit2(x)
         
         # CBAM 블록 적용 (선택적)
