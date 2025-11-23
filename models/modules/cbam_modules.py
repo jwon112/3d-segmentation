@@ -140,10 +140,15 @@ class CBAM3D(nn.Module):
         out = self.spatial_attention(out)
         
         # Store latest weights from both attention modules for logging/analysis
-        # Channel attention weights are already stored in self.channel_attention.last_channel_weights
-        # Spatial attention weights are already stored in self.spatial_attention.last_spatial_weights
-        self.last_channel_weights = getattr(self.channel_attention, 'last_channel_weights', None)
-        self.last_spatial_weights = getattr(self.spatial_attention, 'last_spatial_weights', None)
+        # 직접 참조로 변경 (getattr는 이전 forward의 값이 없을 수 있음)
+        if hasattr(self.channel_attention, 'last_channel_weights'):
+            self.last_channel_weights = self.channel_attention.last_channel_weights
+        else:
+            self.last_channel_weights = None
+        if hasattr(self.spatial_attention, 'last_spatial_weights'):
+            self.last_spatial_weights = self.spatial_attention.last_spatial_weights
+        else:
+            self.last_spatial_weights = None
         
         return out
 
