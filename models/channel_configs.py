@@ -168,12 +168,12 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
         'stem': 8,       # Total: 16
         'branch2': 16,   # Total: 32
         'branch3': 32,   # Total: 64
-        'down4': 32,     # Bottleneck Output (Project to 32, Inverted Bottleneck 유지)
+        'down4': 64,     # Bottleneck Output (Project to 64, Inverted Bottleneck 유지) - 2배 증가
         # Decoder (bilinear=False): up1은 절반으로 줄이고, up2/up3는 채널 유지하여 skip과 1:1 매칭
-        'up1': 16,       # down4(32) -> ConvTranspose3d(16) + skip_compress(16) -> concat(32) -> Out: 16
-        'up2': 16,       # up1(16) -> ConvTranspose3d(16) + skip_compress(16) -> concat(32) -> Out: 16
-        'up3': 16,       # up2(16) -> ConvTranspose3d(16) + skip(16) -> concat(32) -> Out: 16
-        'out': 16,       # Final
+        'up1': 32,       # down4(64) -> ConvTranspose3d(32) + skip_compress(32) -> concat(64) -> Out: 32 (2배 증가)
+        'up2': 32,       # up1(32) -> ConvTranspose3d(32) + skip_compress(32) -> concat(64) -> Out: 32 (2배 증가)
+        'up3': 32,       # up2(32) -> ConvTranspose3d(32) + skip(32) -> concat(64) -> Out: 32 (2배 증가)
+        'out': 32,       # Final (2배 증가)
     },
     # -------------------------------------------------------
     # S: Decoder Fixed at 32 (Balanced)
@@ -182,12 +182,12 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
         'stem': 16,      # Total: 32
         'branch2': 32,   # Total: 64
         'branch3': 64,   # Total: 128
-        'down4': 64,     # Bottleneck Output (Project to 64, Inverted Bottleneck 유지)
+        'down4': 128,    # Bottleneck Output (Project to 128, Inverted Bottleneck 유지) - 2배 증가
         # Decoder (bilinear=False): up1은 절반으로 줄이고, up2/up3는 채널 유지하여 skip과 1:1 매칭
-        'up1': 32,       # down4(64) -> ConvTranspose3d(32) + skip_compress(32) -> concat(64) -> Out: 32
-        'up2': 32,       # up1(32) -> ConvTranspose3d(32) + skip_compress(32) -> concat(64) -> Out: 32
-        'up3': 32,       # up2(32) -> ConvTranspose3d(32) + skip(32) -> concat(64) -> Out: 32
-        'out': 32,
+        'up1': 64,       # down4(128) -> ConvTranspose3d(64) + skip_compress(64) -> concat(128) -> Out: 64 (2배 증가)
+        'up2': 64,       # up1(64) -> ConvTranspose3d(64) + skip_compress(64) -> concat(128) -> Out: 64 (2배 증가)
+        'up3': 64,       # up2(64) -> ConvTranspose3d(64) + skip(64) -> concat(128) -> Out: 64 (2배 증가)
+        'out': 64,       # Final (2배 증가)
     },
     # -------------------------------------------------------
     # M: Decoder Fixed at 64 (Performance)
@@ -196,12 +196,12 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
         'stem': 32,      # Total: 64
         'branch2': 64,   # Total: 128
         'branch3': 128,  # Total: 256
-        'down4': 128,    # Bottleneck Output (Project to 128, Inverted Bottleneck 유지)
+        'down4': 256,    # Bottleneck Output (Project to 256, Inverted Bottleneck 유지) - 2배 증가
         # Decoder (bilinear=False): up1은 절반으로 줄이고, up2/up3는 채널 유지하여 skip과 1:1 매칭
-        'up1': 64,       # down4(128) -> ConvTranspose3d(64) + skip_compress(64) -> concat(128) -> Out: 64
-        'up2': 64,       # up1(64) -> ConvTranspose3d(64) + skip_compress(64) -> concat(128) -> Out: 64
-        'up3': 64,       # up2(64) -> ConvTranspose3d(64) + skip(64) -> concat(128) -> Out: 64
-        'out': 64,
+        'up1': 128,      # down4(256) -> ConvTranspose3d(128) + skip_compress(128) -> concat(256) -> Out: 128 (2배 증가)
+        'up2': 128,      # up1(128) -> ConvTranspose3d(128) + skip_compress(128) -> concat(256) -> Out: 128 (2배 증가)
+        'up3': 128,      # up2(128) -> ConvTranspose3d(128) + skip(128) -> concat(256) -> Out: 128 (2배 증가)
+        'out': 128,      # Final (2배 증가)
     },
     # -------------------------------------------------------
     # L: Decoder Fixed at 128 (High Performance)
@@ -210,12 +210,12 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
         'stem': 64,      # Total: 128
         'branch2': 128,  # Total: 256
         'branch3': 256,  # Total: 512
-        'down4': 256,    # Bottleneck Output (Project to 256, Inverted Bottleneck 유지)
+        'down4': 512,    # Bottleneck Output (Project to 512, Inverted Bottleneck 유지) - 2배 증가
         # Decoder (bilinear=False): up1은 절반으로 줄이고, up2/up3는 채널 유지하여 skip과 1:1 매칭
-        'up1': 128,      # down4(256) -> ConvTranspose3d(128) + skip_compress(128) -> concat(256) -> Out: 128
-        'up2': 128,      # up1(128) -> ConvTranspose3d(128) + skip_compress(128) -> concat(256) -> Out: 128
-        'up3': 128,      # up2(128) -> ConvTranspose3d(128) + skip(128) -> concat(256) -> Out: 128
-        'out': 128,
+        'up1': 256,      # down4(512) -> ConvTranspose3d(256) + skip_compress(256) -> concat(512) -> Out: 256 (2배 증가)
+        'up2': 256,      # up1(256) -> ConvTranspose3d(256) + skip_compress(256) -> concat(512) -> Out: 256 (2배 증가)
+        'up3': 256,      # up2(256) -> ConvTranspose3d(256) + skip(256) -> concat(512) -> Out: 256 (2배 증가)
+        'out': 256,      # Final (2배 증가)
     },
 }
 
