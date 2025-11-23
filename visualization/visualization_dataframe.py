@@ -477,13 +477,13 @@ def create_parameter_efficiency_chart(results_df, results_dir):
     
     # 레이아웃 결정: PAM과 Latency에 따라
     if has_pam and has_latency:
-        fig, axes = plt.subplots(3, 2, figsize=(12, 18))  # 3x2 레이아웃 (세로 3개, 가로 2개)
+        fig, axes = plt.subplots(3, 2, figsize=(16, 20))  # 3x2 레이아웃 (가로를 더 넓게)
         axes = axes.flatten()
     elif has_pam or has_latency:
-        fig, axes = plt.subplots(2, 2, figsize=(12, 15))  # 2x2 레이아웃
+        fig, axes = plt.subplots(2, 2, figsize=(16, 14))  # 2x2 레이아웃 (가로를 더 넓게)
         axes = axes.flatten()
     else:
-        fig, axes = plt.subplots(1, 2, figsize=(12, 6))  # 1x2 레이아웃
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))  # 1x2 레이아웃 (가로를 더 넓게)
     
     fig.suptitle('3D Segmentation Model Efficiency Analysis', fontsize=16)
     
@@ -491,61 +491,118 @@ def create_parameter_efficiency_chart(results_df, results_dir):
     
     # Parameters vs Performance
     ax1 = axes[0]
+    param_values = [model_stats.loc[model, 'total_params'] for model in models]
+    dice_values = [model_stats.loc[model, 'test_dice'] for model in models]
+    
     for i, model in enumerate(models):
         ax1.scatter(model_stats.loc[model, 'total_params'], 
                    model_stats.loc[model, 'test_dice'],
-                   s=100, color=colors[i], alpha=0.7, label=model.upper())
+                   s=150, color=colors[i], alpha=0.7, label=model.upper())
     
-    ax1.set_xlabel('Number of Parameters')
-    ax1.set_ylabel('Test Dice Score')
-    ax1.set_title('Parameters vs Performance')
-    ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+    # X축 범위를 데이터에 여유를 두고 설정
+    if len(param_values) > 0:
+        param_min, param_max = min(param_values), max(param_values)
+        param_range = param_max - param_min
+        if param_range == 0:
+            ax1.set_xlim(param_min * 0.9, param_max * 1.1)
+        else:
+            ax1.set_xlim(param_min - param_range * 0.1, param_max + param_range * 0.1)
+    
+    ax1.set_xlabel('Number of Parameters', fontsize=11)
+    ax1.set_ylabel('Test Dice Score', fontsize=11)
+    ax1.set_title('Parameters vs Performance', fontsize=12)
+    if len(models) <= 5:
+        ax1.legend(loc='best', fontsize=9)
+    else:
+        ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=7)
     ax1.grid(True, alpha=0.3)
     ax1.ticklabel_format(style='scientific', axis='x', scilimits=(0,0))
     
     # FLOPs vs Performance
     ax2 = axes[1]
+    flops_values = [model_stats.loc[model, 'flops'] for model in models]
+    
     for i, model in enumerate(models):
         ax2.scatter(model_stats.loc[model, 'flops'], 
                    model_stats.loc[model, 'test_dice'],
-                   s=100, color=colors[i], alpha=0.7, label=model.upper())
+                   s=150, color=colors[i], alpha=0.7, label=model.upper())
     
-    ax2.set_xlabel('FLOPs')
-    ax2.set_ylabel('Test Dice Score')
-    ax2.set_title('FLOPs vs Performance')
-    ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+    # X축 범위를 데이터에 여유를 두고 설정
+    if len(flops_values) > 0:
+        flops_min, flops_max = min(flops_values), max(flops_values)
+        flops_range = flops_max - flops_min
+        if flops_range == 0:
+            ax2.set_xlim(flops_min * 0.9, flops_max * 1.1)
+        else:
+            ax2.set_xlim(flops_min - flops_range * 0.1, flops_max + flops_range * 0.1)
+    
+    ax2.set_xlabel('FLOPs', fontsize=11)
+    ax2.set_ylabel('Test Dice Score', fontsize=11)
+    ax2.set_title('FLOPs vs Performance', fontsize=12)
+    if len(models) <= 5:
+        ax2.legend(loc='best', fontsize=9)
+    else:
+        ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=7)
     ax2.grid(True, alpha=0.3)
     ax2.ticklabel_format(style='scientific', axis='x', scilimits=(0,0))
     
     # PAM Train vs Performance
     if has_pam_train:
         ax3 = axes[2]
+        pam_train_values = []
         for i, model in enumerate(models):
             pam_train_mb = model_stats.loc[model, 'pam_train'] / (1024**2)  # bytes to MB
+            pam_train_values.append(pam_train_mb)
             ax3.scatter(pam_train_mb, 
                        model_stats.loc[model, 'test_dice'],
-                       s=100, color=colors[i], alpha=0.7, label=model.upper())
+                       s=150, color=colors[i], alpha=0.7, label=model.upper())
         
-        ax3.set_xlabel('PAM (Train) [MB]')
-        ax3.set_ylabel('Test Dice Score')
-        ax3.set_title('PAM (Train) vs Performance')
-        ax3.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+        # X축 범위를 데이터에 여유를 두고 설정
+        if len(pam_train_values) > 0:
+            pam_min, pam_max = min(pam_train_values), max(pam_train_values)
+            pam_range = pam_max - pam_min
+            if pam_range == 0:
+                ax3.set_xlim(pam_min * 0.9, pam_max * 1.1)
+            else:
+                ax3.set_xlim(pam_min - pam_range * 0.1, pam_max + pam_range * 0.1)
+        
+        ax3.set_xlabel('PAM (Train) [MB]', fontsize=11)
+        ax3.set_ylabel('Test Dice Score', fontsize=11)
+        ax3.set_title('PAM (Train) vs Performance', fontsize=12)
+        if len(models) <= 5:
+            ax3.legend(loc='best', fontsize=9)
+        else:
+            ax3.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=7)
         ax3.grid(True, alpha=0.3)
     
     # PAM Inference vs Performance
     if has_pam_inference:
         ax4_idx = 3 if has_pam_train else 2
         ax4 = axes[ax4_idx]
+        pam_inference_values = []
         for i, model in enumerate(models):
             pam_inference_mb = model_stats.loc[model, 'pam_inference'] / (1024**2)  # bytes to MB
+            pam_inference_values.append(pam_inference_mb)
             ax4.scatter(pam_inference_mb, 
                        model_stats.loc[model, 'test_dice'],
-                       s=100, color=colors[i], alpha=0.7, label=model.upper())
+                       s=150, color=colors[i], alpha=0.7, label=model.upper())
         
-        ax4.set_xlabel('PAM (Inference) [MB]')
-        ax4.set_ylabel('Test Dice Score')
-        ax4.set_title('PAM (Inference) vs Performance')
-        ax4.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+        # X축 범위를 데이터에 여유를 두고 설정
+        if len(pam_inference_values) > 0:
+            pam_min, pam_max = min(pam_inference_values), max(pam_inference_values)
+            pam_range = pam_max - pam_min
+            if pam_range == 0:
+                ax4.set_xlim(pam_min * 0.9, pam_max * 1.1)
+            else:
+                ax4.set_xlim(pam_min - pam_range * 0.1, pam_max + pam_range * 0.1)
+        
+        ax4.set_xlabel('PAM (Inference) [MB]', fontsize=11)
+        ax4.set_ylabel('Test Dice Score', fontsize=11)
+        ax4.set_title('PAM (Inference) vs Performance', fontsize=12)
+        if len(models) <= 5:
+            ax4.legend(loc='best', fontsize=9)
+        else:
+            ax4.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=7)
         ax4.grid(True, alpha=0.3)
     
     # Latency vs Performance
@@ -557,16 +614,30 @@ def create_parameter_efficiency_chart(results_df, results_dir):
         else:
             ax_latency = axes[2]
         
+        latency_values = []
         for i, model in enumerate(models):
             latency_ms = model_stats.loc[model, 'inference_latency_ms']
+            latency_values.append(latency_ms)
             ax_latency.scatter(latency_ms, 
                              model_stats.loc[model, 'test_dice'],
-                             s=100, color=colors[i], alpha=0.7, label=model.upper())
+                             s=150, color=colors[i], alpha=0.7, label=model.upper())
         
-        ax_latency.set_xlabel('Inference Latency [ms]')
-        ax_latency.set_ylabel('Test Dice Score')
-        ax_latency.set_title('Inference Latency vs Performance')
-        ax_latency.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+        # X축 범위를 데이터에 여유를 두고 설정
+        if len(latency_values) > 0:
+            latency_min, latency_max = min(latency_values), max(latency_values)
+            latency_range = latency_max - latency_min
+            if latency_range == 0:
+                ax_latency.set_xlim(latency_min * 0.9, latency_max * 1.1)
+            else:
+                ax_latency.set_xlim(latency_min - latency_range * 0.1, latency_max + latency_range * 0.1)
+        
+        ax_latency.set_xlabel('Inference Latency [ms]', fontsize=11)
+        ax_latency.set_ylabel('Test Dice Score', fontsize=11)
+        ax_latency.set_title('Inference Latency vs Performance', fontsize=12)
+        if len(models) <= 5:
+            ax_latency.legend(loc='best', fontsize=9)
+        else:
+            ax_latency.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=7)
         ax_latency.grid(True, alpha=0.3)
     
     # 빈 subplot 숨기기
@@ -582,7 +653,7 @@ def create_parameter_efficiency_chart(results_df, results_dir):
     elif has_pam_inference and not has_pam_train and has_latency:
         axes[2].axis('off')
     
-    plt.tight_layout()
+    plt.tight_layout(pad=2.0, h_pad=2.0, w_pad=2.0)
     
     # 저장
     chart_path = os.path.join(results_dir, "parameter_efficiency.png")

@@ -159,6 +159,7 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED = {
 
 # Dual-Branch UNet with Fixed Decoder Channels (Stage 3 Fused, 디코더 채널 고정)
 # 디코더 채널을 고정된 값으로 유지하여 매우 가볍고 일관된 구조
+# up1은 버퍼 역할로 2배 크게, up2부터 고정 채널 사용
 DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
     # -------------------------------------------------------
     # XS: Decoder Fixed at 16 (Ultra Light)
@@ -167,11 +168,11 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
         'stem': 8,       # Total: 16
         'branch2': 16,   # Total: 32
         'branch3': 32,   # Total: 64
-        'down4': 16,     # Bottleneck Output (Project to 16)
-        # Decoder Fixed Width: 16
-        'up1': 16,       # In: 16(Main) + 16(Skip_Compress) -> Out: 16
-        'up2': 16,       # In: 16(Main) + 16(Skip_Compress) -> Out: 16
-        'up3': 16,       # In: 16(Main) + 16(Skip) -> Out: 16
+        'down4': 32,     # Bottleneck Output (Project to 32, Inverted Bottleneck 유지)
+        # Decoder: up1은 64로 압축, up2부터 고정
+        'up1': 16,       # In: 32(Main) + 32(Skip_Compress) -> Out: 16 (압축)
+        'up2': 16,       # In: 16(Main) + 16(Skip_Compress) -> Out: 16 (고정)
+        'up3': 16,       # In: 16(Main) + 16(Skip) -> Out: 16 (고정)
         'out': 16,       # Final
     },
     # -------------------------------------------------------
@@ -181,11 +182,11 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
         'stem': 16,      # Total: 32
         'branch2': 32,   # Total: 64
         'branch3': 64,   # Total: 128
-        'down4': 32,     # Bottleneck Output (Project to 32)
-        # Decoder Fixed Width: 32
-        'up1': 32,
-        'up2': 32,
-        'up3': 32,
+        'down4': 64,     # Bottleneck Output (Project to 64, Inverted Bottleneck 유지)
+        # Decoder: up1은 32로 압축, up2부터 고정
+        'up1': 32,       # In: 64(Main) + 64(Skip_Compress) -> Out: 32 (압축)
+        'up2': 32,       # In: 32(Main) + 32(Skip_Compress) -> Out: 32 (고정)
+        'up3': 32,       # In: 32(Main) + 32(Skip) -> Out: 32 (고정)
         'out': 32,
     },
     # -------------------------------------------------------
@@ -195,11 +196,11 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
         'stem': 32,      # Total: 64
         'branch2': 64,   # Total: 128
         'branch3': 128,  # Total: 256
-        'down4': 64,     # Bottleneck Output (Project to 64)
-        # Decoder Fixed Width: 64
-        'up1': 64,
-        'up2': 64,
-        'up3': 64,
+        'down4': 128,    # Bottleneck Output (Project to 128, Inverted Bottleneck 유지)
+        # Decoder: up1은 64로 압축, up2부터 고정
+        'up1': 64,       # In: 128(Main) + 128(Skip_Compress) -> Out: 64 (압축)
+        'up2': 64,       # In: 64(Main) + 64(Skip_Compress) -> Out: 64 (고정)
+        'up3': 64,       # In: 64(Main) + 64(Skip) -> Out: 64 (고정)
         'out': 64,
     },
     # -------------------------------------------------------
@@ -209,11 +210,11 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
         'stem': 64,      # Total: 128
         'branch2': 128,  # Total: 256
         'branch3': 256,  # Total: 512
-        'down4': 128,    # Bottleneck Output (Project to 128)
-        # Decoder Fixed Width: 128
-        'up1': 128,
-        'up2': 128,
-        'up3': 128,
+        'down4': 256,    # Bottleneck Output (Project to 256, Inverted Bottleneck 유지)
+        # Decoder: up1은 128로 압축, up2부터 고정
+        'up1': 128,      # In: 256(Main) + 256(Skip_Compress) -> Out: 128 (압축)
+        'up2': 128,      # In: 128(Main) + 128(Skip_Compress) -> Out: 128 (고정)
+        'up3': 128,      # In: 128(Main) + 128(Skip) -> Out: 128 (고정)
         'out': 128,
     },
 }

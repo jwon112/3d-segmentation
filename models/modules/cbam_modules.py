@@ -121,19 +121,19 @@ class SpatialAttention3D(nn.Module):
 class CBAM3D(nn.Module):
     """3D Convolutional Block Attention Module
     
-    Channel Attention과 Spatial Attention을 순차적으로 적용합니다.
+    Channel Attention만 적용합니다 (Spatial Attention 제거).
+    Spatial Attention은 포화 문제로 인해 제거되었습니다.
     
     Args:
         channels: 입력 채널 수
         reduction: Channel attention의 채널 축소 비율 (기본값: 16)
-        spatial_kernel: Spatial attention의 kernel size (기본값: 7)
-        spatial_dilation: Spatial attention의 dilation rate (기본값: 2)
-                          더 넓은 수용 영역으로 공간적 맥락을 더 잘 포착
+        spatial_kernel: 사용하지 않음 (하위 호환성을 위해 유지)
+        spatial_dilation: 사용하지 않음 (하위 호환성을 위해 유지)
     """
     def __init__(self, channels: int, reduction: int = 16, spatial_kernel: int = 7, spatial_dilation: int = 2):
         super().__init__()
         self.channel_attention = ChannelAttention3D(channels, reduction)
-        self.spatial_attention = SpatialAttention3D(spatial_kernel, dilation=spatial_dilation)
+        # Spatial Attention 제거: 포화 문제로 인해 제거됨
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -141,23 +141,18 @@ class CBAM3D(nn.Module):
             x: 입력 텐서 (B, C, D, H, W)
         
         Returns:
-            CBAM attention이 적용된 출력 텐서 (B, C, D, H, W)
+            Channel attention이 적용된 출력 텐서 (B, C, D, H, W)
         """
-        # Apply channel attention first
+        # Apply channel attention only
         out = self.channel_attention(x)
-        # Then apply spatial attention
-        out = self.spatial_attention(out)
         
-        # Store latest weights from both attention modules for logging/analysis
-        # 직접 참조로 변경 (getattr는 이전 forward의 값이 없을 수 있음)
+        # Store latest weights from channel attention module for logging/analysis
         if hasattr(self.channel_attention, 'last_channel_weights'):
             self.last_channel_weights = self.channel_attention.last_channel_weights
         else:
             self.last_channel_weights = None
-        if hasattr(self.spatial_attention, 'last_spatial_weights'):
-            self.last_spatial_weights = self.spatial_attention.last_spatial_weights
-        else:
-            self.last_spatial_weights = None
+        # Spatial attention weights는 더 이상 사용하지 않음
+        self.last_spatial_weights = None
         
         return out
 

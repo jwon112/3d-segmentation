@@ -45,15 +45,24 @@ class ShuffleNetV1Unit3D(nn.Module):
     - Stride=1: Pointwise Group Conv -> Channel Shuffle -> Depthwise Conv -> Pointwise Group Conv + Residual
     - Stride=2: Pointwise Group Conv -> Channel Shuffle -> Depthwise Conv (stride=2) -> Pointwise Group Conv
     
+    Args:
+        dilation: Dilation rate for depthwise convolution (기본값: 1)
+                  stride=1일 때만 사용 가능, 전역 문맥 포착을 위해 사용
+    
     Reference:
         ShuffleNet: An Extremely Efficient Convolutional Neural Network for Mobile Devices (Zhang et al., CVPR 2018)
     """
-    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, groups: int = 1, norm: str = 'bn'):
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, groups: int = 1, norm: str = 'bn', dilation: int = 1):
         super().__init__()
         self.stride = stride
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.groups = groups
+        self.dilation = dilation
+        
+        # Dilation은 stride=1일 때만 사용 가능
+        if dilation > 1:
+            assert stride == 1, "Dilation can only be used with stride=1"
         
         # Pointwise Group Convolution
         mid_channels = out_channels // 4  # ShuffleNetV1에서 일반적으로 사용하는 비율
@@ -62,9 +71,10 @@ class ShuffleNetV1Unit3D(nn.Module):
                                groups=groups, bias=False)
         self.bn1 = _make_norm3d(norm, mid_channels)
         
-        # Depthwise Convolution
-        self.conv2 = nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=stride, padding=1,
-                               groups=mid_channels, bias=False)
+        # Depthwise Convolution (dilation 지원)
+        padding = dilation * (3 - 1) // 2  # kernel_size=3에 대한 padding 계산
+        self.conv2 = nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=stride, padding=padding,
+                               dilation=dilation, groups=mid_channels, bias=False)
         self.bn2 = _make_norm3d(norm, mid_channels)
         
         # Pointwise Group Convolution
@@ -104,6 +114,66 @@ class ShuffleNetV1Unit3D(nn.Module):
             out = out + x
         
         out = self.relu(out)
+        return out
+
+
+class MultiScaleDilatedDepthwise3D(nn.Module):
+    """Multi-Scale Dilated Depthwise Convolution for 3D
+    
+    여러 dilation rate를 병렬로 적용하여 다양한 수용 영역의 문맥을 포착합니다.
+    ASPP (Atrous Spatial Pyramid Pooling) 스타일의 접근법.
+    
+    Args:
+        channels: 입력/출력 채널 수
+        dilation_rates: Dilation rate 리스트 (기본값: [1, 2, 5])
+        norm: Normalization 타입 ('bn', 'gn', 'in')
+    """
+    def __init__(self, channels: int, dilation_rates: list = [1, 2, 5], norm: str = 'bn'):
+        super().__init__()
+        self.dilation_rates = dilation_rates
+        
+        # 각 dilation rate에 대한 depth-wise convolution
+        self.dilated_convs = nn.ModuleList()
+        for dilation in dilation_rates:
+            padding = dilation * (3 - 1) // 2  # kernel_size=3에 대한 padding
+            conv = nn.Sequential(
+                nn.Conv3d(channels, channels, kernel_size=3, stride=1, padding=padding,
+                         dilation=dilation, groups=channels, bias=False),
+                _make_norm3d(norm, channels),
+                nn.ReLU(inplace=True),
+            )
+            self.dilated_convs.append(conv)
+        
+        # 병렬 결과를 합치는 1x1 conv (선택적, 채널 수가 같으므로 더하기만 해도 됨)
+        # 하지만 normalization과 activation을 위해 1x1 conv 추가
+        self.fusion = nn.Sequential(
+            nn.Conv3d(channels, channels, kernel_size=1, stride=1, padding=0, bias=False),
+            _make_norm3d(norm, channels),
+            nn.ReLU(inplace=True),
+        )
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: 입력 텐서 (B, C, D, H, W)
+        
+        Returns:
+            Multi-scale dilated convolution이 적용된 출력 텐서 (B, C, D, H, W)
+        """
+        # 각 dilation rate에 대해 병렬로 적용
+        outputs = []
+        for dilated_conv in self.dilated_convs:
+            outputs.append(dilated_conv(x))
+        
+        # 결과를 더하기 (element-wise sum)
+        out = sum(outputs)
+        
+        # Fusion (1x1 conv로 정규화)
+        out = self.fusion(out)
+        
+        # Residual connection
+        out = out + x
+        
         return out
 
 
