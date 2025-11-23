@@ -35,6 +35,8 @@ SIZE_SUFFIX_MODELS = {
     'dualbranch_17_shufflenet_pamlite_v3_': ['xs', 's', 'm', 'l'],
     'dualbranch_18_shufflenet_v1_': ['xs', 's', 'm', 'l'],
     'dualbranch_18_shufflenet_v1_stage3fused_': ['xs', 's', 'm', 'l'],
+    'dualbranch_18_shufflenet_v1_stage3fused_fixed_decoder_': ['xs', 's', 'm', 'l'],
+    'dualbranch_18_shufflenet_v1_stage3fused_half_decoder_': ['xs', 's', 'm', 'l'],
     'quadbranch_unet_': ['xs', 's', 'm', 'l'],
     'quadbranch_channel_centralized_concat_': ['xs', 's', 'm', 'l'],
     'quadbranch_channel_distributed_concat_': ['xs', 's', 'm', 'l'],
@@ -103,8 +105,16 @@ def validate_and_filter_models(models: Optional[List[str]]) -> List[str]:
         is_valid = False
         for prefix, sizes in SIZE_SUFFIX_MODELS.items():
             if model_name.startswith(prefix):
-                # Size suffix 추출
+                # Size suffix 추출 (fixed_decoder, half_decoder 같은 중간 suffix 고려)
                 suffix = model_name[len(prefix):]
+                # _fixed_decoder_ 또는 _half_decoder_ 같은 중간 suffix가 있으면 제거
+                if '_fixed_decoder_' in suffix:
+                    suffix = suffix.split('_fixed_decoder_')[-1]
+                elif '_half_decoder_' in suffix:
+                    suffix = suffix.split('_half_decoder_')[-1]
+                # 최종 size suffix 추출
+                if '_' in suffix:
+                    suffix = suffix.split('_')[0]
                 if suffix in sizes:
                     is_valid = True
                     break

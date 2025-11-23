@@ -36,10 +36,12 @@ class Up3DShuffleNetV1(nn.Module):
         groups: ShuffleNet V1의 group 수 (기본값: 1)
         reduction: Channel attention의 reduction ratio (기본값: 16, up1에서는 8로 줄여서 포화 방지)
         spatial_kernel: Spatial attention의 kernel size (기본값: 7)
+        spatial_dilation: Spatial attention의 dilation rate (기본값: 2, 더 넓은 수용 영역)
         use_cbam: CBAM 사용 여부 (기본값: True)
     """
     def __init__(self, in_channels, out_channels, bilinear=True, norm: str = 'bn', skip_channels=None, 
-                 groups: int = 1, use_cbam: bool = True, reduction: int = 16, spatial_kernel: int = 7):
+                 groups: int = 1, use_cbam: bool = True, reduction: int = 16, spatial_kernel: int = 7,
+                 spatial_dilation: int = 2, target_skip_channels: int = None):
         super().__init__()
         self.bilinear = bilinear
         self.use_cbam = use_cbam
@@ -49,11 +51,31 @@ class Up3DShuffleNetV1(nn.Module):
             self.up = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
             if skip_channels is None:
                 skip_channels = in_channels // 2
+            # Skip connection 압축: target_skip_channels가 지정되고 skip_channels가 더 크면 1x1 conv로 압축
+            if target_skip_channels is not None and skip_channels > target_skip_channels:
+                self.skip_compress = nn.Sequential(
+                    nn.Conv3d(skip_channels, target_skip_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                    _make_norm3d(norm, target_skip_channels),
+                    nn.ReLU(inplace=True),
+                )
+                skip_channels = target_skip_channels
+            else:
+                self.skip_compress = None
             total_channels = in_channels + skip_channels
         else:
             self.up = nn.ConvTranspose3d(in_channels, in_channels // 2, kernel_size=2, stride=2)
             if skip_channels is None:
                 skip_channels = in_channels // 2
+            # Skip connection 압축: target_skip_channels가 지정되고 skip_channels가 더 크면 1x1 conv로 압축
+            if target_skip_channels is not None and skip_channels > target_skip_channels:
+                self.skip_compress = nn.Sequential(
+                    nn.Conv3d(skip_channels, target_skip_channels, kernel_size=1, stride=1, padding=0, bias=False),
+                    _make_norm3d(norm, target_skip_channels),
+                    nn.ReLU(inplace=True),
+                )
+                skip_channels = target_skip_channels
+            else:
+                self.skip_compress = None
             total_channels = (in_channels // 2) + skip_channels
         
         # ShuffleNet V1 Units (인코더와 대칭: 2개의 stride=1 unit)
@@ -74,7 +96,7 @@ class Up3DShuffleNetV1(nn.Module):
         
         # CBAM 블록 (선택적)
         if self.use_cbam:
-            self.cbam = CBAM3D(out_channels, reduction=reduction, spatial_kernel=spatial_kernel)
+            self.cbam = CBAM3D(out_channels, reduction=reduction, spatial_kernel=spatial_kernel, spatial_dilation=spatial_dilation)
     
     def forward(self, x1, x2):
         # Upsampling
@@ -88,6 +110,10 @@ class Up3DShuffleNetV1(nn.Module):
         x1_up = F.pad(x1_up, [diffX // 2, diffX - diffX // 2,
                               diffY // 2, diffY - diffY // 2,
                               diffZ // 2, diffZ - diffZ // 2])
+        
+        # Skip connection 압축 (필요한 경우)
+        if self.skip_compress is not None:
+            x2 = self.skip_compress(x2)
         
         # Concat
         x = torch.cat([x2, x1_up], dim=1)
@@ -196,16 +222,17 @@ class DualBranchUNet3D_ShuffleNetV1(nn.Module):
     """
     
     def __init__(self, n_channels: int = 2, n_classes: int = 4, norm: str = 'bn', bilinear: bool = False, 
-                 groups: int = 1, size: str = 's'):
+                 groups: int = 1, size: str = 's', half_decoder: bool = False):
         super().__init__()
         assert n_channels == 2
         self.norm = norm or 'bn'
         self.bilinear = bilinear
         self.groups = groups
         self.size = size
+        self.half_decoder = half_decoder
         
         # Get channel configuration (Stage 4 fused, Stage 5 single branch)
-        channels = get_dualbranch_channels_stage4_fused(size)
+        channels = get_dualbranch_channels_stage4_fused(size, half_decoder=half_decoder)
         
         # Stage 1 stems (simple 3x3 conv)
         self.stem_flair = Stem3x3(1, channels['stem'], norm=self.norm)
@@ -217,14 +244,14 @@ class DualBranchUNet3D_ShuffleNetV1(nn.Module):
         self.branch_t1ce = Down3DShuffleNetV1(channels['stem'], channels['branch2'], groups=self.groups, norm=self.norm)
         # CBAM 사용: Channel + Spatial attention으로 더 효과적인 특징 재보정
         self.cbam_flair2 = CBAM3D(channels['branch2'], reduction=16, spatial_kernel=7)
-        self.cbam_t1ce2 = CBAM3D(channels['branch2'], reduction=16, spatial_kernel=7)
+        self.cbam_t1ce2 = CBAM3D(channels['branch2'], reduction=4, spatial_kernel=7)  # 포화 방지: reduction=4
         # se_skip2 제거: Skip connection에서 SE 효과가 제한적
         
         # Stage 3 branches (both use ShuffleNet V1)
         self.branch_flair3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm)
         self.branch_t1ce3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm)
-        self.cbam_flair3 = CBAM3D(channels['branch3'], reduction=16, spatial_kernel=7)
-        self.cbam_t1ce3 = CBAM3D(channels['branch3'], reduction=16, spatial_kernel=7)
+        self.cbam_flair3 = CBAM3D(channels['branch3'], reduction=4, spatial_kernel=7)  # 포화 방지: reduction=4
+        self.cbam_t1ce3 = CBAM3D(channels['branch3'], reduction=4, spatial_kernel=7)  # 포화 방지: reduction=4
         # se_skip3 제거
         
         # Stage 4 branches (both use ShuffleNet V1)
@@ -234,32 +261,68 @@ class DualBranchUNet3D_ShuffleNetV1(nn.Module):
         self.cbam_t1ce4 = CBAM3D(channels['branch4'], reduction=16, spatial_kernel=7)
         # se_skip4 제거
         
-        # Stage 5 fused branch with ShuffleNet V1 (input: branch4*2, output: down5)
+        # Stage 5 fused branch with Inverted Bottleneck (input: branch4*2, output: down5)
+        # Inverted Bottleneck: 입력 -> 2배 확장 -> down5 채널로 압축
         factor = 2 if self.bilinear else 1
         fused_channels = channels['branch4'] * 2
-        # Use 1x1 conv to adjust channels, then ShuffleNet V1 unit for fusion (stride=1 to maintain spatial size)
-        self.down5_conv = nn.Sequential(
-            nn.Conv3d(fused_channels, channels['down5'], kernel_size=1, stride=1, padding=0, bias=False),
+        expanded_channels = fused_channels * 2  # Inverted bottleneck: 2배 확장
+        
+        # Inverted Bottleneck 구조
+        # 1. 확장: 1x1 conv로 채널 2배 확장
+        self.down5_expand = nn.Sequential(
+            nn.Conv3d(fused_channels, expanded_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            _make_norm3d(self.norm, expanded_channels),
+            nn.ReLU(inplace=True),
+        )
+        # 2. Depth-wise convolution (ShuffleNet V1 Unit 사용)
+        self.down5_depth = ShuffleNetV1Unit3D(expanded_channels, expanded_channels, stride=1, groups=self.groups, norm=self.norm)
+        # 3. 압축: 1x1 conv로 down5 채널로 압축
+        self.down5_compress = nn.Sequential(
+            nn.Conv3d(expanded_channels, channels['down5'], kernel_size=1, stride=1, padding=0, bias=False),
             _make_norm3d(self.norm, channels['down5']),
             nn.ReLU(inplace=True),
         )
-        self.down5 = ShuffleNetV1Unit3D(channels['down5'], channels['down5'], stride=1, groups=self.groups, norm=self.norm)
         # se_bottleneck 제거: Bottleneck은 이미 압축된 상태에서 SE가 추가로 억제하면 정보 손실 발생
         
         # Decoder: Up3DShuffleNetV1 사용 (인코더와 대칭: ShuffleNet V1 기반)
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
-        # up1.cbam은 reduction=8로 설정하여 sigmoid 포화 방지 (더 많은 MLP 파라미터로 세밀한 조정)
+        # up1.cbam은 reduction=4로 설정하여 sigmoid 포화 방지 (더 많은 MLP 파라미터로 세밀한 조정)
+        # half_decoder=True일 때는 명시적으로 정의된 디코더 채널 사용
+        if half_decoder:
+            # 디코더 채널이 명시적으로 정의된 경우 (인코더의 절반)
+            up1_out = channels.get('up1', channels['branch4'] // factor)
+            up2_out = channels.get('up2', channels['branch3'] // factor)
+            up3_out = channels.get('up3', channels['branch2'] // factor)
+            up4_out = channels.get('up4', channels['out'])
+        else:
+            # 기존 방식: 인코더 채널과 동일
+            up1_out = channels['branch4'] // factor
+            up2_out = channels['branch3'] // factor
+            up3_out = channels['branch2'] // factor
+            up4_out = channels['out']
+        
+        # half_decoder=True일 때 skip connection을 디코더 출력 채널로 압축
+        if half_decoder:
+            # Skip connection을 디코더 출력 채널과 동일하게 압축 (인코더 stage 채널의 절반)
+            target_skip1 = up1_out
+            target_skip2 = up2_out
+            target_skip3 = up3_out
+            target_skip4 = up4_out
+        else:
+            # 기존 방식: skip connection 압축 없음
+            target_skip1 = target_skip2 = target_skip3 = target_skip4 = None
+        
         if self.bilinear:
-            self.up1 = Up3DShuffleNetV1(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels, groups=self.groups, use_cbam=True, reduction=8, spatial_kernel=7)
-            self.up2 = Up3DShuffleNetV1(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7)
-            self.up3 = Up3DShuffleNetV1(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7)
-            self.up4 = Up3DShuffleNetV1(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7)
+            self.up1 = Up3DShuffleNetV1(channels['down5'], up1_out, self.bilinear, norm=self.norm, skip_channels=fused_channels, groups=self.groups, use_cbam=True, reduction=4, spatial_kernel=7, target_skip_channels=target_skip1)  # 포화 방지: reduction=4
+            self.up2 = Up3DShuffleNetV1(up1_out, up2_out, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7, target_skip_channels=target_skip2)
+            self.up3 = Up3DShuffleNetV1(up2_out, up3_out, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2, groups=self.groups, use_cbam=True, reduction=4, spatial_kernel=7, target_skip_channels=target_skip3)  # 포화 방지: reduction=4
+            self.up4 = Up3DShuffleNetV1(up3_out, up4_out, self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7, target_skip_channels=target_skip4)
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3DShuffleNetV1(channels['down5'], channels['branch4'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels, groups=self.groups, use_cbam=True, reduction=8, spatial_kernel=7)
-            self.up2 = Up3DShuffleNetV1(channels['branch4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7)
-            self.up3 = Up3DShuffleNetV1(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7)
-            self.up4 = Up3DShuffleNetV1(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7)
+            self.up1 = Up3DShuffleNetV1(channels['down5'], up1_out, self.bilinear, norm=self.norm, skip_channels=fused_channels, groups=self.groups, use_cbam=True, reduction=4, spatial_kernel=7, target_skip_channels=target_skip1)  # 포화 방지: reduction=4
+            self.up2 = Up3DShuffleNetV1(up1_out, up2_out, self.bilinear, norm=self.norm, skip_channels=channels['branch3'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7, target_skip_channels=target_skip2)
+            self.up3 = Up3DShuffleNetV1(up2_out, up3_out, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2, groups=self.groups, use_cbam=True, reduction=4, spatial_kernel=7, target_skip_channels=target_skip3)  # 포화 방지: reduction=4
+            self.up4 = Up3DShuffleNetV1(up3_out, up4_out, self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7, target_skip_channels=target_skip4)
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -283,9 +346,10 @@ class DualBranchUNet3D_ShuffleNetV1(nn.Module):
         b3_t1ce = self.cbam_t1ce4(self.branch_t1ce4(b2_t1ce))
         x4 = torch.cat([b3_flair, b3_t1ce], dim=1)  # se_skip4 제거
         
-        # Stage 5: Fused branch
-        x5 = self.down5_conv(x4)
-        x5 = self.down5(x5)  # se_bottleneck 제거
+        # Stage 5: Fused branch (Inverted Bottleneck)
+        x5 = self.down5_expand(x4)  # 확장: fused_channels -> expanded_channels (2배)
+        x5 = self.down5_depth(x5)   # Depth-wise: ShuffleNet V1 Unit
+        x5 = self.down5_compress(x5)  # 압축: expanded_channels -> down5
         
         # Decoder
         x = self.up1(x5, x4)
@@ -335,16 +399,18 @@ class DualBranchUNet3D_ShuffleNetV1_Stage3Fused(nn.Module):
     """
     
     def __init__(self, n_channels: int = 2, n_classes: int = 4, norm: str = 'bn', bilinear: bool = False, 
-                 groups: int = 1, size: str = 's'):
+                 groups: int = 1, size: str = 's', half_decoder: bool = False, fixed_decoder: bool = False):
         super().__init__()
         assert n_channels == 2
         self.norm = norm or 'bn'
         self.bilinear = bilinear
         self.groups = groups
         self.size = size
+        self.half_decoder = half_decoder
+        self.fixed_decoder = fixed_decoder
         
         # Get channel configuration (Stage 3 fused at down4, 4-stage structure)
-        channels = get_dualbranch_channels_stage3_fused(size)
+        channels = get_dualbranch_channels_stage3_fused(size, half_decoder=half_decoder, fixed_decoder=fixed_decoder)
         
         # Stage 1 stems (simple 3x3 conv)
         self.stem_flair = Stem3x3(1, channels['stem'], norm=self.norm)
@@ -355,37 +421,70 @@ class DualBranchUNet3D_ShuffleNetV1_Stage3Fused(nn.Module):
         self.branch_t1ce = Down3DShuffleNetV1(channels['stem'], channels['branch2'], groups=self.groups, norm=self.norm)
         # CBAM 사용: Channel + Spatial attention으로 더 효과적인 특징 재보정
         self.cbam_flair2 = CBAM3D(channels['branch2'], reduction=16, spatial_kernel=7)
-        self.cbam_t1ce2 = CBAM3D(channels['branch2'], reduction=16, spatial_kernel=7)
+        self.cbam_t1ce2 = CBAM3D(channels['branch2'], reduction=4, spatial_kernel=7)  # 포화 방지: reduction=4
         
         # Stage 3 branches (both use ShuffleNet V1)
         self.branch_flair3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm)
         self.branch_t1ce3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm)
-        self.cbam_flair3 = CBAM3D(channels['branch3'], reduction=16, spatial_kernel=7)
-        self.cbam_t1ce3 = CBAM3D(channels['branch3'], reduction=16, spatial_kernel=7)
+        self.cbam_flair3 = CBAM3D(channels['branch3'], reduction=4, spatial_kernel=7)  # 포화 방지: reduction=4
+        self.cbam_t1ce3 = CBAM3D(channels['branch3'], reduction=4, spatial_kernel=7)  # 포화 방지: reduction=4
         
-        # Stage 4 fused branch with ShuffleNet V1 (input: branch3*2, output: down4)
+        # Stage 4 fused branch with Inverted Bottleneck (input: branch3*2, output: down4)
+        # Inverted Bottleneck: 입력 -> 2배 확장 -> down4 채널로 압축
         factor = 2 if self.bilinear else 1
         fused_channels = channels['branch3'] * 2
-        # Use 1x1 conv to adjust channels, then ShuffleNet V1 unit for fusion (stride=1 to maintain spatial size)
-        self.down4_conv = nn.Sequential(
-            nn.Conv3d(fused_channels, channels['down4'], kernel_size=1, stride=1, padding=0, bias=False),
+        expanded_channels = fused_channels * 2  # Inverted bottleneck: 2배 확장
+        
+        # Inverted Bottleneck 구조
+        # 1. 확장: 1x1 conv로 채널 2배 확장
+        self.down4_expand = nn.Sequential(
+            nn.Conv3d(fused_channels, expanded_channels, kernel_size=1, stride=1, padding=0, bias=False),
+            _make_norm3d(self.norm, expanded_channels),
+            nn.ReLU(inplace=True),
+        )
+        # 2. Depth-wise convolution (ShuffleNet V1 Unit 사용)
+        self.down4_depth = ShuffleNetV1Unit3D(expanded_channels, expanded_channels, stride=1, groups=self.groups, norm=self.norm)
+        # 3. 압축: 1x1 conv로 down4 채널로 압축
+        self.down4_compress = nn.Sequential(
+            nn.Conv3d(expanded_channels, channels['down4'], kernel_size=1, stride=1, padding=0, bias=False),
             _make_norm3d(self.norm, channels['down4']),
             nn.ReLU(inplace=True),
         )
-        self.down4 = ShuffleNetV1Unit3D(channels['down4'], channels['down4'], stride=1, groups=self.groups, norm=self.norm)
         
         # Decoder: Up3DShuffleNetV1 사용 (인코더와 대칭: ShuffleNet V1 기반)
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수
-        # up1.cbam은 reduction=8로 설정하여 sigmoid 포화 방지 (더 많은 MLP 파라미터로 세밀한 조정)
+        # up1.cbam은 reduction=4로 설정하여 sigmoid 포화 방지 (더 많은 MLP 파라미터로 세밀한 조정)
+        # half_decoder=True 또는 fixed_decoder=True일 때는 명시적으로 정의된 디코더 채널 사용
+        if fixed_decoder or half_decoder:
+            # 디코더 채널이 명시적으로 정의된 경우
+            up1_out = channels.get('up1', channels['branch3'] // factor)
+            up2_out = channels.get('up2', channels['branch2'] // factor)
+            up3_out = channels.get('up3', channels['out'])
+        else:
+            # 기존 방식: 인코더 채널과 동일
+            up1_out = channels['branch3'] // factor
+            up2_out = channels['branch2'] // factor
+            up3_out = channels['out']
+        
+        # half_decoder=True 또는 fixed_decoder=True일 때 skip connection을 디코더 출력 채널로 압축
+        if fixed_decoder or half_decoder:
+            # Skip connection을 디코더 출력 채널과 동일하게 압축
+            target_skip1 = up1_out
+            target_skip2 = up2_out
+            target_skip3 = up3_out
+        else:
+            # 기존 방식: skip connection 압축 없음
+            target_skip1 = target_skip2 = target_skip3 = None
+        
         if self.bilinear:
-            self.up1 = Up3DShuffleNetV1(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels, groups=self.groups, use_cbam=True, reduction=8, spatial_kernel=7)
-            self.up2 = Up3DShuffleNetV1(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7)
-            self.up3 = Up3DShuffleNetV1(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7)
+            self.up1 = Up3DShuffleNetV1(channels['down4'], up1_out, self.bilinear, norm=self.norm, skip_channels=fused_channels, groups=self.groups, use_cbam=True, reduction=4, spatial_kernel=7, target_skip_channels=target_skip1)  # 포화 방지: reduction=4
+            self.up2 = Up3DShuffleNetV1(up1_out, up2_out, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7, target_skip_channels=target_skip2)
+            self.up3 = Up3DShuffleNetV1(up2_out, up3_out, self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2, groups=self.groups, use_cbam=True, reduction=4, spatial_kernel=7, target_skip_channels=target_skip3)  # 포화 방지: reduction=4
         else:
             # bilinear=False일 때는 skip connection 채널 수를 명시적으로 지정
-            self.up1 = Up3DShuffleNetV1(channels['down4'], channels['branch3'] // factor, self.bilinear, norm=self.norm, skip_channels=fused_channels, groups=self.groups, use_cbam=True, reduction=8, spatial_kernel=7)
-            self.up2 = Up3DShuffleNetV1(channels['branch3'], channels['branch2'] // factor, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7)
-            self.up3 = Up3DShuffleNetV1(channels['branch2'], channels['out'], self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7)
+            self.up1 = Up3DShuffleNetV1(channels['down4'], up1_out, self.bilinear, norm=self.norm, skip_channels=fused_channels, groups=self.groups, use_cbam=True, reduction=4, spatial_kernel=7, target_skip_channels=target_skip1)  # 포화 방지: reduction=4
+            self.up2 = Up3DShuffleNetV1(up1_out, up2_out, self.bilinear, norm=self.norm, skip_channels=channels['branch2'] * 2, groups=self.groups, use_cbam=True, reduction=16, spatial_kernel=7, target_skip_channels=target_skip2)
+            self.up3 = Up3DShuffleNetV1(up2_out, up3_out, self.bilinear, norm=self.norm, skip_channels=channels['stem'] * 2, groups=self.groups, use_cbam=True, reduction=4, spatial_kernel=7, target_skip_channels=target_skip3)  # 포화 방지: reduction=4
         self.outc = OutConv3D(channels['out'], n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -404,9 +503,10 @@ class DualBranchUNet3D_ShuffleNetV1_Stage3Fused(nn.Module):
         b2_t1ce = self.cbam_t1ce3(self.branch_t1ce3(b_t1ce))
         x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
         
-        # Stage 4: Fused branch
-        x4 = self.down4_conv(x3)
-        x4 = self.down4(x4)
+        # Stage 4: Fused branch (Inverted Bottleneck)
+        x4 = self.down4_expand(x3)  # 확장: fused_channels -> expanded_channels (2배)
+        x4 = self.down4_depth(x4)   # Depth-wise: ShuffleNet V1 Unit
+        x4 = self.down4_compress(x4)  # 압축: expanded_channels -> down4
         
         # Decoder
         x = self.up1(x4, x3)

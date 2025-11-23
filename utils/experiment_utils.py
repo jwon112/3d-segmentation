@@ -818,14 +818,38 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         )
     elif model_name.startswith('dualbranch_18_shufflenet_v1_stage3fused_'):
         # Dual-branch UNet with ShuffleNet V1 - Stage 3 fused at down4 (4-stage structure) - Support xs, s, m, l sizes
+        # Support variants: _fixed_decoder_*, _half_decoder_*, or default
         try:
-            base_name, size = parse_model_size(model_name)
+            # Check for fixed_decoder or half_decoder suffix
+            fixed_decoder = False
+            half_decoder = False
+            
+            if '_fixed_decoder_' in model_name:
+                fixed_decoder = True
+                # Extract size after _fixed_decoder_
+                size_part = model_name.split('_fixed_decoder_')[-1]
+                size = size_part.split('_')[0] if '_' in size_part else size_part
+            elif '_half_decoder_' in model_name:
+                half_decoder = True
+                # Extract size after _half_decoder_
+                size_part = model_name.split('_half_decoder_')[-1]
+                size = size_part.split('_')[0] if '_' in size_part else size_part
+            else:
+                # Default: extract size normally
+                base_name, size = parse_model_size(model_name)
         except Exception as e:
             raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
         
         def _create_shufflenet_v1_stage3fused():
             from models.dualbranch_shufflenet import DualBranchUNet3D_ShuffleNetV1_Stage3Fused
-            return DualBranchUNet3D_ShuffleNetV1_Stage3Fused(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+            return DualBranchUNet3D_ShuffleNetV1_Stage3Fused(
+                n_channels=n_channels, 
+                n_classes=n_classes, 
+                norm=norm, 
+                size=size,
+                fixed_decoder=fixed_decoder,
+                half_decoder=half_decoder
+            )
         return _create_model_with_error_handling(model_name, _create_shufflenet_v1_stage3fused)
     elif model_name.startswith('dualbranch_18_shufflenet_v1_'):
         # Dual-branch UNet with ShuffleNet V1 + SE blocks - Support xs, s, m, l sizes

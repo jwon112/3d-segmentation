@@ -157,6 +157,112 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED = {
     },
 }
 
+# Dual-Branch UNet with Fixed Decoder Channels (Stage 3 Fused, 디코더 채널 고정)
+# 디코더 채널을 고정된 값으로 유지하여 매우 가볍고 일관된 구조
+DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
+    # -------------------------------------------------------
+    # XS: Decoder Fixed at 16 (Ultra Light)
+    # -------------------------------------------------------
+    'xs': {
+        'stem': 8,       # Total: 16
+        'branch2': 16,   # Total: 32
+        'branch3': 32,   # Total: 64
+        'down4': 16,     # Bottleneck Output (Project to 16)
+        # Decoder Fixed Width: 16
+        'up1': 16,       # In: 16(Main) + 16(Skip_Compress) -> Out: 16
+        'up2': 16,       # In: 16(Main) + 16(Skip_Compress) -> Out: 16
+        'up3': 16,       # In: 16(Main) + 16(Skip) -> Out: 16
+        'out': 16,       # Final
+    },
+    # -------------------------------------------------------
+    # S: Decoder Fixed at 32 (Balanced)
+    # -------------------------------------------------------
+    's': {
+        'stem': 16,      # Total: 32
+        'branch2': 32,   # Total: 64
+        'branch3': 64,   # Total: 128
+        'down4': 32,     # Bottleneck Output (Project to 32)
+        # Decoder Fixed Width: 32
+        'up1': 32,
+        'up2': 32,
+        'up3': 32,
+        'out': 32,
+    },
+    # -------------------------------------------------------
+    # M: Decoder Fixed at 64 (Performance)
+    # -------------------------------------------------------
+    'm': {
+        'stem': 32,      # Total: 64
+        'branch2': 64,   # Total: 128
+        'branch3': 128,  # Total: 256
+        'down4': 64,     # Bottleneck Output (Project to 64)
+        # Decoder Fixed Width: 64
+        'up1': 64,
+        'up2': 64,
+        'up3': 64,
+        'out': 64,
+    },
+    # -------------------------------------------------------
+    # L: Decoder Fixed at 128 (High Performance)
+    # -------------------------------------------------------
+    'l': {
+        'stem': 64,      # Total: 128
+        'branch2': 128,  # Total: 256
+        'branch3': 256,  # Total: 512
+        'down4': 128,    # Bottleneck Output (Project to 128)
+        # Decoder Fixed Width: 128
+        'up1': 128,
+        'up2': 128,
+        'up3': 128,
+        'out': 128,
+    },
+}
+
+# Dual-Branch UNet with Half Decoder Channels (Stage 3 Fused, 디코더 채널을 인코더의 절반으로)
+# 인코더 stage 채널 = branch * 2 (두 분기 concat), 따라서 디코더 채널 = branch (인코더의 절반)
+DUALBRANCH_CHANNELS_STAGE3_FUSED_HALF_DECODER = {
+    'xs': {
+        'stem': 8,           # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 16,       # Stage 2: branch channels (each branch) - stride=2, stage2 채널 = 16*2=32
+        'branch3': 32,       # Stage 3: branch channels (each branch) - stride=2, stage3 채널 = 32*2=64
+        'down4': 128,        # Stage 4: single branch channels (bottleneck) - stride=2 (input: branch3*2=64, output: 128 = branch3*4)
+        'up1': 16,           # Decoder up1 출력: stage3 채널 64의 절반 = 32, 하지만 디코더 입력도 절반이므로 16
+        'up2': 8,            # Decoder up2 출력: stage2 채널 32의 절반 = 16, 하지만 디코더 입력도 절반이므로 8
+        'up3': 4,            # Decoder up3 출력: stage1 채널 16의 절반 = 8, 하지만 디코더 입력도 절반이므로 4
+        'out': 4,            # Output channels (OutConv3D input = up3 output)
+    },
+    's': {
+        'stem': 16,          # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 32,       # Stage 2: branch channels (each branch) - stride=2, stage2 채널 = 32*2=64
+        'branch3': 64,       # Stage 3: branch channels (each branch) - stride=2, stage3 채널 = 64*2=128
+        'down4': 256,        # Stage 4: single branch channels (bottleneck) - stride=2 (input: branch3*2=128, output: 256 = branch3*4)
+        'up1': 32,           # Decoder up1 출력: stage3 채널 128의 절반 = 64, 하지만 디코더 입력도 절반이므로 32
+        'up2': 16,           # Decoder up2 출력: stage2 채널 64의 절반 = 32, 하지만 디코더 입력도 절반이므로 16
+        'up3': 8,            # Decoder up3 출력: stage1 채널 32의 절반 = 16, 하지만 디코더 입력도 절반이므로 8
+        'out': 8,            # Output channels (OutConv3D input = up3 output)
+    },
+    'm': {
+        'stem': 32,          # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 64,       # Stage 2: branch channels (each branch) - stride=2, stage2 채널 = 64*2=128
+        'branch3': 128,      # Stage 3: branch channels (each branch) - stride=2, stage3 채널 = 128*2=256
+        'down4': 512,        # Stage 4: single branch channels (bottleneck) - stride=2 (input: branch3*2=256, output: 512 = branch3*4)
+        'up1': 64,           # Decoder up1 출력: stage3 채널 256의 절반 = 128, 하지만 디코더 입력도 절반이므로 64
+        'up2': 32,           # Decoder up2 출력: stage2 채널 128의 절반 = 64, 하지만 디코더 입력도 절반이므로 32
+        'up3': 16,           # Decoder up3 출력: stage1 채널 64의 절반 = 32, 하지만 디코더 입력도 절반이므로 16
+        'out': 16,           # Output channels (OutConv3D input = up3 output)
+    },
+    'l': {
+        'stem': 64,          # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 128,      # Stage 2: branch channels (each branch) - stride=2, stage2 채널 = 128*2=256
+        'branch3': 256,      # Stage 3: branch channels (each branch) - stride=2, stage3 채널 = 256*2=512
+        'down4': 1024,       # Stage 4: single branch channels (bottleneck) - stride=2 (input: branch3*2=512, output: 1024 = branch3*4)
+        'up1': 128,          # Decoder up1 출력: stage3 채널 512의 절반 = 256, 하지만 디코더 입력도 절반이므로 128
+        'up2': 64,           # Decoder up2 출력: stage2 채널 256의 절반 = 128, 하지만 디코더 입력도 절반이므로 64
+        'up3': 32,           # Decoder up3 출력: stage1 채널 128의 절반 = 64, 하지만 디코더 입력도 절반이므로 32
+        'out': 32,           # Output channels (OutConv3D input = up3 output)
+    },
+}
+
 
 # ============================================================================
 # Dual-Branch UNet Channel Configurations (Stage 4 fused, Stage 5 single branch)
@@ -197,6 +303,59 @@ DUALBRANCH_CHANNELS_STAGE4_FUSED = {
     },
 }
 
+# Dual-Branch UNet with Half Decoder Channels (디코더 채널을 인코더의 절반으로)
+# 인코더 stage 채널 = branch * 2 (두 분기 concat), 따라서 디코더 채널 = branch (인코더의 절반)
+DUALBRANCH_CHANNELS_STAGE4_FUSED_HALF_DECODER = {
+    'xs': {
+        'stem': 8,           # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 16,       # Stage 2: branch channels (each branch) - stride=2, stage2 채널 = 16*2=32
+        'branch3': 32,       # Stage 3: branch channels (each branch) - stride=2, stage3 채널 = 32*2=64
+        'branch4': 64,       # Stage 4: branch channels (each branch) - stride=2, stage4 채널 = 64*2=128
+        'down5': 256,        # Stage 5: single branch channels - stride=2 (input: branch4*2=128, output: 256 = branch4*4)
+        'up1': 32,           # Decoder up1 출력: stage4 채널 128의 절반 = 64, 하지만 디코더 입력도 절반이므로 32
+        'up2': 16,           # Decoder up2 출력: stage3 채널 64의 절반 = 32, 하지만 디코더 입력도 절반이므로 16
+        'up3': 8,            # Decoder up3 출력: stage2 채널 32의 절반 = 16, 하지만 디코더 입력도 절반이므로 8
+        'up4': 4,            # Decoder up4 출력: stage1 채널 16의 절반 = 8, 하지만 디코더 입력도 절반이므로 4
+        'out': 4,            # Output channels (OutConv3D input = up4 output)
+    },
+    's': {
+        'stem': 16,          # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 32,       # Stage 2: branch channels (each branch) - stride=2, stage2 채널 = 32*2=64
+        'branch3': 64,       # Stage 3: branch channels (each branch) - stride=2, stage3 채널 = 64*2=128
+        'branch4': 128,      # Stage 4: branch channels (each branch) - stride=2, stage4 채널 = 128*2=256
+        'down5': 512,        # Stage 5: single branch channels - stride=2 (input: branch4*2=256, output: 512 = branch4*4)
+        'up1': 64,           # Decoder up1 출력: stage4 채널 256의 절반 = 128, 하지만 디코더 입력도 절반이므로 64
+        'up2': 32,           # Decoder up2 출력: stage3 채널 128의 절반 = 64, 하지만 디코더 입력도 절반이므로 32
+        'up3': 16,           # Decoder up3 출력: stage2 채널 64의 절반 = 32, 하지만 디코더 입력도 절반이므로 16
+        'up4': 8,            # Decoder up4 출력: stage1 채널 32의 절반 = 16, 하지만 디코더 입력도 절반이므로 8
+        'out': 8,            # Output channels (OutConv3D input = up4 output)
+    },
+    'm': {
+        'stem': 32,          # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 64,       # Stage 2: branch channels (each branch) - stride=2, stage2 채널 = 64*2=128
+        'branch3': 128,      # Stage 3: branch channels (each branch) - stride=2, stage3 채널 = 128*2=256
+        'branch4': 256,      # Stage 4: branch channels (each branch) - stride=2, stage4 채널 = 256*2=512
+        'down5': 1024,       # Stage 5: single branch channels - stride=2 (input: branch4*2=512, output: 1024 = branch4*4)
+        'up1': 128,          # Decoder up1 출력: stage4 채널 512의 절반 = 256, 하지만 디코더 입력도 절반이므로 128
+        'up2': 64,           # Decoder up2 출력: stage3 채널 256의 절반 = 128, 하지만 디코더 입력도 절반이므로 64
+        'up3': 32,           # Decoder up3 출력: stage2 채널 128의 절반 = 64, 하지만 디코더 입력도 절반이므로 32
+        'up4': 16,           # Decoder up4 출력: stage1 채널 64의 절반 = 32, 하지만 디코더 입력도 절반이므로 16
+        'out': 16,           # Output channels (OutConv3D input = up4 output)
+    },
+    'l': {
+        'stem': 64,          # Stage 1: stem channels (each branch) - no downsampling
+        'branch2': 128,      # Stage 2: branch channels (each branch) - stride=2, stage2 채널 = 128*2=256
+        'branch3': 256,      # Stage 3: branch channels (each branch) - stride=2, stage3 채널 = 256*2=512
+        'branch4': 512,      # Stage 4: branch channels (each branch) - stride=2, stage4 채널 = 512*2=1024
+        'down5': 2048,       # Stage 5: single branch channels - stride=2 (input: branch4*2=1024, output: 2048 = branch4*4)
+        'up1': 256,          # Decoder up1 출력: stage4 채널 1024의 절반 = 512, 하지만 디코더 입력도 절반이므로 256
+        'up2': 128,          # Decoder up2 출력: stage3 채널 512의 절반 = 256, 하지만 디코더 입력도 절반이므로 128
+        'up3': 64,           # Decoder up3 출력: stage2 채널 256의 절반 = 128, 하지만 디코더 입력도 절반이므로 64
+        'up4': 32,           # Decoder up4 출력: stage1 채널 128의 절반 = 64, 하지만 디코더 입력도 절반이므로 32
+        'out': 32,           # Output channels (OutConv3D input = up4 output)
+    },
+}
+
 
 def get_unet_channels(size: str) -> Dict:
     """
@@ -228,7 +387,33 @@ def get_dualbranch_channels(size: str) -> Dict:
     return DUALBRANCH_CHANNELS[size]
 
 
-def get_dualbranch_channels_stage3_fused(size: str) -> Dict:
+def get_dualbranch_channels_stage4_fused(size: str, half_decoder: bool = False) -> Dict:
+    """
+    Get Dual-Branch UNet channel configuration for given size (Stage 4 fused, Stage 5 single branch).
+    
+    This configuration is for models where:
+    - Stage 1-4: Dual-branch structure (each branch independently)
+    - Stage 5: Single branch (Stage 4 outputs are concatenated before Stage 5)
+    
+    Args:
+        size: 'xs', 's', 'm', or 'l'
+        half_decoder: If True, decoder channels are half of encoder channels (default: False)
+    
+    Returns:
+        Dictionary with channel configuration
+        Note: Stage 5 input channels = branch4 * 2 (after concatenation)
+    """
+    if half_decoder:
+        if size not in DUALBRANCH_CHANNELS_STAGE4_FUSED_HALF_DECODER:
+            raise ValueError(f"Unknown size: {size}. Must be one of {list(DUALBRANCH_CHANNELS_STAGE4_FUSED_HALF_DECODER.keys())}")
+        return DUALBRANCH_CHANNELS_STAGE4_FUSED_HALF_DECODER[size]
+    else:
+        if size not in DUALBRANCH_CHANNELS_STAGE4_FUSED:
+            raise ValueError(f"Unknown size: {size}. Must be one of {list(DUALBRANCH_CHANNELS_STAGE4_FUSED.keys())}")
+        return DUALBRANCH_CHANNELS_STAGE4_FUSED[size]
+
+
+def get_dualbranch_channels_stage3_fused(size: str, half_decoder: bool = False, fixed_decoder: bool = False) -> Dict:
     """
     Get Dual-Branch UNet channel configuration for given size (Stage 3 fused at down4, 4-stage structure).
     
@@ -240,34 +425,25 @@ def get_dualbranch_channels_stage3_fused(size: str) -> Dict:
     
     Args:
         size: 'xs', 's', 'm', or 'l'
+        half_decoder: If True, decoder channels are half of encoder channels (default: False)
+        fixed_decoder: If True, decoder channels are fixed at a constant value (default: False)
     
     Returns:
         Dictionary with channel configuration
         Note: down4 input channels = branch3 * 2 (after concatenation)
     """
-    if size not in DUALBRANCH_CHANNELS_STAGE3_FUSED:
-        raise ValueError(f"Unknown size: {size}. Must be one of {list(DUALBRANCH_CHANNELS_STAGE3_FUSED.keys())}")
-    return DUALBRANCH_CHANNELS_STAGE3_FUSED[size]
-
-
-def get_dualbranch_channels_stage4_fused(size: str) -> Dict:
-    """
-    Get Dual-Branch UNet channel configuration for given size (Stage 4 fused, Stage 5 single branch).
-    
-    This configuration is for models where:
-    - Stage 1-4: Dual-branch structure (each branch independently)
-    - Stage 5: Single branch (Stage 4 outputs are concatenated before Stage 5)
-    
-    Args:
-        size: 'xs', 's', 'm', or 'l'
-    
-    Returns:
-        Dictionary with channel configuration
-        Note: Stage 5 input channels = branch4 * 2 (after concatenation)
-    """
-    if size not in DUALBRANCH_CHANNELS_STAGE4_FUSED:
-        raise ValueError(f"Unknown size: {size}. Must be one of {list(DUALBRANCH_CHANNELS_STAGE4_FUSED.keys())}")
-    return DUALBRANCH_CHANNELS_STAGE4_FUSED[size]
+    if fixed_decoder:
+        if size not in DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER:
+            raise ValueError(f"Unknown size: {size}. Must be one of {list(DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER.keys())}")
+        return DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER[size]
+    elif half_decoder:
+        if size not in DUALBRANCH_CHANNELS_STAGE3_FUSED_HALF_DECODER:
+            raise ValueError(f"Unknown size: {size}. Must be one of {list(DUALBRANCH_CHANNELS_STAGE3_FUSED_HALF_DECODER.keys())}")
+        return DUALBRANCH_CHANNELS_STAGE3_FUSED_HALF_DECODER[size]
+    else:
+        if size not in DUALBRANCH_CHANNELS_STAGE3_FUSED:
+            raise ValueError(f"Unknown size: {size}. Must be one of {list(DUALBRANCH_CHANNELS_STAGE3_FUSED.keys())}")
+        return DUALBRANCH_CHANNELS_STAGE3_FUSED[size]
 
 
 def get_quadbranch_channels(size: str) -> Dict:
