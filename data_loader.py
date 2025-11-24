@@ -276,23 +276,21 @@ class BratsPatchDataset3D(Dataset):
         MRI-friendly augmentation for brain images.
         
         BRATS 데이터셋은 Axial view로 저장되어 있으며, 뇌는 좌우 대칭 구조입니다.
-        - 좌우 반전만 의미가 있음 (실제로 좌우 반전된 뇌가 존재할 수 있음)
         - Rotation은 실제로 일어나지 않으므로 제거
-        - 상하/앞뒤 flip은 해부학적으로 의미가 없으므로 제거
         
         Note: BRATS 데이터가 90도 회전되어 저장되어 있으므로,
-        좌우 대칭은 H-axis flip (dims=(1,))을 사용합니다.
+        - 상하 대칭 = W-axis flip (dims=(2,)) - 90도 회전된 상태에서의 vertical flip
         """
         if not self.augment:
             return img_patch, msk_patch
 
-        # 좌우 대칭 flip만 적용 (뇌의 좌우 대칭 특성 활용)
+        # 상하 대칭 flip (90도 회전된 상태에서의 vertical flip)
         # BRATS 데이터 방향: (C, H, W, D) = (C, 좌우, 상하, 앞뒤) - 90도 회전되어 있음
-        # 좌우 대칭 = H-axis flip (dims=(1,))
+        # W-axis flip (dims=(2,)) - 90도 회전된 상태에서 상하 반전
         if torch.rand(1).item() < 0.5:
-            # H-axis flip (좌우 반전)
-            img_patch = torch.flip(img_patch, dims=(1,))
-            msk_patch = torch.flip(msk_patch, dims=(0,))
+            # W-axis flip (상하 반전)
+            img_patch = torch.flip(img_patch, dims=(2,))
+            msk_patch = torch.flip(msk_patch, dims=(1,))
 
         # Intensity augmentation (실제 스캐너 차이나 노이즈 모델링)
         # Random intensity scaling/shift (per volume)
