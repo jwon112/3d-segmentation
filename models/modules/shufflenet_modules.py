@@ -6,7 +6,7 @@ ShuffleNetV1 및 ShuffleNetV2 스타일의 3D 모듈들
 import torch
 import torch.nn as nn
 
-from ..model_3d_unet import _make_norm3d
+from ..model_3d_unet import _make_norm3d, _make_activation
 from .cbam_modules import ChannelAttention3D
 
 
@@ -33,6 +33,69 @@ def channel_shuffle_3d(x: torch.Tensor, groups: int) -> torch.Tensor:
     x = x.view(B, C, D, H, W)
     
     return x
+
+
+# ============================================================================
+# Multi-Scale Depthwise Blocks
+# ============================================================================
+
+class MultiScaleDilatedDepthwise3D(nn.Module):
+    """Multi-scale depthwise block executed sequentially with varying dilation rates.
+
+    ShuffleNetV2Unit3D_Dilated와 유사하게 여러 dilation rate를 **순차적으로**
+    적용하여 점진적으로 receptive field를 확장합니다.
+
+    Args:
+        channels: 입력/출력 채널 수 (depthwise conv이므로 채널 수 유지)
+        dilation_rates: 사용할 dilation rate 리스트 (기본: [1, 2, 5])
+        kernel_size: depthwise conv kernel 크기 (기본: 3)
+        norm: 정규화 타입 ('bn', 'in', 'gn')
+        activation: 활성화 함수 타입 ('relu', 'hardswish', 'gelu')
+    """
+
+    def __init__(
+        self,
+        channels: int,
+        dilation_rates: list = None,
+        kernel_size: int = 3,
+        norm: str = "bn",
+        activation: str = "relu",
+    ):
+        super().__init__()
+        dilation_rates = dilation_rates or [1, 2, 5]
+        assert kernel_size % 2 == 1, "kernel_size must be odd"
+
+        padding_base = (kernel_size - 1) // 2
+        self.layers = nn.ModuleList()
+        for rate in dilation_rates:
+            padding = rate * padding_base
+            self.layers.append(
+                nn.Sequential(
+                    nn.Conv3d(
+                        channels,
+                        channels,
+                        kernel_size=kernel_size,
+                        stride=1,
+                        padding=padding,
+                        dilation=rate,
+                        groups=channels,
+                        bias=False,
+                    ),
+                    _make_norm3d(norm, channels),
+                    _make_activation(activation, inplace=True),
+                )
+            )
+
+        self.post_norm = _make_norm3d(norm, channels)
+        self.post_act = _make_activation(activation, inplace=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = x
+        for layer in self.layers:
+            out = layer(out)
+        out = self.post_norm(out)
+        out = self.post_act(out)
+        return out
 
 
 # ============================================================================

@@ -19,6 +19,25 @@ from .channel_configs import get_dualbranch_channels_stage4_fused, get_dualbranc
 import torch.nn.functional as F
 
 
+# Helper to build extra ShuffleNetV1Unit stacks
+def _build_shufflenet_extra_blocks(channels, num_blocks, norm, groups, use_channel_attention, reduction):
+    if num_blocks <= 0:
+        return nn.Identity()
+    layers = [
+        ShuffleNetV1Unit3D(
+            channels,
+            channels,
+            stride=1,
+            groups=groups,
+            norm=norm,
+            use_channel_attention=use_channel_attention,
+            reduction=reduction,
+        )
+        for _ in range(num_blocks)
+    ]
+    return nn.Sequential(*layers)
+
+
 # ============================================================================
 # Building Blocks
 # ============================================================================
@@ -274,7 +293,6 @@ class DualBranchUNet3D_ShuffleNetV1(nn.Module):
         
         # Get channel configuration (Stage 4 fused, Stage 5 single branch)
         channels = get_dualbranch_channels_stage4_fused(size, half_decoder=half_decoder)
-        
         # Stage 1 stems (simple 3x3 conv)
         self.stem_flair = Stem3x3(1, channels['stem'], norm=self.norm, activation=activation)
         self.stem_t1ce = Stem3x3(1, channels['stem'], norm=self.norm, activation=activation)
@@ -292,6 +310,10 @@ class DualBranchUNet3D_ShuffleNetV1(nn.Module):
                                                 use_channel_attention=True, reduction=2)  # 포화 완화: reduction=2
         self.branch_t1ce3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm,
                                                use_channel_attention=True, reduction=2)  # 포화 완화: reduction=2
+        self.branch_flair3_extra = _build_shufflenet_extra_blocks(channels['branch3'], 4, self.norm, self.groups, True, 2)
+        self.branch_t1ce3_extra = _build_shufflenet_extra_blocks(channels['branch3'], 4, self.norm, self.groups, True, 2)
+        self.branch_flair3_extra = _build_shufflenet_extra_blocks(channels['branch3'], 4, self.norm, self.groups, True, 2)
+        self.branch_t1ce3_extra = _build_shufflenet_extra_blocks(channels['branch3'], 4, self.norm, self.groups, True, 2)
         
         # Stage 4 branches (both use ShuffleNet V1)
         self.branch_flair4 = Down3DShuffleNetV1(channels['branch3'], channels['branch4'], groups=self.groups, norm=self.norm,
@@ -383,7 +405,9 @@ class DualBranchUNet3D_ShuffleNetV1(nn.Module):
         
         # Stage 3: Branches (Channel Attention은 블록 내부에 적용됨)
         b2_flair = self.branch_flair3(b_flair)
+        b2_flair = self.branch_flair3_extra(b2_flair)
         b2_t1ce = self.branch_t1ce3(b_t1ce)
+        b2_t1ce = self.branch_t1ce3_extra(b2_t1ce)
         x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
         
         # Stage 4: Branches (Channel Attention은 블록 내부에 적용됨)
@@ -550,7 +574,9 @@ class DualBranchUNet3D_ShuffleNetV1_Stage3Fused(nn.Module):
         
         # Stage 3: Branches (Channel Attention은 블록 내부에 적용됨)
         b2_flair = self.branch_flair3(b_flair)
+        b2_flair = self.branch_flair3_extra(b2_flair)
         b2_t1ce = self.branch_t1ce3(b_t1ce)
+        b2_t1ce = self.branch_t1ce3_extra(b2_t1ce)
         x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
         
         # Stage 4: Fused branch (Inverted Bottleneck)
