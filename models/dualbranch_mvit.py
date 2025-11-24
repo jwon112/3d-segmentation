@@ -8,7 +8,7 @@ MobileViT Extended Dual-Branch UNet Models
 import torch
 import torch.nn as nn
 
-from .dualbranch_mobilenet import MobileNetV2Block3D, Down3DMobileNetV2
+from .dualbranch_mobile import MobileNetV2Block3D, Down3DMobileNetV2
 from .modules.mvit_modules import Down3DStrideMViT
 from .model_3d_unet import Up3D, OutConv3D
 from .channel_configs import get_dualbranch_channels

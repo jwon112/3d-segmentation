@@ -1178,8 +1178,12 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     # Switch RepLK blocks to deploy mode (before final test evaluation)
                     # RepLK blocks are fused into single 7x7x7 depthwise conv for efficient inference
                     # Check if model name starts with any RepLK model prefix (supports all sizes: xs, s, m, l)
-                    replk_model_prefixes = ['dualbranch_04_unet_', 'dualbranch_05_unet_', 'dualbranch_06_unet_', 'dualbranch_07_unet_', 
-                                            'dualbranch_08_unet_', 'dualbranch_09_unet_']
+                    replk_model_prefixes = [
+                        'dualbranch_04_unet_',
+                        'dualbranch_05_unet_',
+                        'dualbranch_06_unet_',
+                        'dualbranch_07_unet_',
+                    ]
                     if any(model_name.startswith(prefix) for prefix in replk_model_prefixes):
                         real_model = model.module if hasattr(model, 'module') else model
                         if hasattr(real_model, 'switch_to_deploy'):

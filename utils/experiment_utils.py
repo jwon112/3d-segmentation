@@ -524,10 +524,10 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     SUPPORTED_MODEL_PATTERNS = [
         'unet3d_', 'unet3d_stride_', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d',
         'dualbranch_01_unet_', 'dualbranch_02_unet_', 'dualbranch_03_unet_', 'dualbranch_04_unet_',
-        'dualbranch_05_unet_', 'dualbranch_06_unet_', 'dualbranch_07_unet_', 'dualbranch_08_unet_',
-        'dualbranch_09_unet_', 'dualbranch_10_unet_', 'dualbranch_11_unet_', 'dualbranch_12_unet_',
-        'dualbranch_13_unet_', 'dualbranch_14_', 'dualbranch_15_dilated125_both_',
-        'dualbranch_15_dilated125_both_shuffle_', 'dualbranch_16_shufflenet_hybrid_',
+        'dualbranch_05_unet_', 'dualbranch_06_unet_', 'dualbranch_07_unet_', 'dualbranch_10_unet_',
+        'dualbranch_11_unet_', 'dualbranch_13_unet_', 'dualbranch_14_',
+        'dualbranch_16_shufflenet_hybrid_', 'dualbranch_mobilenetv2_dilated_',
+        'dualbranch_mobilenetv2_dilated_fixed_',
         'dualbranch_16_shufflenet_hybrid_ln_', 'dualbranch_17_shufflenet_pamlite_',
         'dualbranch_17_shufflenet_pamlite_v3_', 'dualbranch_18_shufflenet_v1_',
         'dualbranch_18_shufflenet_v1_stage3fused_',
@@ -725,31 +725,6 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         base_name, size = parse_model_size(model_name)
         from models.dualbranch_replk import DualBranchUNet3D_StrideLK_FFN2_MViT_Stage5
         return DualBranchUNet3D_StrideLK_FFN2_MViT_Stage5(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
-    elif model_name.startswith('dualbranch_08_unet_'):
-        # Dual-branch UNet with RepLK (FLAIR) + MobileNetV2 (t1ce) + MViT Stage5 - Support xs, s, m, l sizes
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_mobilenet import DualBranchUNet3D_LK_MobileNet_MViT
-        return DualBranchUNet3D_LK_MobileNet_MViT(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
-    elif model_name.startswith('dualbranch_09_unet_'):
-        # Dual-branch UNet with RepLK 7x7x7 (FLAIR) + MobileNetV2 (t1ce) + MViT Stage5 - Support xs, s, m, l sizes
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_mobilenet import DualBranchUNet3D_LK7x7_MobileNet_MViT
-        return DualBranchUNet3D_LK7x7_MobileNet_MViT(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
-    elif model_name.startswith('dualbranch_10_unet_'):
-        # Dual-branch UNet with dilated FLAIR branch + MobileNetV2 - Support xs, s, m, l sizes
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_dilated_mobile import DualBranchUNet3D_DilatedMobile
-        return DualBranchUNet3D_DilatedMobile(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
-    elif model_name.startswith('dualbranch_11_unet_'):
-        # Dual-branch UNet with dilated FLAIR branch (rate 1,2,3) + MobileNetV2 - Support xs, s, m, l sizes
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_dilated_mobile import DualBranchUNet3D_Dilated123_Mobile
-        return DualBranchUNet3D_Dilated123_Mobile(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
-    elif model_name.startswith('dualbranch_12_unet_'):
-        # Dual-branch UNet with MobileNetV2 for both branches + MViT Stage5 - Support xs, s, m, l sizes
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_mobilenet import DualBranchUNet3D_MobileNet_MViT
-        return DualBranchUNet3D_MobileNet_MViT(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
     elif model_name.startswith('dualbranch_13_unet_'):
         # Dual-branch UNet with MobileViT extended to FLAIR branch Stage 3,4 + MViT Stage5 - Support xs, s, m, l sizes
         base_name, size = parse_model_size(model_name)
@@ -796,16 +771,28 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 return model_class(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
             else:
                 raise ValueError(f"Unknown backbone in dualbranch_14: {backbone}")
-    elif model_name.startswith('dualbranch_15_dilated125_both_shuffle_'):
-        # Dual-branch UNet with dilated both branches (rate 1,2,5) + MobileNetV2 with shuffle in skip connections - Support xs, s, m, l sizes
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_dilated_mobile import DualBranchUNet3D_Dilated125_Both_Mobile_Shuffle
-        return DualBranchUNet3D_Dilated125_Both_Mobile_Shuffle(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
-    elif model_name.startswith('dualbranch_15_dilated125_both_'):
-        # Dual-branch UNet with dilated both branches (rate 1,2,5) + MobileNetV2 - Support xs, s, m, l sizes
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_dilated_mobile import DualBranchUNet3D_Dilated125_Both_Mobile
-        return DualBranchUNet3D_Dilated125_Both_Mobile(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
+    elif model_name.startswith('dualbranch_mobilenetv2_dilated_fixed_'):
+        # Stage3-fused MobileNetV2 dual-branch UNet with fixed decoder channels
+        size = model_name.split('dualbranch_mobilenetv2_dilated_fixed_')[-1]
+        from models.dualbranch_mobile import DualBranchUNet3D_MobileNetV2
+        return DualBranchUNet3D_MobileNetV2(
+            n_channels=n_channels,
+            n_classes=n_classes,
+            norm=norm,
+            size=size,
+            fixed_decoder=True,
+        )
+    elif model_name.startswith('dualbranch_mobilenetv2_dilated_'):
+        # Stage3-fused MobileNetV2 dual-branch UNet (standard decoder)
+        size = model_name.split('dualbranch_mobilenetv2_dilated_')[-1]
+        from models.dualbranch_mobile import DualBranchUNet3D_MobileNetV2
+        return DualBranchUNet3D_MobileNetV2(
+            n_channels=n_channels,
+            n_classes=n_classes,
+            norm=norm,
+            size=size,
+            fixed_decoder=False,
+        )
     elif model_name.startswith('dualbranch_16_shufflenet_hybrid_'):
         base_name, size = parse_model_size(model_name)
         from models.dualbranch_16_unet import DualBranchUNet3D_ShuffleHybrid

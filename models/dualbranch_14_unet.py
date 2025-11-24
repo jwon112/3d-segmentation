@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from .dualbranch_mobilenet import MobileNetV2Block3D
+from .dualbranch_mobile import MobileNetV2Block3D
 from .dualbranch_basic import Down3DStrideDilated
 from .model_3d_unet import Up3D, OutConv3D, DoubleConv3D, _make_norm3d
 from .channel_configs import get_dualbranch_channels, get_dualbranch_channels_stage4_fused

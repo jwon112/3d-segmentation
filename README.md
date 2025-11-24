@@ -18,8 +18,7 @@
 │   ├── mobileunetr_3d.py              # Mobile UNETR 3D
 │   ├── dualbranch_basic.py            # Dual-Branch 기본 (MaxPool, Stride, Dilated)
 │   ├── dualbranch_replk.py            # Dual-Branch RepLK (RepLK + MViT)
-│   ├── dualbranch_mobilenet.py        # Dual-Branch MobileNetV2 + RepLK/MViT
-│   ├── dualbranch_dilated_mobile.py   # Dual-Branch Dilated + MobileNetV2
+│   ├── dualbranch_mobile.py           # Dual-Branch MobileNetV2 (Shuffle-inspired)
 │   ├── dualbranch_mvit.py             # Dual-Branch MobileViT Extended
 │   ├── dualbranch_14_unet.py          # Dual-Branch Backbone 비교 (MobileNetV2, GhostNet, ShuffleNetV2, ConvNeXt 등)
 │   └── modules/                       # 공통 모듈
@@ -198,11 +197,8 @@ torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> -
 - `dualbranch_05_unet_{xs|s|m|l}`: RepLK + FFN2
 - `dualbranch_06_unet_{xs|s|m|l}`: RepLK + MViT Stage 4,5
 - `dualbranch_07_unet_{xs|s|m|l}`: RepLK + MViT Stage 5만
-- `dualbranch_08_unet_{xs|s|m|l}`: RepLK + MobileNetV2 + MViT
-- `dualbranch_09_unet_{xs|s|m|l}`: RepLK 7x7 + MobileNetV2 + MViT
-- `dualbranch_10_unet_{xs|s|m|l}`: Dilated + MobileNetV2 + MViT
-- `dualbranch_11_unet_{xs|s|m|l}`: Dilated 1,2,3 + MobileNetV2 + MViT
-- `dualbranch_12_unet_{xs|s|m|l}`: MobileNetV2 Both + MViT
+- `dualbranch_mobilenetv2_dilated_{xs|s|m|l}`: MobileNetV2 듀얼 분기 (Shuffle-inspired, Stage3 Fused)
+- `dualbranch_mobilenetv2_dilated_fixed_{xs|s|m|l}`: MobileNetV2 듀얼 분기 (Fixed Decoder 변형)
 - `dualbranch_13_unet_{xs|s|m|l}`: MobileViT Extended
 - `dualbranch_14_mobilenetv2_expand2_{xs|s|m|l}`: MobileNetV2 (expand_ratio=2)
 - `dualbranch_14_ghostnet_{xs|s|m|l}`: GhostNet
@@ -211,7 +207,6 @@ torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> -
 - `dualbranch_14_shufflenetv2_{xs|s|m|l}`: ShuffleNetV2
 - `dualbranch_14_shufflenetv2_dilated_{xs|s|m|l}`: ShuffleNetV2 Dilated
 - `dualbranch_14_shufflenetv2_lk_{xs|s|m|l}`: ShuffleNetV2 Large Kernel
-- `dualbranch_15_dilated125_both_{xs|s|m|l}`: Dilated 1,2,5 (양쪽 분기 모두)
 
 **예시**: `dualbranch_01_unet_s`, `dualbranch_01_unet_m`, `dualbranch_14_ghostnet_l` 등
 

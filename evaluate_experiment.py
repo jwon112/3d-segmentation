@@ -85,8 +85,12 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     
     # RepLK 모델의 경우 deploy 모드로 전환
     # Check if model name starts with any RepLK model prefix (supports all sizes: xs, s, m, l)
-    replk_model_prefixes = ['dualbranch_04_unet_', 'dualbranch_05_unet_', 'dualbranch_06_unet_', 'dualbranch_07_unet_', 
-                            'dualbranch_08_unet_', 'dualbranch_09_unet_']
+    replk_model_prefixes = [
+        'dualbranch_04_unet_',
+        'dualbranch_05_unet_',
+        'dualbranch_06_unet_',
+        'dualbranch_07_unet_',
+    ]
     if any(model_name.startswith(prefix) for prefix in replk_model_prefixes):
         if hasattr(real_model, 'switch_to_deploy'):
             if is_main_process(rank):
