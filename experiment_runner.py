@@ -28,7 +28,7 @@ from metrics import calculate_wt_tc_et_dice, calculate_wt_tc_et_hd95
 from data_loader import get_data_loaders
 from visualization import create_comprehensive_analysis, create_interactive_3d_plot
 from models.modules.se_modules import SEBlock3D
-from models.modules.cbam_modules import CBAM3D
+from models.modules.cbam_modules import CBAM3D, ChannelAttention3D
 
 # Import Grad-CAM utilities
 from utils.gradcam_utils import generate_gradcam_for_model
@@ -377,16 +377,24 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     
     collect_cbam = (results_dir is not None) and rank0
     cbam_blocks = []
+    channel_attention_blocks = []  # 블록 내부의 ChannelAttention3D도 수집
     cbam_channel_data = {}
     cbam_spatial_data = {}
+    channel_attention_data = {}  # 블록 내부 Channel Attention 가중치
     if collect_cbam:
         for name, module in real_model.named_modules():
             if isinstance(module, CBAM3D):
                 cbam_blocks.append((name, module))
                 cbam_channel_data[name] = []
                 cbam_spatial_data[name] = []
+            elif isinstance(module, ChannelAttention3D):
+                # 블록 내부의 ChannelAttention3D도 수집 (예: ShuffleNetV1Unit3D 내부)
+                channel_attention_blocks.append((name, module))
+                channel_attention_data[name] = []
         if rank0:
             print(f"[CBAM Debug] Found {len(cbam_blocks)} CBAM blocks: {[name for name, _ in cbam_blocks]}")
+            if channel_attention_blocks:
+                print(f"[CBAM Debug] Found {len(channel_attention_blocks)} ChannelAttention3D blocks (inside units): {[name for name, _ in channel_attention_blocks]}")
     example_dir = None
     example_limit = 10
     examples_saved = 0
@@ -521,6 +529,13 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                     else:
                         if rank0 and len(cbam_spatial_data[block_name]) == 0:  # 첫 번째 배치에서만 경고
                             print(f"[CBAM Debug] Warning: No spatial weights found for {block_name}")
+            
+            # Collect ChannelAttention3D weights from inside blocks (e.g., ShuffleNetV1Unit3D)
+            if collect_cbam and channel_attention_blocks:
+                for block_name, block_module in channel_attention_blocks:
+                    channel_weights = getattr(block_module, 'last_channel_weights', None)
+                    if channel_weights is not None:
+                        channel_attention_data[block_name].append(channel_weights.clone())
             pred_np = pred.cpu().numpy()
             labels_np = labels.cpu().numpy()
             # Accumulate 4-class confusion matrix (0..3)
@@ -888,6 +903,56 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             csv_path = os.path.join(results_dir, f'cbam_spatial_summary_{model_name}.csv')
             cbam_spatial_df.to_csv(csv_path, index=False)
             print(f"CBAM spatial attention summary saved to: {csv_path}")
+    
+    # Save ChannelAttention3D weights from inside blocks (e.g., ShuffleNetV1Unit3D)
+    if collect_cbam and channel_attention_blocks:
+        import matplotlib.pyplot as plt
+        
+        if rank0:
+            print(f"[CBAM Debug] Saving ChannelAttention3D statistics: {len(channel_attention_blocks)} blocks found")
+            for block_name, data_list in channel_attention_data.items():
+                print(f"[CBAM Debug] Block {block_name}: {len(data_list)} channel weight samples collected")
+        
+        # Channel Attention weights from inside blocks
+        channel_attention_summary_rows = []
+        for block_name, data_list in channel_attention_data.items():
+            if not data_list:
+                if rank0:
+                    print(f"[CBAM Debug] Warning: No channel attention data for {block_name}, skipping")
+                continue
+            try:
+                block_tensor = torch.cat(data_list, dim=0)
+            except RuntimeError:
+                block_tensor = torch.cat([d.cpu() for d in data_list], dim=0)
+            block_np = block_tensor.numpy()  # (N, C) where N is number of samples
+            channel_means = block_np.mean(axis=0)
+            channel_stds = block_np.std(axis=0)
+            for ch_idx, (m, s) in enumerate(zip(channel_means, channel_stds)):
+                channel_attention_summary_rows.append({
+                    'block_name': block_name,
+                    'channel': ch_idx,
+                    'mean_channel_weight': float(m),
+                    'std_channel_weight': float(s)
+                })
+            if results_dir:
+                safe_name = block_name.replace('.', '_')
+                hist_path = os.path.join(
+                    results_dir, f'channel_attention_hist_{model_name}_{safe_name}.png'
+                )
+                plt.figure(figsize=(6, 4))
+                plt.hist(block_np.flatten(), bins=40, range=(0, 1), color='purple', alpha=0.8)
+                plt.title(f'Channel Attention Histogram (Inside Blocks)\n{model_name} - {block_name}')
+                plt.xlabel('Channel Attention Weight')
+                plt.ylabel('Frequency')
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(hist_path, dpi=300, bbox_inches='tight')
+                plt.close()
+        if channel_attention_summary_rows and results_dir:
+            channel_attention_df = pd.DataFrame(channel_attention_summary_rows)
+            csv_path = os.path.join(results_dir, f'channel_attention_summary_{model_name}.csv')
+            channel_attention_df.to_csv(csv_path, index=False)
+            print(f"Channel Attention (inside blocks) summary saved to: {csv_path}")
 
     return {
         'dice': test_dice,

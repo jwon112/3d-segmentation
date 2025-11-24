@@ -310,8 +310,7 @@ class DualBranchUNet3D_ShuffleNetV1(nn.Module):
                                                 use_channel_attention=True, reduction=2)  # 포화 완화: reduction=2
         self.branch_t1ce3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm,
                                                use_channel_attention=True, reduction=2)  # 포화 완화: reduction=2
-        self.branch_flair3_extra = _build_shufflenet_extra_blocks(channels['branch3'], 4, self.norm, self.groups, True, 2)
-        self.branch_t1ce3_extra = _build_shufflenet_extra_blocks(channels['branch3'], 4, self.norm, self.groups, True, 2)
+        # Stage 3 extra blocks (추가 ShuffleNet V1 units)
         self.branch_flair3_extra = _build_shufflenet_extra_blocks(channels['branch3'], 4, self.norm, self.groups, True, 2)
         self.branch_t1ce3_extra = _build_shufflenet_extra_blocks(channels['branch3'], 4, self.norm, self.groups, True, 2)
         
