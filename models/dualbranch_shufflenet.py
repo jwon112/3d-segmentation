@@ -88,24 +88,27 @@ class Up3DShuffleNetV1(nn.Module):
         # DoubleConv3D 스타일의 점진적 압축 구현
         # ShuffleNetV1Unit3D는 stride=1일 때 residual connection을 사용하므로 in_channels == out_channels여야 함
         # 따라서 unit1과 unit2는 채널을 유지하고, 중간에 1x1 conv로 채널을 조정
+        # Channel Attention은 채널 압축 직전에 적용되므로:
+        # - channel_adjust 직전에 unit1에 적용
+        # - unit2의 채널 압축 직전에 적용
         if total_channels != out_channels:
-            # 점진적 압축: total_channels -> total_channels (unit1) -> out_channels (1x1 conv) -> out_channels (unit2)
-            self.unit1 = ShuffleNetV1Unit3D(total_channels, total_channels, stride=1, groups=groups, norm=norm, activation=activation)
+            # 점진적 압축: total_channels -> total_channels (unit1 with CA) -> out_channels (1x1 conv) -> out_channels (unit2 with CA)
+            self.unit1 = ShuffleNetV1Unit3D(total_channels, total_channels, stride=1, groups=groups, norm=norm,
+                                            use_channel_attention=self.use_cbam, reduction=reduction)
             self.channel_adjust = nn.Sequential(
                 nn.Conv3d(total_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False),
                 _make_norm3d(norm, out_channels),
                 _make_activation(activation, inplace=True),
             )
-            self.unit2 = ShuffleNetV1Unit3D(out_channels, out_channels, stride=1, groups=groups, norm=norm, activation=activation)
+            self.unit2 = ShuffleNetV1Unit3D(out_channels, out_channels, stride=1, groups=groups, norm=norm,
+                                            use_channel_attention=self.use_cbam, reduction=reduction)
         else:
             # 채널 수가 같으면 유지
-            self.unit1 = ShuffleNetV1Unit3D(total_channels, total_channels, stride=1, groups=groups, norm=norm, activation=activation)
+            self.unit1 = ShuffleNetV1Unit3D(total_channels, total_channels, stride=1, groups=groups, norm=norm,
+                                            use_channel_attention=self.use_cbam, reduction=reduction)
             self.channel_adjust = None
-            self.unit2 = ShuffleNetV1Unit3D(total_channels, out_channels, stride=1, groups=groups, norm=norm, activation=activation)
-        
-        # CBAM 블록 (선택적)
-        if self.use_cbam:
-            self.cbam = CBAM3D(out_channels, reduction=reduction, spatial_kernel=spatial_kernel, spatial_dilation=spatial_dilation)
+            self.unit2 = ShuffleNetV1Unit3D(total_channels, out_channels, stride=1, groups=groups, norm=norm,
+                                            use_channel_attention=self.use_cbam, reduction=reduction)
     
     def forward(self, x1, x2):
         # Upsampling
@@ -128,60 +131,68 @@ class Up3DShuffleNetV1(nn.Module):
         x = torch.cat([x2, x1_up], dim=1)
         
         # ShuffleNet V1 Units (인코더와 대칭, 점진적 압축)
+        # Channel Attention은 각 unit 내부의 채널 압축 직전에 적용됨
         x = self.unit1(x)
         if self.channel_adjust is not None:
             x = self.channel_adjust(x)
         x = self.unit2(x)
         
-        # CBAM 블록 적용 (선택적)
-        if self.use_cbam:
-            x = self.cbam(x)
-        
         return x
 
 
 class Up3DCBAM(nn.Module):
-    """3D Upsampling 블록 with CBAM (Channel + Spatial Attention)
+    """3D Upsampling 블록 with CBAM (Channel Attention)
     
-    Up3D를 래핑하여 업샘플 후 concat한 다음 CBAM 블록을 적용합니다.
-    CBAM 블록을 DoubleConv 전에 적용하여 중요한 채널과 공간 위치에 집중합니다.
+    Up3D를 래핑하여 업샘플 후 concat한 다음 DoubleConv 내부의 채널 압축 직전에 
+    Channel Attention을 적용합니다.
+    
+    Channel Attention은 채널 압축 직전에 적용하여 효율성을 높입니다.
     
     Args:
         reduction: Channel attention의 reduction ratio (기본값: 16, up1에서는 8로 줄여서 포화 방지)
-        spatial_kernel: Spatial attention의 kernel size (기본값: 7)
+        spatial_kernel: 사용하지 않음 (하위 호환성을 위해 유지)
         use_cbam: CBAM 사용 여부 (False면 SE 사용)
     """
     def __init__(self, in_channels, out_channels, bilinear=True, norm: str = 'bn', skip_channels=None, use_cbam: bool = True, reduction: int = 16, spatial_kernel: int = 7):
         super().__init__()
-        self.up3d = Up3D(in_channels, out_channels, bilinear, norm, skip_channels)
         self.use_cbam = use_cbam
         
+        # Upsampling
+        if bilinear:
+            self.up = nn.Upsample(scale_factor=2, mode='trilinear', align_corners=True)
+            if skip_channels is None:
+                skip_channels = in_channels // 2
+            total_channels = in_channels + skip_channels
+        else:
+            self.up = nn.ConvTranspose3d(in_channels, in_channels // 2, kernel_size=2, stride=2)
+            if skip_channels is None:
+                skip_channels = in_channels // 2
+            total_channels = (in_channels // 2) + skip_channels
+        
+        # DoubleConv3D를 직접 구현하여 채널 압축 직전에 채널 어텐션 적용
+        # DoubleConv3D: conv1 -> bn1 -> relu -> conv2 -> bn2 -> relu
+        # 채널 압축은 conv2에서 일어나므로, conv1과 conv2 사이에 채널 어텐션 적용
+        mid_channels = out_channels if total_channels == out_channels else total_channels // 2
+        
+        self.conv1 = nn.Conv3d(total_channels, mid_channels, kernel_size=3, padding=1, bias=False)
+        self.bn1 = _make_norm3d(norm, mid_channels)
+        self.relu1 = nn.ReLU(inplace=True)
+        
+        # Channel Attention (채널 압축 직전에 적용)
         if self.use_cbam:
-            # Up3D 내부의 DoubleConv 전에 CBAM을 적용해야 하므로,
-            # concat 후의 채널 수를 계산해야 함
-            if bilinear:
-                if skip_channels is None:
-                    skip_channels = in_channels // 2
-                total_channels = in_channels + skip_channels
-            else:
-                if skip_channels is None:
-                    skip_channels = in_channels // 2
-                total_channels = (in_channels // 2) + skip_channels
-            self.cbam = CBAM3D(total_channels, reduction=reduction, spatial_kernel=spatial_kernel)
+            from .modules.cbam_modules import ChannelAttention3D
+            self.channel_attention = ChannelAttention3D(mid_channels, reduction=reduction)
         else:
             # Fallback to SE for backward compatibility
-            if bilinear:
-                if skip_channels is None:
-                    skip_channels = in_channels // 2
-                total_channels = in_channels + skip_channels
-            else:
-                if skip_channels is None:
-                    skip_channels = in_channels // 2
-                total_channels = (in_channels // 2) + skip_channels
-            self.se = SEBlock3D(total_channels, reduction=reduction)
+            self.se = SEBlock3D(mid_channels, reduction=reduction)
+        
+        # 채널 압축 conv
+        self.conv2 = nn.Conv3d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        self.bn2 = _make_norm3d(norm, out_channels)
+        self.relu2 = nn.ReLU(inplace=True)
     
     def forward(self, x1, x2):
-        x1_up = self.up3d.up(x1)
+        x1_up = self.up(x1)
         
         # 크기 맞추기
         diffZ = x2.size()[2] - x1_up.size()[2]
@@ -195,14 +206,23 @@ class Up3DCBAM(nn.Module):
         # Concat
         x = torch.cat([x2, x1_up], dim=1)
         
-        # CBAM 또는 SE 블록 적용 (DoubleConv 전)
+        # First conv
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu1(x)
+        
+        # Channel Attention (채널 압축 직전에 적용)
         if self.use_cbam:
-            x = self.cbam(x)
+            x = self.channel_attention(x)
         elif hasattr(self, 'se'):
             x = self.se(x)
         
-        # DoubleConv 적용
-        return self.up3d.conv(x)
+        # Second conv (채널 압축)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu2(x)
+        
+        return x
 
 
 class Stem3x3(nn.Module):
@@ -261,26 +281,23 @@ class DualBranchUNet3D_ShuffleNetV1(nn.Module):
         # se_stem 제거: Stem 단계에서는 특징 추출이 초기 단계라 SE 효과가 제한적
         
         # Stage 2 branches (both use ShuffleNet V1)
-        self.branch_flair = Down3DShuffleNetV1(channels['stem'], channels['branch2'], groups=self.groups, norm=self.norm)
-        self.branch_t1ce = Down3DShuffleNetV1(channels['stem'], channels['branch2'], groups=self.groups, norm=self.norm)
-        # CBAM 사용: Channel + Spatial attention으로 더 효과적인 특징 재보정
-        self.cbam_flair2 = CBAM3D(channels['branch2'], reduction=8, spatial_kernel=7)  # 어텐션 활성화: reduction=8
-        self.cbam_t1ce2 = CBAM3D(channels['branch2'], reduction=2, spatial_kernel=7)  # 포화 완화: reduction=2
-        # se_skip2 제거: Skip connection에서 SE 효과가 제한적
+        # Channel Attention은 블록 내부(채널 압축 직전)에 적용
+        self.branch_flair = Down3DShuffleNetV1(channels['stem'], channels['branch2'], groups=self.groups, norm=self.norm,
+                                               use_channel_attention=True, reduction=8)  # 어텐션 활성화: reduction=8
+        self.branch_t1ce = Down3DShuffleNetV1(channels['stem'], channels['branch2'], groups=self.groups, norm=self.norm,
+                                              use_channel_attention=True, reduction=2)  # 포화 완화: reduction=2
         
         # Stage 3 branches (both use ShuffleNet V1)
-        self.branch_flair3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm)
-        self.branch_t1ce3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm)
-        self.cbam_flair3 = CBAM3D(channels['branch3'], reduction=2, spatial_kernel=7)  # 포화 완화: reduction=2
-        self.cbam_t1ce3 = CBAM3D(channels['branch3'], reduction=2, spatial_kernel=7)  # 포화 완화: reduction=2
-        # se_skip3 제거
+        self.branch_flair3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm,
+                                                use_channel_attention=True, reduction=2)  # 포화 완화: reduction=2
+        self.branch_t1ce3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm,
+                                               use_channel_attention=True, reduction=2)  # 포화 완화: reduction=2
         
         # Stage 4 branches (both use ShuffleNet V1)
-        self.branch_flair4 = Down3DShuffleNetV1(channels['branch3'], channels['branch4'], groups=self.groups, norm=self.norm, activation=activation)
-        self.branch_t1ce4 = Down3DShuffleNetV1(channels['branch3'], channels['branch4'], groups=self.groups, norm=self.norm, activation=activation)
-        self.cbam_flair4 = CBAM3D(channels['branch4'], reduction=16, spatial_kernel=7)
-        self.cbam_t1ce4 = CBAM3D(channels['branch4'], reduction=16, spatial_kernel=7)
-        # se_skip4 제거
+        self.branch_flair4 = Down3DShuffleNetV1(channels['branch3'], channels['branch4'], groups=self.groups, norm=self.norm,
+                                                use_channel_attention=True, reduction=16)
+        self.branch_t1ce4 = Down3DShuffleNetV1(channels['branch3'], channels['branch4'], groups=self.groups, norm=self.norm,
+                                               use_channel_attention=True, reduction=16)
         
         # Stage 5 fused branch with Inverted Bottleneck (input: branch4*2, output: down5)
         # Inverted Bottleneck: 입력 -> 2배 확장 -> down5 채널로 압축
@@ -359,20 +376,20 @@ class DualBranchUNet3D_ShuffleNetV1(nn.Module):
         x1_t1ce = self.stem_t1ce(x[:, 1:2])
         x1 = torch.cat([x1_flair, x1_t1ce], dim=1)  # se_stem 제거
         
-        # Stage 2: Branches
-        b_flair = self.cbam_flair2(self.branch_flair(x1_flair))
-        b_t1ce = self.cbam_t1ce2(self.branch_t1ce(x1_t1ce))
-        x2 = torch.cat([b_flair, b_t1ce], dim=1)  # se_skip2 제거
+        # Stage 2: Branches (Channel Attention은 블록 내부에 적용됨)
+        b_flair = self.branch_flair(x1_flair)
+        b_t1ce = self.branch_t1ce(x1_t1ce)
+        x2 = torch.cat([b_flair, b_t1ce], dim=1)
         
-        # Stage 3: Branches
-        b2_flair = self.cbam_flair3(self.branch_flair3(b_flair))
-        b2_t1ce = self.cbam_t1ce3(self.branch_t1ce3(b_t1ce))
-        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)  # se_skip3 제거
+        # Stage 3: Branches (Channel Attention은 블록 내부에 적용됨)
+        b2_flair = self.branch_flair3(b_flair)
+        b2_t1ce = self.branch_t1ce3(b_t1ce)
+        x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
         
-        # Stage 4: Branches
-        b3_flair = self.cbam_flair4(self.branch_flair4(b2_flair))
-        b3_t1ce = self.cbam_t1ce4(self.branch_t1ce4(b2_t1ce))
-        x4 = torch.cat([b3_flair, b3_t1ce], dim=1)  # se_skip4 제거
+        # Stage 4: Branches (Channel Attention은 블록 내부에 적용됨)
+        b3_flair = self.branch_flair4(b2_flair)
+        b3_t1ce = self.branch_t1ce4(b2_t1ce)
+        x4 = torch.cat([b3_flair, b3_t1ce], dim=1)
         
         # Stage 5: Fused branch (Inverted Bottleneck)
         x5 = self.down5_expand(x4)  # 확장: fused_channels -> expanded_channels (2배)
@@ -448,17 +465,17 @@ class DualBranchUNet3D_ShuffleNetV1_Stage3Fused(nn.Module):
         self.stem_t1ce = Stem3x3(1, channels['stem'], norm=self.norm, activation=activation)
         
         # Stage 2 branches (both use ShuffleNet V1)
-        self.branch_flair = Down3DShuffleNetV1(channels['stem'], channels['branch2'], groups=self.groups, norm=self.norm, activation=activation)
-        self.branch_t1ce = Down3DShuffleNetV1(channels['stem'], channels['branch2'], groups=self.groups, norm=self.norm, activation=activation)
-        # CBAM 사용: Channel + Spatial attention으로 더 효과적인 특징 재보정
-        self.cbam_flair2 = CBAM3D(channels['branch2'], reduction=8, spatial_kernel=7)  # 어텐션 활성화: reduction=8
-        self.cbam_t1ce2 = CBAM3D(channels['branch2'], reduction=2, spatial_kernel=7)  # 포화 완화: reduction=2
+        # Channel Attention은 블록 내부(채널 압축 직전)에 적용
+        self.branch_flair = Down3DShuffleNetV1(channels['stem'], channels['branch2'], groups=self.groups, norm=self.norm,
+                                               use_channel_attention=True, reduction=8)  # 어텐션 활성화: reduction=8
+        self.branch_t1ce = Down3DShuffleNetV1(channels['stem'], channels['branch2'], groups=self.groups, norm=self.norm,
+                                              use_channel_attention=True, reduction=2)  # 포화 완화: reduction=2
         
         # Stage 3 branches (both use ShuffleNet V1)
-        self.branch_flair3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm)
-        self.branch_t1ce3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm)
-        self.cbam_flair3 = CBAM3D(channels['branch3'], reduction=2, spatial_kernel=7)  # 포화 완화: reduction=2
-        self.cbam_t1ce3 = CBAM3D(channels['branch3'], reduction=2, spatial_kernel=7)  # 포화 완화: reduction=2
+        self.branch_flair3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm,
+                                                use_channel_attention=True, reduction=2)  # 포화 완화: reduction=2
+        self.branch_t1ce3 = Down3DShuffleNetV1(channels['branch2'], channels['branch3'], groups=self.groups, norm=self.norm,
+                                               use_channel_attention=True, reduction=2)  # 포화 완화: reduction=2
         
         # Stage 4 fused branch with Inverted Bottleneck (input: branch3*2, output: down4)
         # Inverted Bottleneck: 입력 -> 2배 확장 -> down4 채널로 압축
@@ -526,14 +543,14 @@ class DualBranchUNet3D_ShuffleNetV1_Stage3Fused(nn.Module):
         x1_t1ce = self.stem_t1ce(x[:, 1:2])
         x1 = torch.cat([x1_flair, x1_t1ce], dim=1)
         
-        # Stage 2: Branches
-        b_flair = self.cbam_flair2(self.branch_flair(x1_flair))
-        b_t1ce = self.cbam_t1ce2(self.branch_t1ce(x1_t1ce))
+        # Stage 2: Branches (Channel Attention은 블록 내부에 적용됨)
+        b_flair = self.branch_flair(x1_flair)
+        b_t1ce = self.branch_t1ce(x1_t1ce)
         x2 = torch.cat([b_flair, b_t1ce], dim=1)
         
-        # Stage 3: Branches
-        b2_flair = self.cbam_flair3(self.branch_flair3(b_flair))
-        b2_t1ce = self.cbam_t1ce3(self.branch_t1ce3(b_t1ce))
+        # Stage 3: Branches (Channel Attention은 블록 내부에 적용됨)
+        b2_flair = self.branch_flair3(b_flair)
+        b2_t1ce = self.branch_t1ce3(b_t1ce)
         x3 = torch.cat([b2_flair, b2_t1ce], dim=1)
         
         # Stage 4: Fused branch (Inverted Bottleneck)
