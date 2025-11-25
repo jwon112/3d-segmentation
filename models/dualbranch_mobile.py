@@ -390,9 +390,9 @@ class DualBranchUNet3D_MobileNetV2(nn.Module):
         up3_out = target_skip3 or channels["out"]
         final_out_channels = channels.get("out", up3_out)
 
-        skip1 = fused_channels
-        skip2 = channels["branch3"] * 2
-        skip3 = channels["branch2"] * 2
+        skip1 = fused_channels                  # From x3 (Stage 3 fused)
+        skip2 = channels["branch2"] * 2         # From x2 (Stage 2 fused)
+        skip3 = channels["stem"] * 2            # From x1 (Stage 1 fused)
 
         self.up1 = Up3DMobileCBAM(
             channels["down4"],
