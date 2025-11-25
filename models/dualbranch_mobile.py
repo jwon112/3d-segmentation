@@ -339,7 +339,7 @@ class DualBranchUNet3D_MobileNetV2(nn.Module):
             stride=2,
             num_post_blocks=1,
             use_channel_attention=True,
-            reduction=2,
+            reduction=8,
         )
 
         # Stage 3 branches (총 6블록: 1 down + 5 extra)
@@ -352,7 +352,7 @@ class DualBranchUNet3D_MobileNetV2(nn.Module):
             stride=2,
             num_post_blocks=5,
             use_channel_attention=True,
-            reduction=2,
+            reduction=8,
         )
         self.branch_t1ce3 = _build_mobile_stage(
             channels["branch2"],
@@ -363,7 +363,7 @@ class DualBranchUNet3D_MobileNetV2(nn.Module):
             stride=2,
             num_post_blocks=5,
             use_channel_attention=True,
-            reduction=2,
+            reduction=8,
         )
 
         # Stage 4 (fused, 단일 dilated 블록 with rates [1,2,5])
@@ -402,7 +402,7 @@ class DualBranchUNet3D_MobileNetV2(nn.Module):
             skip_channels=skip1,
             target_skip_channels=target_skip1,
             use_channel_attention=True,
-            reduction=2,
+            reduction=8,
             activation=activation,
         )
         self.up2 = Up3DMobileCBAM(
@@ -424,7 +424,7 @@ class DualBranchUNet3D_MobileNetV2(nn.Module):
             skip_channels=skip3,
             target_skip_channels=target_skip3,
             use_channel_attention=True,
-            reduction=2,
+            reduction=8,
             activation=activation,
         )
         self.outc = OutConv3D(final_out_channels, n_classes)
