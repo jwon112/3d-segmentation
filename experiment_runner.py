@@ -118,9 +118,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     # mode='min': validation loss가 낮을수록 좋음
     # factor=0.5: 학습률을 0.5배로 감소
     # patience=3: 3 epoch 동안 개선 없으면 감소 (nnU-Net 표준)
-    # min_lr=1e-6: 최소 학습률
     # Note: verbose 파라미터는 일부 PyTorch 버전에서 지원되지 않으므로 제거
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, min_lr=1e-6)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
     
     train_losses = []
     val_dices = []
