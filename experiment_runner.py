@@ -1146,12 +1146,16 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     pam_train_stages = {}
                     pam_inference_stages = {}
                     if is_main_process(rank):
+                        if dim == '2d':
+                            pam_input_size = (1, n_channels, *INPUT_SIZE_2D)
+                        else:
+                            pam_input_size = (1, n_channels, 128, 128, 128)
                         try:
                             pam_train_list, pam_train_stages = calculate_pam(
-                                model, input_size=input_size, mode='train', stage_wise=True, device=device
+                                model, input_size=pam_input_size, mode='train', stage_wise=True, device=device
                             )
                             pam_inference_list, pam_inference_stages = calculate_pam(
-                                model, input_size=input_size, mode='inference', stage_wise=True, device=device
+                                model, input_size=pam_input_size, mode='inference', stage_wise=True, device=device
                             )
                             if pam_train_list:
                                 pam_train_mean = sum(pam_train_list) / len(pam_train_list)
