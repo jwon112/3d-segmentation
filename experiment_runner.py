@@ -114,11 +114,12 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     # Standard loss: Dice 50% + CE 50%
     criterion = combined_loss_nnunet_style if use_nnunet_loss else combined_loss
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    # CosineAnnealingWarmRestarts: cosine 함수에 따라 학습률을 감소시키고 주기적으로 재시작
-    # T_0: 첫 번째 주기의 길이 (epoch 수)
-    # T_mult: 각 재시작 후 주기 길이의 증가 배수 (T_mult=2: 10, 20, 40, 80...)
-    # eta_min: 최소 학습률
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
+    # ReduceLROnPlateau: 검증 성능이 개선되지 않을 때 학습률 감소 (nnU-Net 스타일)
+    # mode='min': validation loss가 낮을수록 좋음
+    # factor=0.5: 학습률을 0.5배로 감소
+    # patience=3: 3 epoch 동안 개선 없으면 감소 (nnU-Net 표준)
+    # min_lr=1e-6: 최소 학습률
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=True, min_lr=1e-6)
     
     train_losses = []
     val_dices = []
@@ -296,8 +297,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         va_et = va_et_sum / max(1, n_va)
         val_dices.append(va_dice)
         
-        # Learning rate scheduling (CosineAnnealingLR은 epoch 번호만 필요)
-        scheduler.step()
+        # Learning rate scheduling (ReduceLROnPlateau는 validation metric 필요)
+        # nnU-Net 스타일: validation loss를 모니터링
+        scheduler.step(va_loss)
         
         # Best model tracking 및 체크포인트 저장 (rank 0만)
         # Test set은 최종에만 평가하므로, epoch 중에는 평가하지 않음
