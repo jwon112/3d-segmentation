@@ -153,3 +153,35 @@ def get_model_config(model_name: str) -> Dict:
         'use_4modalities': get_n_channels_for_model(model_name) == 4,
     }
 
+
+# ============================================================================
+# ROI Model Configuration
+# ============================================================================
+ROI_MODEL_CONFIGS: Dict[str, Dict] = {
+    'roi_mobileunetr3d_tiny': {
+        'img_size': (64, 64, 64),
+        'patch_size': (2, 2, 2),
+        'norm': 'bn',
+    },
+    'roi_unet3d_small': {
+        'norm': 'bn',
+    },
+}
+DEFAULT_ROI_MODEL = 'roi_mobileunetr3d_tiny'
+
+
+def get_available_roi_models() -> List[str]:
+    return list(ROI_MODEL_CONFIGS.keys())
+
+
+def validate_roi_model(model_name: Optional[str]) -> str:
+    if model_name is None:
+        return DEFAULT_ROI_MODEL
+    if model_name not in ROI_MODEL_CONFIGS:
+        raise ValueError(f"Unknown ROI model '{model_name}'. Available: {get_available_roi_models()}")
+    return model_name
+
+
+def get_roi_model_config(model_name: Optional[str]) -> Dict:
+    name = validate_roi_model(model_name)
+    return ROI_MODEL_CONFIGS[name]

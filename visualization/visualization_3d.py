@@ -503,7 +503,7 @@ if __name__ == "__main__":
     from models import UNet3D_Small, UNETR_Simplified, SwinUNETR_Simplified
     # Alias for backward compatibility
     UNet3D_Simplified = UNet3D_Small
-    from data_loader import get_data_loaders
+    from dataloaders import get_data_loaders
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     

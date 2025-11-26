@@ -83,7 +83,7 @@ with h5py.File('volume_41_slice_0.h5', 'r') as f:
 ### 사용 방법
 
 ```python
-from data_loader import get_data_loaders
+from dataloaders import get_data_loaders
 
 # 2D 데이터 사용 (슬라이스 단위)
 train_loader, val_loader, test_loader = get_data_loaders(

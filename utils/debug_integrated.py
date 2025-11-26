@@ -22,7 +22,7 @@ import torch.multiprocessing as mp
 # 프로젝트 루트를 경로에 추가
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data_loader import get_data_loaders
+from dataloaders import get_data_loaders
 from integrated_experiment import get_model, train_model
 from metrics.metrics import calculate_dice_score
 from losses.losses import combined_loss

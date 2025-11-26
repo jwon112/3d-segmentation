@@ -20,7 +20,7 @@ import argparse
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from integrated_experiment import sliding_window_inference_3d, _make_blend_weights_3d
-from data_loader import get_data_loaders
+from dataloaders import get_data_loaders
 from integrated_experiment import get_model
 import torch.nn.functional as F
 

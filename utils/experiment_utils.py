@@ -12,6 +12,7 @@ import numpy as np
 import random
 import math
 from datetime import timedelta
+from typing import Dict, Optional, Tuple
 
 # Global input size configuration
 # 2D models use 256x256 for stable down/upsampling (avoid odd sizes)
@@ -966,4 +967,34 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         f"Internal error: Model '{model_name}' passed validation but was not handled. "
         f"This should not happen. Please report this issue."
     )
+
+
+def get_roi_model(
+    model_name: str,
+    n_channels: int = 7,
+    n_classes: int = 2,
+    roi_model_cfg: Optional[Dict] = None,
+) -> torch.nn.Module:
+    """ROI 탐지 모델 생성 (Cascade 1단계용)."""
+    if not model_name:
+        raise ValueError("ROI model name cannot be empty")
+    cfg = roi_model_cfg.copy() if roi_model_cfg else {}
+    img_size = tuple(cfg.pop('img_size', (64, 64, 64)))
+    patch_size = tuple(cfg.pop('patch_size', (2, 2, 2)))
+    norm = cfg.pop('norm', 'bn')
+    model_name = model_name.lower()
+
+    if model_name.startswith('roi_mobileunetr3d'):
+        from models.mobileunetr_3d import MobileUNETR_3D
+        return MobileUNETR_3D(
+            image_size=img_size,
+            patch_size=patch_size,
+            in_channels=n_channels,
+            out_channels=n_classes,
+        )
+    if model_name == 'roi_unet3d_small':
+        from models.model_3d_unet import UNet3D_Small
+        return UNet3D_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+
+    raise ValueError(f"Unknown ROI model '{model_name}'.")
 

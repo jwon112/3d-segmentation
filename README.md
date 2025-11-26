@@ -2,6 +2,10 @@
 
 3D 뇌종양 세그멘테이션을 위한 다중 모델 비교 실험 시스템입니다.
 
+이 프로젝트는 크게 두 가지 파이프라인을 지원합니다.
+- **기본 파이프라인**: nnU-Net 스타일 패치 샘플링 + 3D 슬라이딩 윈도우 기반 세그멘테이션
+- **Cascade + CoordConv 파이프라인**: ROI 탐지 → 다중 크롭 → CoordConv(좌표맵) 포함 세그멘테이션 → 원본 공간으로 복원
+
 ## 📁 프로젝트 구조
 
 ```
@@ -45,12 +49,19 @@
 │   ├── visualization_3d.py            # 3D 시각화 (다중 모델 지원)
 │   ├── visualization_dataframe.py     # DataFrame 기반 시각화 및 차트 생성
 │   └── gradcam_3d.py                  # Grad-CAM 3D 시각화 (현재 비활성화)
+├── dataloaders/                        # 새로운 데이터 로더 패키지 (권장 진입점)
+│   ├── __init__.py                     # 공통 re-export (get_data_loaders 등)
+│   ├── brats_base.py                   # BraTS 기본 Dataset 및 split 로직
+│   ├── patch_3d.py                     # nnU-Net 스타일 3D 패치 데이터셋
+│   ├── cascade.py                      # Cascade/CoordConv용 ROI·Seg 데이터셋 및 유틸
+│   └── factory.py                      # 설정 기반 DataLoader 팩토리
 ├── baseline_results/                   # 실험 결과 저장
 ├── data/                               # 데이터셋
 ├── integrated_experiment.py            # 통합 실험 스크립트 (CLI 진입점)
 ├── experiment_runner.py                # 실험 실행 로직 (train_model, evaluate_model, run_integrated_experiment)
 ├── evaluate_experiment.py              # 체크포인트 평가 스크립트
-├── data_loader.py                      # 데이터 로더 (BraTS 데이터셋)
+├── train_roi.py                        # ROI 탐지 모델 전용 학습/평가 스크립트
+├── data_loader.py                      # 하위 호환용 래퍼 (내부적으로 dataloaders 사용, 신규 코드는 dataloaders 사용 권장)
 └── requirements.txt                    # 의존성 패키지
 ```
 
@@ -149,6 +160,50 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 integrated_experiment.py --
 torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> --master_port=29500 integrated_experiment.py --epochs 10
 ```
 
+### 4. Cascade ROI → Segmentation 파이프라인
+
+#### 1) ROI 탐지 모델 학습
+`train_roi.py`는 ROI 모델만 독립적으로 학습/평가하고, 결과를 `models/roi_model/<model_name>/seed_<seed>/` 아래에 저장합니다.
+
+```bash
+# 단일 GPU
+python train_roi.py --data_path /path/to/data --dataset_version brats2018 --epochs 40
+
+# 멀티 GPU (예: 2 GPU)
+torchrun --nproc_per_node=2 train_roi.py --data_path /path/to/data --epochs 40 --batch_size 4
+```
+
+디렉터리 구조 (예시):
+```
+models/roi_model/roi_mobileunetr3d_tiny/seed_24/
+├── config.json          # 실행 설정
+├── metrics.csv          # val/test Dice 기록
+└── weights/
+    └── best.pth         # 최고 성능 가중치
+```
+
+#### 2) Segmentation 학습 + Cascade 추론
+Segmentation 학습은 기존 `integrated_experiment.py`로 진행합니다. 추론 단계에서 ROI 가중치를 불러와 ROI→Crop→Seg→Uncrop 파이프라인으로 평가하려면 아래 옵션을 추가합니다.
+
+```bash
+python integrated_experiment.py \
+  --dim 3d \
+  --models dualbranch_18_shufflenet_v1_s \
+  --use_cascade_pipeline \
+  --roi_model_name roi_mobileunetr3d_tiny \
+  --roi_weight_path models/roi_model/roi_mobileunetr3d_tiny/seed_24/weights/best.pth \
+  --roi_resize 64 64 64 \
+  --cascade_crop_size 96 96 96
+```
+
+`--use_cascade_pipeline`이 활성화되면 기본 슬라이딩 윈도우 평가 외에 ROI 기반 Cascade 평가 결과(`cascade_dice`, `cascade_wt/tc/et`)가 추가로 로그/CSV에 기록됩니다.
+
+내부적으로는 `utils/cascade_utils.py`에 구현된 다음 로직이 사용됩니다.
+- ROI 모델: 전체 뇌를 `roi_resize` 크기로 리사이즈 + CoordConv 좌표맵을 붙여 WT binary를 예측
+- 중심 추출: connected components 기반으로 여러 WT 덩어리의 중심을 추출 (multi-focal 대응, 상위 N개만 사용)
+- 세그멘테이션: 각 중심을 기준으로 `cascade_crop_size` 크기 3D 패치를 잘라 7채널 입력(4 MRI + 3 좌표맵)으로 세그멘테이션 모델 실행
+- 병합: 각 패치의 logits를 원본 공간으로 되붙인 뒤, voxel-wise max로 병합하여 최종 전체 볼륨 mask 생성
+
 ## 📝 실행 옵션
 
 ### 주요 옵션
@@ -168,6 +223,11 @@ torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> -
 | `--num_workers` | int | `8` | DataLoader 워커 수 |
 | `--sharing_strategy` | str | `file_descriptor` | PyTorch tensor sharing 전략: `file_descriptor` 또는 `file_system` |
 | `--use_5fold` | flag | `False` | 5-fold cross-validation 사용 |
+| `--use_cascade_pipeline` | flag | `False` | Pre-trained ROI detector를 사용한 Cascade 추론 활성화 |
+| `--roi_model_name` | str | `roi_mobileunetr3d_tiny` | ROI 탐지 모델 아키텍처 이름 |
+| `--roi_weight_path` | str | `None` | 사전 학습된 ROI 가중치(.pth) 경로 (Cascade 사용 시 필수) |
+| `--roi_resize` | int×3 | `64 64 64` | ROI 입력 해상도 (D H W) |
+| `--cascade_crop_size` | int×3 | `96 96 96` | 세그멘테이션용 3D 크롭 크기 (D H W) |
 
 ### 모델 선택 옵션
 
@@ -236,6 +296,8 @@ python integrated_experiment.py --data_path "C:\Users\user\Desktop\성균관대\
 # Linux/Mac
 python integrated_experiment.py --data_path /path/to/data --epochs 10
 ```
+
+보다 자세한 경로 설정 예시는 `PATH_CONFIGURATION.md`를, 다양한 사용 예시는 `USAGE_EXAMPLES.md`를 참고하세요.
 
 ## 🔄 전처리/후처리 파이프라인
 
@@ -539,6 +601,25 @@ torch.distributed.DistStoreError: use_libuv was requested but PyTorch was built 
 - 데이터 경로 확인
 - NIfTI 파일 형식 확인
 - 파일명 패턴 확인 (t1ce, flair, seg)
+- `from dataloaders import get_data_loaders` 등 새 패키지 경로 사용 여부 확인 (`data_loader.py`는 하위 호환 래퍼)
+
+#### 데이터 로더 사용 예시
+
+새 코드에서는 `dataloaders` 패키지가 표준 진입점입니다.
+
+```python
+from dataloaders import get_data_loaders
+
+train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
+    data_dir="/path/to/data",
+    batch_size=1,
+    num_workers=4,
+    dim="3d",
+    dataset_version="brats2018",
+)
+```
+
+`data_loader.py`는 기존 코드와의 하위 호환을 위한 래퍼로만 남아 있으며, 새로운 스크립트에서는 `from dataloaders import ...` 사용을 권장합니다.
 
 ### NCCL Timeout 오류
 - NCCL timeout 증가: `export NCCL_TIMEOUT=1800`

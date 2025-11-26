@@ -23,10 +23,11 @@ def create_result_dict(
     best_val_wt: float,
     best_val_tc: float,
     best_val_et: float,
-    best_epoch: int
+    best_epoch: int,
+    cascade_metrics: Optional[Dict] = None
 ) -> Dict:
     """결과 딕셔너리 생성"""
-    return {
+    result = {
         'dataset': dataset_version,
         'seed': seed,
         'fold': fold_idx,
@@ -48,6 +49,14 @@ def create_result_dict(
         'recall': metrics['recall'],
         'best_epoch': best_epoch
     }
+    if cascade_metrics:
+        result.update({
+            'cascade_dice': cascade_metrics.get('mean'),
+            'cascade_wt': cascade_metrics.get('wt'),
+            'cascade_tc': cascade_metrics.get('tc'),
+            'cascade_et': cascade_metrics.get('et'),
+        })
+    return result
 
 
 def create_stage_pam_result(

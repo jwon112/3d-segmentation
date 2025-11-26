@@ -59,8 +59,22 @@ if __name__ == "__main__":
                        help='Use 5-fold cross-validation instead of simple train/val/test split')
     parser.add_argument('--use_mri_augmentation', action='store_true', default=False,
                        help='Apply MRI-specific data augmentations to training patches (default: False)')
+    parser.add_argument('--use_cascade_pipeline', action='store_true', default=False,
+                       help='Enable cascade ROI→Seg evaluation using a pre-trained ROI detector')
+    parser.add_argument('--roi_model_name', type=str, default='roi_mobileunetr3d_tiny',
+                       help='ROI detection model architecture name')
+    parser.add_argument('--roi_weight_path', type=str, default=None,
+                       help='Path to pre-trained ROI detector weights (.pth)')
+    parser.add_argument('--roi_resize', type=int, nargs=3, default=[64, 64, 64],
+                       help='ROI detector input size (DxHxW) (default: 64 64 64)')
+    parser.add_argument('--cascade_crop_size', type=int, nargs=3, default=[96, 96, 96],
+                       help='Segmentation crop size (DxHxW) used during cascade inference (default: 96 96 96)')
     
     args = parser.parse_args()
+    if args.use_cascade_pipeline and not args.roi_weight_path:
+        raise ValueError("--use_cascade_pipeline requires --roi_weight_path to be set.")
+    if args.use_cascade_pipeline and args.roi_weight_path and not os.path.exists(args.roi_weight_path):
+        raise FileNotFoundError(f"ROI weight file not found: {args.roi_weight_path}")
     
     # --use_standard_loss가 True이면 nnU-Net loss 비활성화
     use_nnunet_loss = args.use_nnunet_loss and not args.use_standard_loss
@@ -89,11 +103,22 @@ if __name__ == "__main__":
     except Exception as _e:
         print(f"Warning: Failed to set sharing strategy: {_e}")
 
+    cascade_cfg = None
+    if args.use_cascade_pipeline:
+        cascade_cfg = {
+            'roi_model_name': args.roi_model_name,
+            'roi_weight_path': args.roi_weight_path,
+            'roi_resize': tuple(args.roi_resize),
+            'crop_size': tuple(args.cascade_crop_size),
+            'include_coords': True,
+        }
+
     try:
         results_dir, results_df = run_integrated_experiment(
             args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim,
             args.use_pretrained, use_nnunet_loss, args.num_workers, args.dataset_version, args.use_5fold,
-            use_mri_augmentation=args.use_mri_augmentation
+            use_mri_augmentation=args.use_mri_augmentation,
+            cascade_infer_cfg=cascade_cfg if args.use_cascade_pipeline else None
         )
         
         if results_dir and results_df is not None:

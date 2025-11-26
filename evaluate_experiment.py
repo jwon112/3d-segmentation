@@ -26,7 +26,7 @@ from utils.experiment_utils import (
     INPUT_SIZE_2D, INPUT_SIZE_3D
 )
 from experiment_runner import evaluate_model
-from data_loader import get_data_loaders
+from dataloaders import get_data_loaders
 from visualization import create_comprehensive_analysis, create_interactive_3d_plot
 from utils.gradcam_utils import generate_gradcam_for_model
 

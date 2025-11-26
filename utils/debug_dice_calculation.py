@@ -185,7 +185,7 @@ def test_dice_with_real_data(data_dir=None):
     print(f"{'='*60}")
     
     # 데이터 로더 준비
-    from data_loader import get_data_loaders
+    from dataloaders import get_data_loaders
     
     if data_dir is None:
         data_dir = os.environ.get('BRATS_DATA_DIR', '/home/work/3D_/BT/BRATS2021')

@@ -17,15 +17,15 @@ from datetime import datetime
 from utils.experiment_utils import (
     setup_distributed, cleanup_distributed, is_main_process,
     set_seed, sliding_window_inference_3d, calculate_flops, calculate_pam, calculate_inference_latency, get_model,
-    INPUT_SIZE_2D, INPUT_SIZE_3D
+    INPUT_SIZE_2D, INPUT_SIZE_3D, get_roi_model
 )
 
 # Import losses and metrics
 from losses import combined_loss, combined_loss_nnunet_style
-from metrics import calculate_wt_tc_et_dice, calculate_wt_tc_et_hd95
+from metrics import calculate_wt_tc_et_dice, calculate_wt_tc_et_hd95, calculate_dice_score
 
 # Import data loader and visualization
-from data_loader import get_data_loaders
+from dataloaders import get_data_loaders, get_brats_base_datasets
 from visualization import create_comprehensive_analysis, create_interactive_3d_plot
 from models.modules.se_modules import SEBlock3D
 from models.modules.cbam_modules import CBAM3D, ChannelAttention3D
@@ -33,11 +33,16 @@ from models.modules.cbam_modules import CBAM3D, ChannelAttention3D
 # Import Grad-CAM utilities
 from utils.gradcam_utils import generate_gradcam_for_model
 
+# Cascade utilities
+from utils.cascade_utils import run_cascade_inference
+
 # Import experiment configuration
 from utils.experiment_config import (
     validate_and_filter_models,
     get_n_channels_for_model,
-    get_model_config
+    get_model_config,
+    get_roi_model_config,
+    validate_roi_model,
 )
 
 # Import result utilities
@@ -47,6 +52,176 @@ from utils.result_utils import (
     create_epoch_result_dict,
     save_results_to_csv
 )
+
+
+def train_roi_model(model, train_loader, val_loader, epochs, device, lr=1e-3,
+                    criterion=None, ckpt_path=None, results_dir=None, model_name='roi_model',
+                    train_sampler=None, rank: int = 0):
+    """Train ROI detector on resized volumes (binary WT segmentation)."""
+    if criterion is None:
+        criterion = combined_loss_nnunet_style
+    model = model.to(device)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
+    best_val_dice = 0.0
+    best_epoch = 0
+    os.makedirs(results_dir or "baseline_results", exist_ok=True)
+    disable_progress = not is_main_process(rank)
+
+    for epoch in range(epochs):
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)
+        model.train()
+        train_loss = 0.0
+        n_samples = 0
+        for inputs, labels in tqdm(
+            train_loader,
+            desc=f"[ROI] Train {epoch+1}/{epochs}",
+            leave=False,
+            disable=disable_progress,
+        ):
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+            bsz = inputs.size(0)
+            optimizer.zero_grad()
+            logits = model(inputs)
+            loss = criterion(logits, labels)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item() * bsz
+            n_samples += bsz
+        train_loss /= max(1, n_samples)
+
+        # Validation
+        model.eval()
+        val_loss = 0.0
+        val_samples = 0
+        val_dices = []
+        with torch.no_grad():
+            for inputs, labels in tqdm(
+                val_loader,
+                desc=f"[ROI] Val {epoch+1}/{epochs}",
+                leave=False,
+                disable=disable_progress,
+            ):
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+                bsz = inputs.size(0)
+                logits = model(inputs)
+                loss = criterion(logits, labels)
+                val_loss += loss.item() * bsz
+                val_samples += bsz
+                dice_scores = calculate_dice_score(logits.detach().cpu(), labels.detach().cpu(), num_classes=2)
+                if dice_scores.numel() >= 2:
+                    val_dices.append(dice_scores[1].item())
+        val_loss /= max(1, val_samples)
+        val_dice = float(np.mean(val_dices)) if val_dices else 0.0
+        scheduler.step(val_loss)
+
+        if val_dice > best_val_dice:
+            best_val_dice = val_dice
+            best_epoch = epoch + 1
+            if ckpt_path and is_main_process(rank):
+                torch.save(model.state_dict(), ckpt_path)
+        if is_main_process(rank):
+            print(f"[ROI][Epoch {epoch+1}] train_loss={train_loss:.4f} val_loss={val_loss:.4f} val_dice={val_dice:.4f}")
+
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+    if ckpt_path and os.path.exists(ckpt_path):
+        model.load_state_dict(torch.load(ckpt_path, map_location=device))
+    return {
+        'best_val_dice': best_val_dice,
+        'best_epoch': best_epoch,
+    }
+
+
+def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
+                              roi_resize=(64, 64, 64), crop_size=(96, 96, 96), include_coords=True):
+    """Run cascade inference on base dataset and compute WT/TC/ET dice."""
+    roi_model.eval()
+    seg_model.eval()
+    dice_rows = []
+    for idx in range(len(base_dataset)):
+        image, target = base_dataset[idx]
+        image = image.to(device)
+        target = target.to(device)
+        result = run_cascade_inference(
+            roi_model=roi_model,
+            seg_model=seg_model,
+            image=image,
+            device=device,
+            roi_resize=roi_resize,
+            crop_size=crop_size,
+            include_coords=include_coords,
+        )
+        full_logits = result['full_logits'].unsqueeze(0).to(device)
+        target_batch = target.unsqueeze(0)
+        dice = calculate_wt_tc_et_dice(full_logits, target_batch).detach().cpu()
+        dice_rows.append(dice)
+    if not dice_rows:
+        return {'wt': 0.0, 'tc': 0.0, 'et': 0.0, 'mean': 0.0}
+    dice_tensor = torch.stack(dice_rows, dim=0)
+    mean_scores = dice_tensor.mean(dim=0)
+    return {
+        'wt': float(mean_scores[0].item()),
+        'tc': float(mean_scores[1].item()),
+        'et': float(mean_scores[2].item()),
+        'mean': float(mean_scores.mean().item())
+    }
+
+
+def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_coords=True):
+    """Load ROI model weights for inference."""
+    cfg = get_roi_model_config(roi_model_name)
+    model = get_roi_model(
+        roi_model_name,
+        n_channels=7 if include_coords else 4,
+        n_classes=2,
+        roi_model_cfg=cfg,
+    )
+    state = torch.load(weight_path, map_location=device)
+    model.load_state_dict(state)
+    model = model.to(device)
+    model.eval()
+    return model
+
+
+def evaluate_segmentation_with_roi(
+    seg_model,
+    roi_model,
+    data_dir,
+    dataset_version,
+    seed,
+    roi_resize=(64, 64, 64),
+    crop_size=(96, 96, 96),
+    include_coords=True,
+    use_5fold=False,
+    fold_idx=None,
+    max_samples=None,
+):
+    """Evaluate trained segmentation model with pre-trained ROI detector."""
+    _, _, test_base = get_brats_base_datasets(
+        data_dir=data_dir,
+        dataset_version=dataset_version,
+        max_samples=max_samples,
+        seed=seed,
+        use_5fold=use_5fold,
+        fold_idx=fold_idx,
+        use_4modalities=True,
+    )
+    seg_model.eval()
+    roi_model.eval()
+    return evaluate_cascade_pipeline(
+        roi_model=roi_model,
+        seg_model=seg_model,
+        base_dataset=test_base,
+        device=next(seg_model.parameters()).device,
+        roi_resize=roi_resize,
+        crop_size=crop_size,
+        include_coords=include_coords,
+    )
 
 
 def _extract_hybrid_stats(model):
@@ -970,7 +1145,7 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     }
 
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, cascade_infer_cfg=None):
     """3D Segmentation 통합 실험 실행
     
     Args:
@@ -1290,8 +1465,52 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                     print(f"Warning: Failed to recalculate PAM after deploy: {e}")
 
                     # Test set 평가 (모든 랭크 동일 경로)
-                    metrics = evaluate_model(model, test_loader, device, model_name, distributed=distributed, world_size=world_size,
-                                              sw_patch_size=(128, 128, 128), sw_overlap=0.10, results_dir=results_dir)
+                    metrics = evaluate_model(
+                        model,
+                        test_loader,
+                        device,
+                        model_name,
+                        distributed=distributed,
+                        world_size=world_size,
+                        sw_patch_size=(128, 128, 128),
+                        sw_overlap=0.10,
+                        results_dir=results_dir,
+                    )
+
+                    cascade_metrics = None
+                    if (
+                        cascade_infer_cfg
+                        and dim == '3d'
+                        and is_main_process(rank)
+                        and cascade_infer_cfg.get('roi_weight_path')
+                    ):
+                        try:
+                            roi_model = load_roi_model_from_checkpoint(
+                                cascade_infer_cfg['roi_model_name'],
+                                cascade_infer_cfg['roi_weight_path'],
+                                device=device,
+                                include_coords=cascade_infer_cfg.get('include_coords', True),
+                            )
+                            real_model = model.module if hasattr(model, 'module') else model
+                            cascade_metrics = evaluate_segmentation_with_roi(
+                                seg_model=real_model,
+                                roi_model=roi_model,
+                                data_dir=data_path,
+                                dataset_version=dataset_version,
+                                seed=seed,
+                                roi_resize=cascade_infer_cfg.get('roi_resize', (64, 64, 64)),
+                                crop_size=cascade_infer_cfg.get('crop_size', (96, 96, 96)),
+                                include_coords=cascade_infer_cfg.get('include_coords', True),
+                                use_5fold=use_5fold,
+                                fold_idx=fold_idx if use_5fold else None,
+                            )
+                            print(
+                                f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
+                                f"(WT {cascade_metrics['wt']:.4f} | TC {cascade_metrics['tc']:.4f} | ET {cascade_metrics['et']:.4f})"
+                            )
+                        except Exception as e:
+                            print(f"Warning: Cascade evaluation failed: {e}")
+                            cascade_metrics = None
                     
                     # Grad-CAM 생성 (rank 0에서만, 3D 모델만)
                     # TODO: Grad-CAM 기능은 아직 안정화되지 않아 주석 처리됨
@@ -1335,7 +1554,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             best_val_wt=best_val_wt,
                             best_val_tc=best_val_tc,
                             best_val_et=best_val_et,
-                            best_epoch=best_epoch
+                            best_epoch=best_epoch,
+                            cascade_metrics=cascade_metrics
                         )
                         all_results.append(result)
                         
