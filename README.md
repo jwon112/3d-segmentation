@@ -166,6 +166,7 @@ torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> -
 `train_roi.py`는 ROI 모델만 독립적으로 학습/평가하고, 결과를 `models/weights/cascade/roi_model/<model_name>/seed_<seed>/` 아래에 저장합니다.
 ROI 전용 아키텍처 코드는 `models/architecture/cascade/roi_model/`에 정리되어 있으며,
 `roi_mobileunetr3d_*`, `roi_unet3d_*` 계열 모델을 선택적으로 사용할 수 있습니다.
+`--use_mri_augmentation` 플래그를 켜면 ROI 리사이즈 볼륨에도 patch 데이터셋과 동일한 강도/플립 증강이 적용됩니다.
 
 ```bash
 # 단일 GPU

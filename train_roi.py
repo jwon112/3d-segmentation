@@ -56,6 +56,8 @@ def parse_args():
                         help='Do not append CoordConv channels (use pure MRI channels)')
     parser.add_argument('--sharing_strategy', type=str, default='file_descriptor', choices=['file_system', 'file_descriptor'],
                         help='PyTorch sharing strategy for dataloaders')
+    parser.add_argument('--use_mri_augmentation', action='store_true', default=False,
+                        help='Apply MRI-style intensity augmentations to ROI crops')
     return parser.parse_args()
 
 
@@ -122,6 +124,7 @@ def main():
             distributed=distributed,
             world_size=world_size,
             rank=rank,
+            use_mri_augmentation=args.use_mri_augmentation,
         )
 
         roi_model_cfg = get_roi_model_config(args.roi_model_name)

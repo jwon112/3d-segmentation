@@ -142,13 +142,39 @@ def compute_tumor_center(mask: torch.Tensor) -> Tuple[float, float, float]:
 class BratsCascadeROIDataset(Dataset):
     """Resize full volume + append coord maps (for ROI detection)."""
 
-    def __init__(self, base_dataset: Dataset, target_size: Sequence[int] = (64, 64, 64), include_coords: bool = True):
+    def __init__(
+        self,
+        base_dataset: Dataset,
+        target_size: Sequence[int] = (64, 64, 64),
+        include_coords: bool = True,
+        augment: bool = False,
+    ):
         self.base_dataset = base_dataset
         self.target_size = _to_3tuple(target_size)
         self.include_coords = include_coords
+        self.augment = augment
 
     def __len__(self):
         return len(self.base_dataset)
+
+    def _maybe_augment(self, img_vol: torch.Tensor, mask_vol: torch.Tensor):
+        if not self.augment:
+            return img_vol, mask_vol
+        if torch.rand(1).item() < 0.5:
+            img_vol = torch.flip(img_vol, dims=(2,))
+            mask_vol = torch.flip(mask_vol, dims=(1,))
+        if torch.rand(1).item() < 0.5:
+            scale = 1.0 + 0.1 * torch.randn(1).item()
+            shift = 0.05 * torch.randn(1).item()
+            img_vol = img_vol * scale + shift
+        if torch.rand(1).item() < 0.3:
+            gamma = 0.7 + 0.6 * torch.rand(1).item()
+            sign = torch.sign(img_vol)
+            img_vol = sign * (torch.abs(img_vol) ** gamma)
+        if torch.rand(1).item() < 0.3:
+            noise = torch.randn_like(img_vol) * 0.03
+            img_vol = img_vol + noise
+        return img_vol, mask_vol
 
     def __getitem__(self, idx):
         image, mask = self.base_dataset[idx]
@@ -160,6 +186,7 @@ class BratsCascadeROIDataset(Dataset):
         resized_image = resize_volume(roi_input, self.target_size, mode='trilinear')
         wt_mask = (mask > 0).float().unsqueeze(0)
         resized_mask = resize_volume(wt_mask, self.target_size, mode='nearest').squeeze(0).long()
+        resized_image, resized_mask = self._maybe_augment(resized_image, resized_mask)
         return resized_image, resized_mask
 
 
@@ -258,7 +285,12 @@ def get_cascade_data_loaders(
         use_4modalities=True,
     )
 
-    roi_train_ds = BratsCascadeROIDataset(train_base, target_size=roi_resize, include_coords=include_coords)
+    roi_train_ds = BratsCascadeROIDataset(
+        train_base,
+        target_size=roi_resize,
+        include_coords=include_coords,
+        augment=use_mri_augmentation,
+    )
     roi_val_ds = BratsCascadeROIDataset(val_base, target_size=roi_resize, include_coords=include_coords)
     roi_test_ds = BratsCascadeROIDataset(test_base, target_size=roi_resize, include_coords=include_coords)
 
@@ -363,6 +395,7 @@ def get_roi_data_loaders(
     distributed: bool = False,
     world_size: Optional[int] = None,
     rank: Optional[int] = None,
+    use_mri_augmentation: bool = False,
 ):
     """ROI-only dataloaders for training/evaluation."""
     train_base, val_base, test_base = get_brats_base_datasets(
@@ -375,7 +408,12 @@ def get_roi_data_loaders(
         use_4modalities=True,
     )
 
-    train_ds = BratsCascadeROIDataset(train_base, target_size=roi_resize, include_coords=include_coords)
+    train_ds = BratsCascadeROIDataset(
+        train_base,
+        target_size=roi_resize,
+        include_coords=include_coords,
+        augment=use_mri_augmentation,
+    )
     val_ds = BratsCascadeROIDataset(val_base, target_size=roi_resize, include_coords=include_coords)
     test_ds = BratsCascadeROIDataset(test_base, target_size=roi_resize, include_coords=include_coords)
 
