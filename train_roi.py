@@ -3,7 +3,7 @@
 ROI Detector Training Script
 
 학습 완료 후 모델 아티팩트를 다음 구조로 저장합니다.
-models/roi_model/<model_name>/seed_<seed>/
+models/weights/cascade/roi_model/<model_name>/seed_<seed>/
     ├─ weights/best.pth
     ├─ metrics.csv (seed별 성능 누적)
     └─ config.json (선택적으로 마지막 실행 설정 기록)
@@ -35,7 +35,7 @@ def parse_args():
                         help='Dataset root directory')
     parser.add_argument('--dataset_version', type=str, default='brats2018', choices=['brats2021', 'brats2018'],
                         help='Dataset version')
-    parser.add_argument('--output_dir', type=str, default='models/roi_model',
+    parser.add_argument('--output_dir', type=str, default='models/weights/cascade/roi_model',
                         help='Directory to store ROI artifacts')
     parser.add_argument('--roi_model_name', type=str, default='roi_mobileunetr3d_tiny',
                         help='ROI detector architecture name')

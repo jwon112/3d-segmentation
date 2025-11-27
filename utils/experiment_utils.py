@@ -14,6 +14,11 @@ import math
 from datetime import timedelta
 from typing import Dict, Optional, Tuple
 
+from models.architecture.cascade.roi_model import (
+    build_roi_mobileunetr3d,
+    build_roi_unet3d_small,
+)
+
 # Global input size configuration
 # 2D models use 256x256 for stable down/upsampling (avoid odd sizes)
 INPUT_SIZE_2D = (256, 256)
@@ -985,16 +990,24 @@ def get_roi_model(
     model_name = model_name.lower()
 
     if model_name.startswith('roi_mobileunetr3d'):
-        from models.mobileunetr_3d import MobileUNETR_3D
-        return MobileUNETR_3D(
-            image_size=img_size,
+        return build_roi_mobileunetr3d(
+            img_size=img_size,
             patch_size=patch_size,
             in_channels=n_channels,
             out_channels=n_classes,
         )
     if model_name == 'roi_unet3d_small':
-        from models.model_3d_unet import UNet3D_Small
-        return UNet3D_Small(n_channels=n_channels, n_classes=n_classes, norm=norm)
+        base_channels = cfg.pop('base_channels', 16)
+        depth = cfg.pop('depth', 4)
+        bilinear = cfg.pop('bilinear', True)
+        return build_roi_unet3d_small(
+            in_channels=n_channels,
+            out_channels=n_classes,
+            norm=norm,
+            base_channels=base_channels,
+            depth=depth,
+            bilinear=bilinear,
+        )
 
     raise ValueError(f"Unknown ROI model '{model_name}'.")
 

@@ -163,7 +163,9 @@ torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> -
 ### 4. Cascade ROI → Segmentation 파이프라인
 
 #### 1) ROI 탐지 모델 학습
-`train_roi.py`는 ROI 모델만 독립적으로 학습/평가하고, 결과를 `models/roi_model/<model_name>/seed_<seed>/` 아래에 저장합니다.
+`train_roi.py`는 ROI 모델만 독립적으로 학습/평가하고, 결과를 `models/weights/cascade/roi_model/<model_name>/seed_<seed>/` 아래에 저장합니다.
+ROI 전용 아키텍처 코드는 `models/architecture/cascade/roi_model/`에 정리되어 있으며,
+`roi_mobileunetr3d_*`, `roi_unet3d_*` 계열 모델을 선택적으로 사용할 수 있습니다.
 
 ```bash
 # 단일 GPU
@@ -175,7 +177,7 @@ torchrun --nproc_per_node=2 train_roi.py --data_path /path/to/data --epochs 40 -
 
 디렉터리 구조 (예시):
 ```
-models/roi_model/roi_mobileunetr3d_tiny/seed_24/
+models/weights/cascade/roi_model/roi_mobileunetr3d_tiny/seed_24/
 ├── config.json          # 실행 설정
 ├── metrics.csv          # val/test Dice 기록
 └── weights/
@@ -191,7 +193,7 @@ python integrated_experiment.py \
   --models dualbranch_18_shufflenet_v1_s \
   --use_cascade_pipeline \
   --roi_model_name roi_mobileunetr3d_tiny \
-  --roi_weight_path models/roi_model/roi_mobileunetr3d_tiny/seed_24/weights/best.pth \
+  --roi_weight_path models/weights/cascade/roi_model/roi_mobileunetr3d_tiny/seed_24/weights/best.pth \
   --roi_resize 64 64 64 \
   --cascade_crop_size 96 96 96
 ```
