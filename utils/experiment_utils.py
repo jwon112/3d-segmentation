@@ -154,6 +154,12 @@ def sliding_window_inference_3d(model, volume, patch_size=(128, 128, 128), overl
 def calculate_flops(model, input_size=(1, 4, 64, 64, 64)):
     """모델의 FLOPs 계산"""
     try:
+        import warnings
+        import logging
+        # thop의 trilinear 경고 억제
+        warnings.filterwarnings('ignore', message='.*mode trilinear.*')
+        logging.getLogger('root').setLevel(logging.ERROR)
+        
         from thop import profile
         # unwrap DDP if needed
         real_model = model.module if hasattr(model, 'module') else model

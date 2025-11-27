@@ -173,15 +173,46 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
 
 
 def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_coords=True):
-    """Load ROI model weights for inference."""
+    """Load ROI model weights for inference.
+    
+    Automatically detects the number of input channels from checkpoint and adjusts include_coords accordingly.
+    """
     cfg = get_roi_model_config(roi_model_name)
+    
+    # Load checkpoint first to detect input channels
+    state = torch.load(weight_path, map_location=device)
+    
+    # Detect input channels from checkpoint
+    # Try common first layer names for ROI models
+    detected_channels = None
+    for key in state.keys():
+        if 'weight' in key and ('enc_blocks.0.net.0' in key or 'patch_embed' in key or 'conv' in key):
+            if 'enc_blocks.0.net.0.weight' in key:
+                # ROICascadeUNet3D: enc_blocks.0.net.0.weight shape is [out_channels, in_channels, ...]
+                detected_channels = state[key].shape[1]
+                break
+            elif 'patch_embed' in key and 'weight' in key:
+                # MobileUNETR_3D: patch_embed.proj.weight shape is [out_channels, in_channels, ...]
+                detected_channels = state[key].shape[1]
+                break
+    
+    # Auto-detect include_coords based on detected channels
+    if detected_channels is not None:
+        if detected_channels == 4:
+            include_coords = False
+            print(f"Detected 4-channel ROI model (no CoordConv). Using include_coords=False")
+        elif detected_channels == 7:
+            include_coords = True
+            print(f"Detected 7-channel ROI model (with CoordConv). Using include_coords=True")
+        else:
+            print(f"Warning: Unexpected input channels {detected_channels} in checkpoint. Using provided include_coords={include_coords}")
+    
     model = get_roi_model(
         roi_model_name,
         n_channels=7 if include_coords else 4,
         n_classes=2,
         roi_model_cfg=cfg,
     )
-    state = torch.load(weight_path, map_location=device)
     model.load_state_dict(state)
     model = model.to(device)
     model.eval()
