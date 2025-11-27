@@ -1,14 +1,89 @@
 """
 Light-weight ROI-specific 3D U-Net architectures.
 
-기존 세그멘테이션 모델과 채널 구성이 다르기 때문에
-Cascade 1단계(ROI 탐지)에 최적화된 전용 모델을 정의한다.
+기존 세그멘테이션 모델과 분리된 독립 구조로,
+Cascade 1단계(ROI 탐지)에 최적화된 네트워크를 정의한다.
 """
+
+from typing import Sequence
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-from models.model_3d_unet import DoubleConv3D, Down3D, Up3D, OutConv3D
+
+def _make_norm3d(norm: str, num_features: int) -> nn.Module:
+    norm = (norm or "bn").lower()
+    if norm in ("in", "instancenorm", "instance"):
+        return nn.InstanceNorm3d(num_features, affine=True, track_running_stats=False)
+    if norm in ("gn", "groupnorm", "group"):
+        num_groups = 8 if num_features % 8 == 0 else (4 if num_features % 4 == 0 else 1)
+        return nn.GroupNorm(num_groups=num_groups, num_channels=num_features)
+    return nn.BatchNorm3d(num_features)
+
+
+class _DoubleConv(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, norm: str = "bn"):
+        super().__init__()
+        mid_channels = max(out_channels, in_channels)
+        self.net = nn.Sequential(
+            nn.Conv3d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
+            _make_norm3d(norm, mid_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            _make_norm3d(norm, out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
+class _Down(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, norm: str = "bn"):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.MaxPool3d(2),
+            _DoubleConv(in_channels, out_channels, norm=norm),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
+class _Up(nn.Module):
+    def __init__(self, in_channels: int, skip_channels: int, out_channels: int, norm: str = "bn"):
+        super().__init__()
+        self.up = nn.Upsample(scale_factor=2, mode="trilinear", align_corners=True)
+        self.conv = _DoubleConv(in_channels + skip_channels, out_channels, norm=norm)
+
+    def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
+        x = self.up(x)
+        diffZ = skip.size(2) - x.size(2)
+        diffY = skip.size(3) - x.size(3)
+        diffX = skip.size(4) - x.size(4)
+        x = F.pad(
+            x,
+            [
+                diffX // 2,
+                diffX - diffX // 2,
+                diffY // 2,
+                diffY - diffY // 2,
+                diffZ // 2,
+                diffZ - diffZ // 2,
+            ],
+        )
+        x = torch.cat([skip, x], dim=1)
+        return self.conv(x)
+
+
+class _OutConv(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+        self.conv = nn.Conv3d(in_channels, out_channels, kernel_size=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.conv(x)
 
 
 class ROICascadeUNet3D(nn.Module):
@@ -27,46 +102,37 @@ class ROICascadeUNet3D(nn.Module):
         base_channels: int = 16,
         depth: int = 4,
         norm: str = "bn",
-        bilinear: bool = True,
     ):
         super().__init__()
         if depth < 2:
             raise ValueError("depth must be >= 2 for UNet encoder/decoder symmetry.")
+
         enc_channels = [base_channels * (2 ** i) for i in range(depth)]
 
         self.enc_blocks = nn.ModuleList()
         self.down_blocks = nn.ModuleList()
 
-        self.enc_blocks.append(DoubleConv3D(in_channels, enc_channels[0], norm=norm))
+        self.enc_blocks.append(_DoubleConv(in_channels, enc_channels[0], norm=norm))
         for idx in range(1, depth):
-            self.down_blocks.append(Down3D(enc_channels[idx - 1], enc_channels[idx], norm=norm))
+            self.down_blocks.append(_Down(enc_channels[idx - 1], enc_channels[idx], norm=norm))
 
-        factor = 2 if bilinear else 1
         bottleneck_channels = enc_channels[-1] * 2
-        self.bottleneck = DoubleConv3D(enc_channels[-1], bottleneck_channels // factor, norm=norm)
+        self.bottleneck = _DoubleConv(enc_channels[-1], bottleneck_channels, norm=norm)
 
         self.up_blocks = nn.ModuleList()
         decoder_in = bottleneck_channels
         for ch in reversed(enc_channels):
-            self.up_blocks.append(
-                Up3D(
-                    decoder_in,
-                    ch // factor,
-                    bilinear=bilinear,
-                    norm=norm,
-                    skip_channels=ch,
-                )
-            )
+            self.up_blocks.append(_Up(decoder_in, ch, ch, norm=norm))
             decoder_in = ch
 
-        self.out_conv = OutConv3D(enc_channels[0] // factor, out_channels)
+        self.out_conv = _OutConv(decoder_in, out_channels)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         skips = []
         h = self.enc_blocks[0](x)
         skips.append(h)
         for down in self.down_blocks:
-            h = down(h)
+            h = down(skips[-1])
             skips.append(h)
 
         h = self.bottleneck(skips[-1])
