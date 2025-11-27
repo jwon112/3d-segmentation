@@ -24,7 +24,8 @@ def create_result_dict(
     best_val_tc: float,
     best_val_et: float,
     best_epoch: int,
-    cascade_metrics: Optional[Dict] = None
+    cascade_metrics: Optional[Dict] = None,
+    roi_model_name: Optional[str] = None
 ) -> Dict:
     """결과 딕셔너리 생성"""
     result = {
@@ -56,6 +57,8 @@ def create_result_dict(
             'cascade_tc': cascade_metrics.get('tc'),
             'cascade_et': cascade_metrics.get('et'),
         })
+    if roi_model_name:
+        result['roi_model_name'] = roi_model_name
     return result
 
 

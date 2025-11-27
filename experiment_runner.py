@@ -1145,7 +1145,7 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     }
 
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, cascade_infer_cfg=None):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, cascade_infer_cfg=None, cascade_model_cfg=None):
     """3D Segmentation 통합 실험 실행
     
     Args:
@@ -1237,6 +1237,13 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     # 모델별 결정성 보장: 모델 초기화/샘플링 RNG 고정
                     set_seed(seed)
                     
+                    # Cascade 모델인 경우 ROI 모델 정보 확인
+                    roi_model_name_for_result = None
+                    if model_name.startswith('cascade_') and cascade_model_cfg:
+                        roi_model_name_for_result = cascade_model_cfg.get('roi_model_name')
+                        if is_main_process(rank):
+                            print(f"Cascade model detected. ROI model: {roi_model_name_for_result}")
+                    
                     # 모델에 따라 use_4modalities 및 n_channels 결정
                     model_config = get_model_config(model_name)
                     n_channels = model_config['n_channels']
@@ -1258,7 +1265,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             use_4modalities=use_4modalities,  # 모델에 따라 설정
                             use_5fold=use_5fold,  # 5-fold CV 사용 여부
                             fold_idx=fold_idx,  # fold 인덱스 (None이면 일반 분할)
-                            use_mri_augmentation=use_mri_augmentation
+                            use_mri_augmentation=use_mri_augmentation,
+                            model_name=model_name,  # Cascade 모델 감지를 위해 전달
                         )
                     except Exception as e:
                         if is_main_process(rank):
@@ -1478,39 +1486,72 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     )
 
                     cascade_metrics = None
-                    if (
-                        cascade_infer_cfg
-                        and dim == '3d'
+                    # Cascade 평가: --use_cascade_pipeline 또는 cascade 모델인 경우
+                    should_run_cascade = (
+                        dim == '3d'
                         and is_main_process(rank)
-                        and cascade_infer_cfg.get('roi_weight_path')
-                    ):
-                        try:
-                            roi_model = load_roi_model_from_checkpoint(
-                                cascade_infer_cfg['roi_model_name'],
-                                cascade_infer_cfg['roi_weight_path'],
-                                device=device,
-                                include_coords=cascade_infer_cfg.get('include_coords', True),
-                            )
-                            real_model = model.module if hasattr(model, 'module') else model
-                            cascade_metrics = evaluate_segmentation_with_roi(
-                                seg_model=real_model,
-                                roi_model=roi_model,
-                                data_dir=data_path,
-                                dataset_version=dataset_version,
-                                seed=seed,
-                                roi_resize=cascade_infer_cfg.get('roi_resize', (64, 64, 64)),
-                                crop_size=cascade_infer_cfg.get('crop_size', (96, 96, 96)),
-                                include_coords=cascade_infer_cfg.get('include_coords', True),
-                                use_5fold=use_5fold,
-                                fold_idx=fold_idx if use_5fold else None,
-                            )
-                            print(
-                                f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
-                                f"(WT {cascade_metrics['wt']:.4f} | TC {cascade_metrics['tc']:.4f} | ET {cascade_metrics['et']:.4f})"
-                            )
-                        except Exception as e:
-                            print(f"Warning: Cascade evaluation failed: {e}")
-                            cascade_metrics = None
+                        and (
+                            (cascade_infer_cfg and cascade_infer_cfg.get('roi_weight_path'))
+                            or (model_name.startswith('cascade_') and cascade_model_cfg)
+                        )
+                    )
+                    
+                    if should_run_cascade:
+                        # ROI weight 경로 결정
+                        roi_weight_path = None
+                        roi_model_name_for_infer = None
+                        roi_resize = (64, 64, 64)
+                        crop_size = (96, 96, 96)
+                        
+                        if cascade_infer_cfg and cascade_infer_cfg.get('roi_weight_path'):
+                            # 명시적으로 지정된 경우 (--use_cascade_pipeline)
+                            roi_weight_path = cascade_infer_cfg['roi_weight_path']
+                            roi_model_name_for_infer = cascade_infer_cfg['roi_model_name']
+                            roi_resize = cascade_infer_cfg.get('roi_resize', roi_resize)
+                            crop_size = cascade_infer_cfg.get('crop_size', crop_size)
+                        elif model_name.startswith('cascade_') and cascade_model_cfg:
+                            # Cascade 모델인 경우 자동으로 경로 생성
+                            roi_model_name_for_infer = cascade_model_cfg['roi_model_name']
+                            default_path = f"models/weights/cascade/roi_model/{roi_model_name_for_infer}/seed_{seed}/weights/best.pth"
+                            if os.path.exists(default_path):
+                                roi_weight_path = default_path
+                                print(f"Using default ROI weight path for cascade model: {roi_weight_path}")
+                            else:
+                                print(f"Warning: Default ROI weight path not found: {default_path}. Skipping cascade evaluation.")
+                                roi_weight_path = None
+                            roi_resize = cascade_model_cfg.get('roi_resize', roi_resize)
+                            crop_size = cascade_model_cfg.get('crop_size', crop_size)
+                        
+                        if roi_weight_path and os.path.exists(roi_weight_path):
+                            try:
+                                roi_model = load_roi_model_from_checkpoint(
+                                    roi_model_name_for_infer,
+                                    roi_weight_path,
+                                    device=device,
+                                    include_coords=True,
+                                )
+                                real_model = model.module if hasattr(model, 'module') else model
+                                cascade_metrics = evaluate_segmentation_with_roi(
+                                    seg_model=real_model,
+                                    roi_model=roi_model,
+                                    data_dir=data_path,
+                                    dataset_version=dataset_version,
+                                    seed=seed,
+                                    roi_resize=roi_resize,
+                                    crop_size=crop_size,
+                                    include_coords=True,
+                                    use_5fold=use_5fold,
+                                    fold_idx=fold_idx if use_5fold else None,
+                                )
+                                print(
+                                    f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
+                                    f"(WT {cascade_metrics['wt']:.4f} | TC {cascade_metrics['tc']:.4f} | ET {cascade_metrics['et']:.4f})"
+                                )
+                            except Exception as e:
+                                print(f"Warning: Cascade evaluation failed: {e}")
+                                import traceback
+                                traceback.print_exc()
+                                cascade_metrics = None
                     
                     # Grad-CAM 생성 (rank 0에서만, 3D 모델만)
                     # TODO: Grad-CAM 기능은 아직 안정화되지 않아 주석 처리됨
@@ -1555,7 +1596,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             best_val_tc=best_val_tc,
                             best_val_et=best_val_et,
                             best_epoch=best_epoch,
-                            cascade_metrics=cascade_metrics
+                            cascade_metrics=cascade_metrics,
+                            roi_model_name=roi_model_name_for_result
                         )
                         all_results.append(result)
                         

@@ -538,6 +538,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         'dualbranch_17_shufflenet_pamlite_v3_', 'dualbranch_18_shufflenet_v1_',
         'dualbranch_18_shufflenet_v1_stage3fused_',
         'dualbranch_19_shufflenet_v2_stage3fused_',
+        'cascade_shufflenet_v2_',
         'quadbranch_unet_', 'quadbranch_channel_centralized_concat_',
         'quadbranch_channel_distributed_concat_', 'quadbranch_channel_distributed_conv_',
         'quadbranch_spatial_centralized_concat_', 'quadbranch_spatial_distributed_concat_',
@@ -966,6 +967,28 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         base_name, size = parse_model_size(model_name)
         from models.quadbranch_unet_attention import QuadBranchUNet3D_Spatial_Distributed_Conv
         return QuadBranchUNet3D_Spatial_Distributed_Conv(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
+    elif model_name.startswith('cascade_shufflenet_v2_'):
+        # Cascade ShuffleNet V2 UNet (single branch, for cascade segmentation)
+        # Input: 7 channels (4 MRI + 3 CoordConv)
+        # Support xs, s, m, l sizes
+        try:
+            base_name, size = parse_model_size(model_name)
+        except Exception as e:
+            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
+        
+        def _create_cascade_shufflenet_v2():
+            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_unet3d
+            # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
+            # include_coords는 기본적으로 True (CoordConv 사용)
+            return build_cascade_shufflenet_v2_unet3d(
+                n_image_channels=4,
+                n_coord_channels=3,
+                n_classes=n_classes,
+                norm=norm,
+                size=size,
+                include_coords=True,
+            )
+        return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2)
     # 이 코드는 실행되지 않아야 함 (검증 단계에서 이미 처리됨)
     # 하지만 방어적 프로그래밍을 위해 남겨둠
     raise RuntimeError(

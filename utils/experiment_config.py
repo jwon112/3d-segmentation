@@ -44,6 +44,7 @@ SIZE_SUFFIX_MODELS = {
     'quadbranch_spatial_centralized_concat_': ['xs', 's', 'm', 'l'],
     'quadbranch_spatial_distributed_concat_': ['xs', 's', 'm', 'l'],
     'quadbranch_spatial_distributed_conv_': ['xs', 's', 'm', 'l'],
+    'cascade_shufflenet_v2_': ['xs', 's', 'm', 'l'],
 }
 
 # Size suffix를 지원하는 dualbranch_14 backbone들
@@ -140,8 +141,12 @@ def validate_and_filter_models(models: Optional[List[str]]) -> List[str]:
 
 
 def get_n_channels_for_model(model_name: str) -> int:
-    """모델 이름에 따라 필요한 입력 채널 수 반환"""
-    if model_name in MODELS_WITH_4_MODALITIES or model_name.startswith('quadbranch_'):
+    """모델 이름에 따라 필요한 입력 채널 수 반환
+    
+    Note: Cascade 모델의 경우 실제 입력은 7채널(4 MRI + 3 CoordConv)이지만,
+    데이터로더에서 자동으로 처리되므로 여기서는 4채널로 반환합니다.
+    """
+    if model_name in MODELS_WITH_4_MODALITIES or model_name.startswith('quadbranch_') or model_name.startswith('cascade_'):
         return 4
     return 2
 

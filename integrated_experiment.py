@@ -62,17 +62,33 @@ if __name__ == "__main__":
     parser.add_argument('--use_cascade_pipeline', action='store_true', default=False,
                        help='Enable cascade ROI→Seg evaluation using a pre-trained ROI detector')
     parser.add_argument('--roi_model_name', type=str, default='roi_mobileunetr3d_tiny',
-                       help='ROI detection model architecture name')
+                       help='ROI detection model architecture name (used for cascade models and cascade pipeline evaluation)')
     parser.add_argument('--roi_weight_path', type=str, default=None,
-                       help='Path to pre-trained ROI detector weights (.pth)')
+                       help='Path to pre-trained ROI detector weights (.pth). If not specified, uses default path: models/weights/cascade/roi_model/{roi_model_name}/seed_{seed}/weights/best.pth')
     parser.add_argument('--roi_resize', type=int, nargs=3, default=[64, 64, 64],
                        help='ROI detector input size (DxHxW) (default: 64 64 64)')
     parser.add_argument('--cascade_crop_size', type=int, nargs=3, default=[96, 96, 96],
                        help='Segmentation crop size (DxHxW) used during cascade inference (default: 96 96 96)')
     
     args = parser.parse_args()
+    
+    # ROI weight 경로 자동 생성 함수
+    def get_default_roi_weight_path(roi_model_name: str, seed: int) -> str:
+        """ROI 모델 이름과 seed로 기본 weight 경로 생성"""
+        return f"models/weights/cascade/roi_model/{roi_model_name}/seed_{seed}/weights/best.pth"
+    
+    # ROI weight 경로 자동 생성 (지정되지 않은 경우)
     if args.use_cascade_pipeline and not args.roi_weight_path:
-        raise ValueError("--use_cascade_pipeline requires --roi_weight_path to be set.")
+        # 첫 번째 seed 사용 (여러 seed인 경우 첫 번째 것 사용)
+        default_path = get_default_roi_weight_path(args.roi_model_name, args.seeds[0])
+        if os.path.exists(default_path):
+            args.roi_weight_path = default_path
+            print(f"Using default ROI weight path: {args.roi_weight_path}")
+        else:
+            raise FileNotFoundError(
+                f"ROI weight file not found. Please specify --roi_weight_path or ensure the default path exists: {default_path}"
+            )
+    
     if args.use_cascade_pipeline and args.roi_weight_path and not os.path.exists(args.roi_weight_path):
         raise FileNotFoundError(f"ROI weight file not found: {args.roi_weight_path}")
     
@@ -103,6 +119,7 @@ if __name__ == "__main__":
     except Exception as _e:
         print(f"Warning: Failed to set sharing strategy: {_e}")
 
+    # Cascade 모델 학습 시에도 ROI 모델 정보를 전달
     cascade_cfg = None
     if args.use_cascade_pipeline:
         cascade_cfg = {
@@ -112,13 +129,26 @@ if __name__ == "__main__":
             'crop_size': tuple(args.cascade_crop_size),
             'include_coords': True,
         }
+    
+    # Cascade 모델인 경우 ROI 모델 정보를 전달 (학습 시에도 메타데이터로 저장)
+    cascade_model_cfg = None
+    if args.models:
+        # Cascade 모델이 있는지 확인
+        cascade_models = [m for m in args.models if m.startswith('cascade_')]
+        if cascade_models:
+            cascade_model_cfg = {
+                'roi_model_name': args.roi_model_name,
+                'roi_resize': tuple(args.roi_resize),
+                'crop_size': tuple(args.cascade_crop_size),
+            }
 
     try:
         results_dir, results_df = run_integrated_experiment(
             args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim,
             args.use_pretrained, use_nnunet_loss, args.num_workers, args.dataset_version, args.use_5fold,
             use_mri_augmentation=args.use_mri_augmentation,
-            cascade_infer_cfg=cascade_cfg if args.use_cascade_pipeline else None
+            cascade_infer_cfg=cascade_cfg if args.use_cascade_pipeline else None,
+            cascade_model_cfg=cascade_model_cfg
         )
         
         if results_dir and results_df is not None:

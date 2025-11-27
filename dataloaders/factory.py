@@ -14,6 +14,7 @@ from torch.utils.data.distributed import DistributedSampler
 
 from .brats_base import BratsDataset3D, BratsDataset2D, split_brats_dataset
 from .patch_3d import BratsPatchDataset3D
+from .cascade import get_cascade_data_loaders
 
 
 def get_data_loaders(
@@ -34,8 +35,44 @@ def get_data_loaders(
     use_5fold: bool = False,
     fold_idx: Optional[int] = None,
     use_mri_augmentation: bool = False,
+    model_name: Optional[str] = None,
 ):
-    """공통 get_data_loaders 진입점 (기존 data_loader.get_data_loaders와 동일 인터페이스)."""
+    """공통 get_data_loaders 진입점 (기존 data_loader.get_data_loaders와 동일 인터페이스).
+    
+    Args:
+        model_name: 모델 이름. cascade 모델인 경우 자동으로 cascade 데이터로더 사용.
+    """
+    # Cascade 모델인 경우 cascade 데이터로더 사용 (segmentation 단계만)
+    if model_name and model_name.startswith('cascade_'):
+        cascade_loaders = get_cascade_data_loaders(
+            data_dir=data_dir,
+            roi_batch_size=batch_size,
+            seg_batch_size=batch_size,
+            num_workers=num_workers,
+            max_samples=max_samples,
+            dataset_version=dataset_version,
+            seed=seed,
+            use_5fold=use_5fold,
+            fold_idx=fold_idx,
+            roi_resize=(64, 64, 64),  # ROI 모델 기본 크기
+            seg_crop_size=(96, 96, 96),  # Segmentation 모델 기본 크기
+            include_coords=True,
+            center_jitter=0,  # 학습 시에는 jitter 없음 (또는 옵션으로 추가 가능)
+            distributed=distributed,
+            world_size=world_size,
+            rank=rank,
+            use_mri_augmentation=use_mri_augmentation,
+        )
+        # Segmentation 데이터로더만 반환 (일반 get_data_loaders와 동일한 형식)
+        seg_loaders = cascade_loaders['seg']
+        return (
+            seg_loaders['train'],
+            seg_loaders['val'],
+            seg_loaders['test'],
+            seg_loaders['train_sampler'],
+            seg_loaders['val_sampler'],
+            seg_loaders['test_sampler'],
+        )
     if seed is not None:
         random.seed(seed)
         np.random.seed(seed)

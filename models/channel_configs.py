@@ -218,6 +218,55 @@ DUALBRANCH_CHANNELS_STAGE3_FUSED_FIXED_DECODER = {
         'out': 256,      # Final (2배 증가)
     },
 }
+# ============================================================================
+# Single-Branch (Cascade) Channel Configurations
+# ============================================================================
+
+# Single-Branch UNet with 2-Step Decoder Channels
+# 디코더 채널이 2단계로 구성: up1/up2는 같은 채널, up3는 다른 채널
+SINGLEBRANCH_CHANNELS_2STEP_DECODER = {
+    'xs': {
+        'stem': 16,
+        'branch2': 32,
+        'branch3': 64,
+        'down4': 128,
+        'up1': 32,
+        'up2': 32,
+        'up3': 16,
+        'out': 16,
+    },
+    's': {
+        'stem': 32,
+        'branch2': 64,
+        'branch3': 128,
+        'down4': 256,
+        'up1': 64,
+        'up2': 64,
+        'up3': 32,
+        'out': 32,
+    },
+    'm': {
+        'stem': 64,
+        'branch2': 128,
+        'branch3': 256,
+        'down4': 512,
+        'up1': 128,
+        'up2': 128,
+        'up3': 64,
+        'out': 64,
+    },
+    'l': {
+        'stem': 128,
+        'branch2': 256,
+        'branch3': 512,
+        'down4': 1024,
+        'up1': 256,
+        'up2': 256,
+        'up3': 128,
+        'out': 128,
+    },
+}
+
 
 # Dual-Branch UNet with Half Decoder Channels (Stage 3 Fused, 디코더 채널을 인코더의 절반으로)
 # 인코더 stage 채널 = branch * 2 (두 분기 concat), 따라서 디코더 채널 = branch (인코더의 절반)
@@ -371,6 +420,28 @@ def get_unet_channels(size: str) -> Dict:
     if size not in UNET_CHANNELS:
         raise ValueError(f"Unknown size: {size}. Must be one of {list(UNET_CHANNELS.keys())}")
     return UNET_CHANNELS[size]
+
+
+
+def get_singlebranch_channels_2step_decoder(size: str) -> Dict:
+    """
+    Get Single-Branch UNet channel configuration with 2-step decoder.
+    
+    Decoder channels are organized in 2 steps:
+    - up1/up2: Same channel size (e.g., 64 for size 's')
+    - up3: Different channel size (e.g., 32 for size 's')
+    
+    This allows skip connections to have 1:1 ratio at up2 stage.
+    
+    Args:
+        size: 'xs', 's', 'm', or 'l'
+    
+    Returns:
+        Dictionary with channel configuration
+    """
+    if size not in SINGLEBRANCH_CHANNELS_2STEP_DECODER:
+        raise ValueError(f"Unknown size: {size}. Must be one of {list(SINGLEBRANCH_CHANNELS_2STEP_DECODER.keys())}")
+    return SINGLEBRANCH_CHANNELS_2STEP_DECODER[size]
 
 
 def get_dualbranch_channels(size: str) -> Dict:
