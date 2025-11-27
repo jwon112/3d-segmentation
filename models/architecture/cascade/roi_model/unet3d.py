@@ -49,7 +49,13 @@ class ROICascadeUNet3D(nn.Module):
         decoder_in = bottleneck_channels
         for ch in reversed(enc_channels):
             self.up_blocks.append(
-                Up3D(decoder_in, ch // factor, bilinear=bilinear, norm=norm)
+                Up3D(
+                    decoder_in,
+                    ch // factor,
+                    bilinear=bilinear,
+                    norm=norm,
+                    skip_channels=ch,
+                )
             )
             decoder_in = ch
 
