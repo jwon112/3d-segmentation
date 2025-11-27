@@ -57,12 +57,10 @@ class ROICascadeUNet3D(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         skips = []
-        h = x
-        for idx, enc in enumerate(self.enc_blocks):
-            if idx == 0:
-                h = enc(h)
-            else:
-                h = self.down_blocks[idx - 1](h)
+        h = self.enc_blocks[0](x)
+        skips.append(h)
+        for down in self.down_blocks:
+            h = down(h)
             skips.append(h)
 
         h = self.bottleneck(skips[-1])
