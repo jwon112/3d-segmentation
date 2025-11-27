@@ -167,7 +167,6 @@ ROI_MODEL_CONFIGS: Dict[str, Dict] = {
         'norm': 'bn',
         'base_channels': 16,
         'depth': 4,
-        'bilinear': True,
     },
 }
 DEFAULT_ROI_MODEL = 'roi_mobileunetr3d_tiny'

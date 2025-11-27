@@ -150,7 +150,6 @@ def build_roi_unet3d_small(
     norm: str = "bn",
     base_channels: int = 16,
     depth: int = 4,
-    bilinear: bool = True,
 ) -> ROICascadeUNet3D:
     """
     Factory helper that instantiates the ROI-specific UNet3D.
@@ -162,7 +161,6 @@ def build_roi_unet3d_small(
         base_channels=base_channels,
         depth=depth,
         norm=norm,
-        bilinear=bilinear,
     )
 
 

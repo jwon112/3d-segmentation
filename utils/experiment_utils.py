@@ -999,14 +999,12 @@ def get_roi_model(
     if model_name == 'roi_unet3d_small':
         base_channels = cfg.pop('base_channels', 16)
         depth = cfg.pop('depth', 4)
-        bilinear = cfg.pop('bilinear', True)
         return build_roi_unet3d_small(
             in_channels=n_channels,
             out_channels=n_classes,
             norm=norm,
             base_channels=base_channels,
             depth=depth,
-            bilinear=bilinear,
         )
 
     raise ValueError(f"Unknown ROI model '{model_name}'.")
