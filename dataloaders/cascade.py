@@ -316,7 +316,7 @@ def get_cascade_data_loaders(
         include_coords=include_coords,
         center_jitter=0,
         augment=False,
-        return_metadata=True,
+        return_metadata=False,  # 일반 평가에서는 metadata 불필요
     )
 
     roi_train_sampler = roi_val_sampler = roi_test_sampler = None

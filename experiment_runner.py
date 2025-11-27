@@ -1318,10 +1318,15 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         print("=" * 50)
                     
                     # 입력 크기 설정 (PAM, Latency 공용)
+                    # Cascade 모델은 7채널 입력 (4 MRI + 3 CoordConv)
+                    actual_n_channels = n_channels
+                    if model_name.startswith('cascade_'):
+                        actual_n_channels = 7  # 4 MRI + 3 CoordConv
+                    
                     if dim == '2d':
-                        input_size = (1, n_channels, *INPUT_SIZE_2D)
+                        input_size = (1, actual_n_channels, *INPUT_SIZE_2D)
                     else:
-                        input_size = (1, n_channels, *INPUT_SIZE_3D)
+                        input_size = (1, actual_n_channels, *INPUT_SIZE_3D)
 
                     # PAM 계산 (모델 정보 출력 직후 바로 측정)
                     pam_train_list = []
@@ -1330,9 +1335,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     pam_inference_stages = {}
                     if is_main_process(rank):
                         if dim == '2d':
-                            pam_input_size = (1, n_channels, *INPUT_SIZE_2D)
+                            pam_input_size = (1, actual_n_channels, *INPUT_SIZE_2D)
                         else:
-                            pam_input_size = (1, n_channels, 128, 128, 128)
+                            pam_input_size = (1, actual_n_channels, 128, 128, 128)
                         try:
                             pam_train_list, pam_train_stages = calculate_pam(
                                 model, input_size=pam_input_size, mode='train', stage_wise=True, device=device
@@ -1381,9 +1386,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     
                     # FLOPs 계산 (모델이 device에 있는 상태에서)
                     if dim == '2d':
-                        flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_2D))
+                        flops = calculate_flops(model, input_size=(1, actual_n_channels, *INPUT_SIZE_2D))
                     else:
-                        flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
+                        flops = calculate_flops(model, input_size=(1, actual_n_channels, *INPUT_SIZE_3D))
                     if is_main_process(rank):
                         print(f"FLOPs: {flops:,}")
                     
@@ -1453,18 +1458,18 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             if dim == '2d':
                                 flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_2D))
                             else:
-                                flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
+                                flops = calculate_flops(model, input_size=(1, actual_n_channels, *INPUT_SIZE_3D))
                             if is_main_process(rank):
                                 print(f"FLOPs after deploy: {flops:,}")
                             # Recalculate PAM after deploy mode (may be different due to fused branches)
                             if is_main_process(rank):
                                 try:
                                     if dim == '2d':
-                                        input_size = (1, n_channels, *INPUT_SIZE_2D)
+                                        input_size_after_deploy = (1, actual_n_channels, *INPUT_SIZE_2D)
                                     else:
-                                        input_size = (1, n_channels, *INPUT_SIZE_3D)
+                                        input_size_after_deploy = (1, actual_n_channels, *INPUT_SIZE_3D)
                                     pam_inference_list_after_deploy, _ = calculate_pam(
-                                        model, input_size=input_size, mode='inference', stage_wise=True, device=device
+                                        model, input_size=input_size_after_deploy, mode='inference', stage_wise=True, device=device
                                     )
                                     if pam_inference_list_after_deploy:
                                         pam_inference_mean_after_deploy = sum(pam_inference_list_after_deploy) / len(pam_inference_list_after_deploy)
