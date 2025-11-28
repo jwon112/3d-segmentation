@@ -62,6 +62,8 @@ def get_data_loaders(
             world_size=world_size,
             rank=rank,
             use_mri_augmentation=use_mri_augmentation,
+            train_crops_per_center=train_crops_per_center,
+            train_crop_overlap=train_crop_overlap,
         )
         # Segmentation 데이터로더만 반환 (일반 get_data_loaders와 동일한 형식)
         seg_loaders = cascade_loaders['seg']

@@ -70,11 +70,13 @@ if __name__ == "__main__":
     parser.add_argument('--cascade_crop_size', type=int, nargs=3, default=[96, 96, 96],
                        help='Segmentation crop size (DxHxW) used during cascade inference (default: 96 96 96)')
     parser.add_argument('--crops_per_center', type=int, default=1,
-                       help='Number of crops per center (1=single crop, 2=2x2x2=8 crops, 3=3x3x3=27 crops) (default: 1)')
+                       help='Number of crops per center during inference (1=single crop, 2=2x2x2=8 crops, 3=3x3x3=27 crops) (default: 1)')
     parser.add_argument('--crop_overlap', type=float, default=0.5,
                        help='Overlap ratio between crops (0.0 ~ 1.0) (default: 0.5)')
     parser.add_argument('--use_crop_blending', action='store_true', default=True,
                        help='Use cosine blending for multi-crop merging (default: True, False uses voxel-wise max)')
+    parser.add_argument('--train_crops_per_center', type=int, default=1,
+                       help='Number of crops per center during training (1=single crop, 2=2x2x2=8 crops, 3=3x3x3=27 crops). Each epoch randomly samples one crop from multiple positions. (default: 1)')
     
     args = parser.parse_args()
     
@@ -157,7 +159,9 @@ if __name__ == "__main__":
             args.use_pretrained, use_nnunet_loss, args.num_workers, args.dataset_version, args.use_5fold,
             use_mri_augmentation=args.use_mri_augmentation,
             cascade_infer_cfg=cascade_cfg if args.use_cascade_pipeline else None,
-            cascade_model_cfg=cascade_model_cfg
+            cascade_model_cfg=cascade_model_cfg,
+            train_crops_per_center=args.train_crops_per_center,
+            train_crop_overlap=args.crop_overlap,
         )
         
         if results_dir and results_df is not None:

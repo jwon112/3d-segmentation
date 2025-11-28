@@ -201,6 +201,8 @@ class BratsCascadeSegmentationDataset(Dataset):
         center_jitter: int = 0,
         augment: bool = False,
         return_metadata: bool = False,
+        crops_per_center: int = 1,
+        crop_overlap: float = 0.5,
     ):
         self.base_dataset = base_dataset
         self.crop_size = _to_3tuple(crop_size)
@@ -208,6 +210,8 @@ class BratsCascadeSegmentationDataset(Dataset):
         self.center_jitter = max(0, int(center_jitter))
         self.augment = augment
         self.return_metadata = return_metadata
+        self.crops_per_center = max(1, int(crops_per_center))
+        self.crop_overlap = max(0.0, min(1.0, float(crop_overlap)))
 
     def __len__(self):
         return len(self.base_dataset)
@@ -273,6 +277,8 @@ def get_cascade_data_loaders(
     world_size: Optional[int] = None,
     rank: Optional[int] = None,
     use_mri_augmentation: bool = False,
+    train_crops_per_center: int = 1,
+    train_crop_overlap: float = 0.5,
 ):
     """ROI detection + cascade segmentation loaders with CoordConv support."""
     train_base, val_base, test_base = get_brats_base_datasets(
@@ -301,6 +307,8 @@ def get_cascade_data_loaders(
         center_jitter=center_jitter,
         augment=use_mri_augmentation,
         return_metadata=False,
+        crops_per_center=train_crops_per_center,
+        crop_overlap=train_crop_overlap,
     )
     seg_val_ds = BratsCascadeSegmentationDataset(
         val_base,
