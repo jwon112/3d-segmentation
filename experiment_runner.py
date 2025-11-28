@@ -426,6 +426,17 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         load_times, fwd_times, bwd_times = [], [], []
         torch.cuda.synchronize()
         
+        # 데이터셋/로더 길이 확인 (첫 epoch만)
+        if epoch == 0 and is_main_process(rank):
+            print(f"\n[Debug] Dataset info:")
+            print(f"  Dataset length: {len(train_loader.dataset)}")
+            if train_sampler is not None:
+                print(f"  Sampler length: {len(train_sampler)}")
+            print(f"  Loader length: {len(train_loader)}")
+            print(f"  Batch size: {train_loader.batch_size}")
+            if train_crops_per_center > 1:
+                print(f"  Multi-crop mode: {train_crops_per_center} crops per center ({train_crops_per_center**3} total crops per sample)")
+        
         for step, (inputs, labels) in enumerate(tqdm(train_loader, desc=f"Train {epoch+1}/{epochs}", leave=False)):
             if step < profile_steps:
                 torch.cuda.synchronize()
