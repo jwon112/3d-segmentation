@@ -268,8 +268,10 @@ class BratsCascadeSegmentationDataset(Dataset):
 
     def __len__(self):
         # Multi-crop 모드: 각 crop을 별도의 샘플로 취급
+        # crops_per_center=2 -> 2^3=8개, crops_per_center=3 -> 3^3=27개
         if self.crops_per_center > 1:
-            return len(self.base_dataset) * self.crops_per_center
+            num_crops_per_sample = self.crops_per_center ** 3
+            return len(self.base_dataset) * num_crops_per_sample
         return len(self.base_dataset)
 
     def _maybe_augment(self, img_patch: torch.Tensor, msk_patch: torch.Tensor):
@@ -295,8 +297,10 @@ class BratsCascadeSegmentationDataset(Dataset):
         # Multi-crop 모드: 각 crop을 별도의 샘플로 취급
         if self.crops_per_center > 1:
             # base dataset 인덱스와 crop 인덱스 계산
-            base_idx = idx // self.crops_per_center
-            crop_idx = idx % self.crops_per_center
+            # crops_per_center=2 -> 2^3=8개 crop per sample
+            num_crops_per_sample = self.crops_per_center ** 3
+            base_idx = idx // num_crops_per_sample
+            crop_idx = idx % num_crops_per_sample
             
             image, mask = self.base_dataset[base_idx]
             center = compute_tumor_center(mask)
