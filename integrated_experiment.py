@@ -77,6 +77,8 @@ if __name__ == "__main__":
                        help='Use cosine blending for multi-crop merging (default: True, False uses voxel-wise max)')
     parser.add_argument('--train_crops_per_center', type=int, default=1,
                        help='Number of crops per center during training (1=single crop, 2=2x2x2=8 crops, 3=3x3x3=27 crops). Each epoch randomly samples one crop from multiple positions. (default: 1)')
+    parser.add_argument('--train_crop_overlap', type=float, default=0.5,
+                       help='Overlap ratio between crops during training (0.0 ~ 1.0). If not specified, uses --crop_overlap value. (default: 0.5)')
     
     args = parser.parse_args()
     
@@ -161,7 +163,7 @@ if __name__ == "__main__":
             cascade_infer_cfg=cascade_cfg if args.use_cascade_pipeline else None,
             cascade_model_cfg=cascade_model_cfg,
             train_crops_per_center=args.train_crops_per_center,
-            train_crop_overlap=args.crop_overlap,
+            train_crop_overlap=args.train_crop_overlap,
         )
         
         if results_dir and results_df is not None:
