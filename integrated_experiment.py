@@ -69,6 +69,12 @@ if __name__ == "__main__":
                        help='ROI detector input size (DxHxW) (default: 64 64 64)')
     parser.add_argument('--cascade_crop_size', type=int, nargs=3, default=[96, 96, 96],
                        help='Segmentation crop size (DxHxW) used during cascade inference (default: 96 96 96)')
+    parser.add_argument('--crops_per_center', type=int, default=1,
+                       help='Number of crops per center (1=single crop, 2=2x2x2=8 crops, 3=3x3x3=27 crops) (default: 1)')
+    parser.add_argument('--crop_overlap', type=float, default=0.5,
+                       help='Overlap ratio between crops (0.0 ~ 1.0) (default: 0.5)')
+    parser.add_argument('--use_crop_blending', action='store_true', default=True,
+                       help='Use cosine blending for multi-crop merging (default: True, False uses voxel-wise max)')
     
     args = parser.parse_args()
     
@@ -128,6 +134,9 @@ if __name__ == "__main__":
             'roi_resize': tuple(args.roi_resize),
             'crop_size': tuple(args.cascade_crop_size),
             'include_coords': True,
+            'crops_per_center': args.crops_per_center,
+            'crop_overlap': args.crop_overlap,
+            'use_blending': args.use_crop_blending,
         }
     
     # Cascade 모델인 경우 ROI 모델 정보를 전달 (학습 시에도 메타데이터로 저장)

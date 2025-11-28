@@ -5,7 +5,8 @@ Cascade segmentation helpers (ROI + crop + CoordConv pipeline).
 현재 구현:
 - ROI detector로 WT binary를 예측하고, connected components 기반으로 여러 중심을 추출
 - 각 중심 주변에서 multi-crop을 수행하여 segmentation 모델을 여러 번 실행
-- crop별 logits를 원본 공간으로 복원한 뒤 voxel-wise max로 병합
+- crop별 logits를 원본 공간으로 복원한 뒤 cosine blending 또는 voxel-wise max로 병합
+- 각 중심마다 여러 crop을 수행하여 큰 종양도 완전히 커버 (crops_per_center > 1)
 """
 
 from typing import Dict, Optional, Sequence, Tuple, List
@@ -160,6 +161,82 @@ def build_segmentation_input(
     }
 
 
+def _generate_multi_crop_centers(
+    center: Tuple[float, float, float],
+    crop_size: Sequence[int],
+    crops_per_center: int = 1,
+    crop_overlap: float = 0.5,
+) -> List[Tuple[float, float, float]]:
+    """
+    중심 주변에서 여러 crop 위치를 생성합니다.
+    
+    Args:
+        center: 중심 좌표 (cy, cx, cz)
+        crop_size: crop 크기 (h, w, d)
+        crops_per_center: 중심당 crop 개수 (1, 2, 3 등)
+        crop_overlap: crop 간 겹침 비율 (0.0 ~ 1.0)
+    
+    Returns:
+        crop 중심 좌표 리스트
+    """
+    if crops_per_center <= 1:
+        return [center]
+    
+    # 겹침에 따른 offset 계산
+    # 예: crop_size=96, overlap=0.5이면 stride=48
+    stride = [int(s * (1.0 - crop_overlap)) for s in crop_size]
+    
+    # crops_per_center에 따라 grid 크기 결정
+    # crops_per_center=2 -> 2x2x2=8개
+    # crops_per_center=3 -> 3x3x3=27개
+    grid_size = crops_per_center
+    
+    centers = []
+    cy, cx, cz = center
+    
+    # 중심을 기준으로 grid 생성
+    for i in range(grid_size):
+        for j in range(grid_size):
+            for k in range(grid_size):
+                # grid 위치를 offset으로 변환
+                # 중심에서 offset만큼 이동
+                offset_y = (i - (grid_size - 1) / 2.0) * stride[0]
+                offset_x = (j - (grid_size - 1) / 2.0) * stride[1]
+                offset_z = (k - (grid_size - 1) / 2.0) * stride[2]
+                
+                new_center = (
+                    cy + offset_y,
+                    cx + offset_x,
+                    cz + offset_z,
+                )
+                centers.append(new_center)
+    
+    return centers
+
+
+def _make_blend_weights_3d(patch_size: Sequence[int]) -> torch.Tensor:
+    """
+    Create separable cosine blending weights for 3D patches.
+    Returns tensor of shape (1, 1, H, W, D).
+    """
+    import math
+    ph, pw, pd = patch_size
+    
+    def one_dim(n):
+        t = torch.arange(n, dtype=torch.float32)
+        # raised cosine from 0..pi
+        w = 0.5 * (1 - torch.cos(math.pi * (t + 0.5) / n))
+        # avoid zeros on borders completely
+        return w.clamp_min(1e-4)
+    
+    wh = one_dim(ph)
+    ww = one_dim(pw)
+    wd = one_dim(pd)
+    w3 = wh.view(ph, 1, 1) * ww.view(1, pw, 1) * wd.view(1, 1, pd)
+    w3 = w3 / w3.max()
+    return w3.view(1, 1, ph, pw, pd)
+
+
 def run_cascade_inference(
     roi_model: torch.nn.Module,
     seg_model: torch.nn.Module,
@@ -170,13 +247,21 @@ def run_cascade_inference(
     include_coords: bool = True,
     max_instances: int = 3,
     min_component_size: int = 50,
+    crops_per_center: int = 1,
+    crop_overlap: float = 0.5,
+    use_blending: bool = True,
 ) -> Dict:
     """
     Full cascade inference: ROI -> multi-crop -> segmentation -> merge & uncrop.
 
     - ROI detector에서 WT binary를 예측하고 여러 컴포넌트 중심을 얻음
-    - 각 중심마다 crop → segmentation 수행
-    - crop별 logits를 원본 공간으로 복원 후 voxel-wise max로 병합
+    - 각 중심마다 여러 crop을 수행 (crops_per_center > 1인 경우)
+    - crop별 logits를 원본 공간으로 복원 후 blending 또는 max로 병합
+    
+    Args:
+        crops_per_center: 각 중심당 crop 개수 (1=단일 crop, 2=2x2x2=8개, 3=3x3x3=27개)
+        crop_overlap: crop 간 겹침 비율 (0.0 ~ 1.0)
+        use_blending: True면 cosine blending, False면 voxel-wise max
     """
     roi_info = run_roi_localization(
         roi_model=roi_model,
@@ -191,41 +276,89 @@ def run_cascade_inference(
     centers_full = roi_info.get('centers_full') or [roi_info['center_full']]
 
     seg_model.eval()
-    full_logits: Optional[torch.Tensor] = None
-
-    for center in centers_full:
-        seg_inputs = build_segmentation_input(
+    
+    # Blending을 사용하는 경우 accumulator와 weight sum 초기화
+    if use_blending and crops_per_center > 1:
+        # 출력 채널 수 확인
+        dummy_input = build_segmentation_input(
             image=image,
-            center=center,
+            center=centers_full[0],
             crop_size=crop_size,
             include_coords=include_coords,
-        )
-        seg_tensor = seg_inputs['inputs'].unsqueeze(0).to(device)
+        )['inputs'].unsqueeze(0).to(device)
         with torch.no_grad():
-            seg_logits = seg_model(seg_tensor)
-        patch_logits = seg_logits.squeeze(0).cpu()  # (C, h, w, d)
-        patch_full_logits = paste_patch_to_volume(
-            patch_logits,
-            seg_inputs['origin'],
-            image.shape[1:],
-        )
+            dummy_logits = seg_model(dummy_input)
+        n_classes = dummy_logits.shape[1]
+        
+        full_logits = torch.zeros((n_classes,) + image.shape[1:], dtype=torch.float32)
+        weight_sum = torch.zeros((1,) + image.shape[1:], dtype=torch.float32)
+        blend_weights = _make_blend_weights_3d(crop_size)
+    else:
+        full_logits: Optional[torch.Tensor] = None
+        weight_sum = None
+        blend_weights = None
 
-        if full_logits is None:
-            full_logits = patch_full_logits
-        else:
-            # voxel-wise max merge (logits 기준)
-            full_logits = torch.maximum(full_logits, patch_full_logits)
+    for center in centers_full:
+        # 각 중심마다 여러 crop 위치 생성
+        crop_centers = _generate_multi_crop_centers(
+            center=center,
+            crop_size=crop_size,
+            crops_per_center=crops_per_center,
+            crop_overlap=crop_overlap,
+        )
+        
+        for crop_center in crop_centers:
+            seg_inputs = build_segmentation_input(
+                image=image,
+                center=crop_center,
+                crop_size=crop_size,
+                include_coords=include_coords,
+            )
+            seg_tensor = seg_inputs['inputs'].unsqueeze(0).to(device)
+            with torch.no_grad():
+                seg_logits = seg_model(seg_tensor)
+            patch_logits = seg_logits.squeeze(0).cpu()  # (C, h, w, d)
+            
+            if use_blending and crops_per_center > 1 and blend_weights is not None:
+                # Cosine blending 사용
+                patch_full_logits = paste_patch_to_volume(
+                    patch_logits,
+                    seg_inputs['origin'],
+                    image.shape[1:],
+                )
+                patch_weights = paste_patch_to_volume(
+                    blend_weights.squeeze(0).squeeze(0),  # (h, w, d)
+                    seg_inputs['origin'],
+                    image.shape[1:],
+                )
+                
+                full_logits += patch_full_logits * patch_weights.unsqueeze(0)
+                weight_sum += patch_weights
+            else:
+                # Voxel-wise max 사용 (기존 방식)
+                patch_full_logits = paste_patch_to_volume(
+                    patch_logits,
+                    seg_inputs['origin'],
+                    image.shape[1:],
+                )
+                
+                if full_logits is None:
+                    full_logits = patch_full_logits
+                else:
+                    full_logits = torch.maximum(full_logits, patch_full_logits)
 
     if full_logits is None:
         # 안전장치: ROI가 완전히 비었을 경우, 전부 background로 설정
         c = seg_model.out_channels if hasattr(seg_model, "out_channels") else 4
         full_logits = torch.zeros((c,) + image.shape[1:], dtype=torch.float32)
+    elif use_blending and weight_sum is not None:
+        # Blending 가중치로 정규화
+        full_logits = full_logits / weight_sum.unsqueeze(0).clamp_min(1e-6)
 
     full_mask = torch.argmax(full_logits, dim=0)
 
     return {
         'roi': roi_info,
-        'full_logits': full_logits,
         'full_logits': full_logits,
         'full_mask': full_mask,
         # 참고용: 첫 번째 crop 정보만 유지 (필요시 확장 가능)

@@ -138,8 +138,16 @@ def train_roi_model(model, train_loader, val_loader, epochs, device, lr=1e-3,
 
 
 def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
-                              roi_resize=(64, 64, 64), crop_size=(96, 96, 96), include_coords=True):
-    """Run cascade inference on base dataset and compute WT/TC/ET dice."""
+                              roi_resize=(64, 64, 64), crop_size=(96, 96, 96), include_coords=True,
+                              crops_per_center=1, crop_overlap=0.5, use_blending=True):
+    """
+    Run cascade inference on base dataset and compute WT/TC/ET dice.
+    
+    Args:
+        crops_per_center: 각 중심당 crop 개수 (1=단일 crop, 2=2x2x2=8개, 3=3x3x3=27개)
+        crop_overlap: crop 간 겹침 비율 (0.0 ~ 1.0)
+        use_blending: True면 cosine blending, False면 voxel-wise max
+    """
     roi_model.eval()
     seg_model.eval()
     dice_rows = []
@@ -155,6 +163,9 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             roi_resize=roi_resize,
             crop_size=crop_size,
             include_coords=include_coords,
+            crops_per_center=crops_per_center,
+            crop_overlap=crop_overlap,
+            use_blending=use_blending,
         )
         full_logits = result['full_logits'].unsqueeze(0).to(device)
         target_batch = target.unsqueeze(0)
@@ -231,8 +242,18 @@ def evaluate_segmentation_with_roi(
     use_5fold=False,
     fold_idx=None,
     max_samples=None,
+    crops_per_center=1,
+    crop_overlap=0.5,
+    use_blending=True,
 ):
-    """Evaluate trained segmentation model with pre-trained ROI detector."""
+    """
+    Evaluate trained segmentation model with pre-trained ROI detector.
+    
+    Args:
+        crops_per_center: 각 중심당 crop 개수 (1=단일 crop, 2=2x2x2=8개, 3=3x3x3=27개)
+        crop_overlap: crop 간 겹침 비율 (0.0 ~ 1.0)
+        use_blending: True면 cosine blending, False면 voxel-wise max
+    """
     _, _, test_base = get_brats_base_datasets(
         data_dir=data_dir,
         dataset_version=dataset_version,
@@ -252,6 +273,9 @@ def evaluate_segmentation_with_roi(
         roi_resize=roi_resize,
         crop_size=crop_size,
         include_coords=include_coords,
+        crops_per_center=crops_per_center,
+        crop_overlap=crop_overlap,
+        use_blending=use_blending,
     )
 
 
@@ -1545,6 +1569,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             roi_model_name_for_infer = cascade_infer_cfg['roi_model_name']
                             roi_resize = cascade_infer_cfg.get('roi_resize', roi_resize)
                             crop_size = cascade_infer_cfg.get('crop_size', crop_size)
+                            crops_per_center = cascade_infer_cfg.get('crops_per_center', 1)
+                            crop_overlap = cascade_infer_cfg.get('crop_overlap', 0.5)
+                            use_blending = cascade_infer_cfg.get('use_blending', True)
                         elif model_name.startswith('cascade_') and cascade_model_cfg:
                             # Cascade 모델인 경우 자동으로 경로 생성
                             roi_model_name_for_infer = cascade_model_cfg['roi_model_name']
@@ -1557,6 +1584,15 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                 roi_weight_path = None
                             roi_resize = cascade_model_cfg.get('roi_resize', roi_resize)
                             crop_size = cascade_model_cfg.get('crop_size', crop_size)
+                            # Cascade 모델인 경우 기본값 사용
+                            crops_per_center = 1
+                            crop_overlap = 0.5
+                            use_blending = True
+                        else:
+                            # 기본값
+                            crops_per_center = 1
+                            crop_overlap = 0.5
+                            use_blending = True
                         
                         if roi_weight_path and os.path.exists(roi_weight_path):
                             try:
@@ -1578,6 +1614,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                     include_coords=True,
                                     use_5fold=use_5fold,
                                     fold_idx=fold_idx if use_5fold else None,
+                                    crops_per_center=crops_per_center,
+                                    crop_overlap=crop_overlap,
+                                    use_blending=use_blending,
                                 )
                                 print(
                                     f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
