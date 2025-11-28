@@ -429,18 +429,16 @@ def get_cascade_data_loaders(
         random.seed(base_seed)
 
     def _collate_fn_multi_crop(batch):
-        """Multi-crop을 위한 collate function: 리스트를 그대로 반환"""
+        """Multi-crop을 위한 collate function: 각 샘플의 crop 리스트를 유지"""
         # batch는 [(img_crops_list, mask_crops_list), ...] 형태
         # 첫 번째 샘플이 리스트인지 확인
         if isinstance(batch[0][0], list):
-            # 배치 내 모든 샘플의 crop을 하나의 리스트로 합침
-            # 각 샘플마다 8개 crop이 있으면, 배치 크기 4일 때 총 32개 crop
-            all_img_crops = []
-            all_mask_crops = []
-            for img_crops_list, mask_crops_list in batch:
-                all_img_crops.extend(img_crops_list)
-                all_mask_crops.extend(mask_crops_list)
-            return (all_img_crops, all_mask_crops)
+            # 각 샘플의 crop 리스트를 그대로 유지
+            # 반환: ([img_crops_list1, img_crops_list2, ...], [mask_crops_list1, mask_crops_list2, ...])
+            # 배치 크기 4, 각 샘플 8개 crop → 4개의 리스트, 각 리스트에 8개 crop
+            img_crops_batch = [img_crops_list for img_crops_list, _ in batch]
+            mask_crops_batch = [mask_crops_list for _, mask_crops_list in batch]
+            return (img_crops_batch, mask_crops_batch)
         else:
             # 기본 collate (단일 crop)
             from torch.utils.data.dataloader import default_collate
@@ -464,10 +462,9 @@ def get_cascade_data_loaders(
     roi_val_loader = _build_loader(roi_val_ds, roi_batch_size, shuffle=False, sampler=roi_val_sampler, pin_memory=False)
     roi_test_loader = _build_loader(roi_test_ds, roi_batch_size, shuffle=False, sampler=roi_test_sampler, pin_memory=False)
 
-    # Multi-crop 사용 시 배치 크기를 1로 고정 (각 샘플마다 여러 crop 처리)
-    # 배치 크기 1로 하면 step 수가 늘어나서 모든 crop을 처리할 수 있음
-    actual_seg_batch_size = 1 if train_crops_per_center > 1 else seg_batch_size
-    seg_train_loader = _build_loader(seg_train_ds, actual_seg_batch_size, shuffle=True, sampler=seg_train_sampler, use_multi_crop=(train_crops_per_center > 1))
+    # Multi-crop 사용 시: 배치 크기는 그대로 유지 (VRAM 여유에 맞게 조정 가능)
+    # 각 배치 내에서 모든 샘플의 crop들을 순차 처리 (Gradient Accumulation)
+    seg_train_loader = _build_loader(seg_train_ds, seg_batch_size, shuffle=True, sampler=seg_train_sampler, use_multi_crop=(train_crops_per_center > 1))
     seg_val_loader = _build_loader(seg_val_ds, seg_batch_size, shuffle=False, sampler=seg_val_sampler, pin_memory=False)
     seg_test_loader = _build_loader(seg_test_ds, seg_batch_size, shuffle=False, sampler=seg_test_sampler, pin_memory=False)
 
