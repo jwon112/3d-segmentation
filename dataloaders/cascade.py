@@ -256,7 +256,6 @@ class BratsCascadeSegmentationDataset(Dataset):
         return_metadata: bool = False,
         crops_per_center: int = 1,
         crop_overlap: float = 0.5,
-        return_all_crops: bool = False,
     ):
         self.base_dataset = base_dataset
         self.crop_size = _to_3tuple(crop_size)
@@ -266,9 +265,11 @@ class BratsCascadeSegmentationDataset(Dataset):
         self.return_metadata = return_metadata
         self.crops_per_center = max(1, int(crops_per_center))
         self.crop_overlap = max(0.0, min(1.0, float(crop_overlap)))
-        self.return_all_crops = return_all_crops
 
     def __len__(self):
+        # Multi-crop 모드: 각 crop을 별도의 샘플로 취급
+        if self.crops_per_center > 1:
+            return len(self.base_dataset) * self.crops_per_center
         return len(self.base_dataset)
 
     def _maybe_augment(self, img_patch: torch.Tensor, msk_patch: torch.Tensor):
@@ -291,14 +292,19 @@ class BratsCascadeSegmentationDataset(Dataset):
         return img_patch, msk_patch
 
     def __getitem__(self, idx):
-        image, mask = self.base_dataset[idx]
-        center = compute_tumor_center(mask)
-        if self.center_jitter > 0:
-            jitter = torch.randint(-self.center_jitter, self.center_jitter + 1, (3,))
-            center = tuple(float(c + j) for c, j in zip(center, jitter.tolist()))
-        
-        # Multi-crop 샘플링
+        # Multi-crop 모드: 각 crop을 별도의 샘플로 취급
         if self.crops_per_center > 1:
+            # base dataset 인덱스와 crop 인덱스 계산
+            base_idx = idx // self.crops_per_center
+            crop_idx = idx % self.crops_per_center
+            
+            image, mask = self.base_dataset[base_idx]
+            center = compute_tumor_center(mask)
+            if self.center_jitter > 0:
+                jitter = torch.randint(-self.center_jitter, self.center_jitter + 1, (3,))
+                center = tuple(float(c + j) for c, j in zip(center, jitter.tolist()))
+            
+            # 모든 crop center 생성
             crop_centers = _generate_multi_crop_centers(
                 center=center,
                 crop_size=self.crop_size,
@@ -306,24 +312,15 @@ class BratsCascadeSegmentationDataset(Dataset):
                 crop_overlap=self.crop_overlap,
             )
             
-            # 모든 crop을 반환하는 경우
-            if self.return_all_crops:
-                img_crops = []
-                mask_crops = []
-                for crop_center in crop_centers:
-                    img_crop, origin = crop_volume_with_center(image, crop_center, self.crop_size, return_origin=True)
-                    mask_crop = crop_volume_with_center(mask, crop_center, self.crop_size, return_origin=False).long()
-                    if self.include_coords:
-                        coord_map = get_normalized_coord_map(mask.shape, device=image.device)
-                        coord_crop = crop_volume_with_center(coord_map, crop_center, self.crop_size, return_origin=False)
-                        img_crop = torch.cat([img_crop, coord_crop], dim=0)
-                    img_crop, mask_crop = self._maybe_augment(img_crop, mask_crop)
-                    img_crops.append(img_crop)
-                    mask_crops.append(mask_crop)
-                return img_crops, mask_crops
-            
-            # 랜덤하게 하나 선택 (기존 방식)
-            center = crop_centers[random.randint(0, len(crop_centers) - 1)]
+            # 특정 crop만 선택
+            center = crop_centers[crop_idx]
+        else:
+            # 단일 crop 모드 (기존 방식)
+            image, mask = self.base_dataset[idx]
+            center = compute_tumor_center(mask)
+            if self.center_jitter > 0:
+                jitter = torch.randint(-self.center_jitter, self.center_jitter + 1, (3,))
+                center = tuple(float(c + j) for c, j in zip(center, jitter.tolist()))
         
         img_crop, origin = crop_volume_with_center(image, center, self.crop_size, return_origin=True)
         mask_crop = crop_volume_with_center(mask, center, self.crop_size, return_origin=False).long()
@@ -393,7 +390,6 @@ def get_cascade_data_loaders(
         return_metadata=False,
         crops_per_center=train_crops_per_center,
         crop_overlap=train_crop_overlap,
-        return_all_crops=(train_crops_per_center > 1),  # 모든 crop 반환
     )
     seg_val_ds = BratsCascadeSegmentationDataset(
         val_base,
@@ -428,23 +424,7 @@ def get_cascade_data_loaders(
         np.random.seed(base_seed)
         random.seed(base_seed)
 
-    def _collate_fn_multi_crop(batch):
-        """Multi-crop을 위한 collate function: 각 샘플의 crop 리스트를 유지"""
-        # batch는 [(img_crops_list, mask_crops_list), ...] 형태
-        # 첫 번째 샘플이 리스트인지 확인
-        if isinstance(batch[0][0], list):
-            # 각 샘플의 crop 리스트를 그대로 유지
-            # 반환: ([img_crops_list1, img_crops_list2, ...], [mask_crops_list1, mask_crops_list2, ...])
-            # 배치 크기 4, 각 샘플 8개 crop → 4개의 리스트, 각 리스트에 8개 crop
-            img_crops_batch = [img_crops_list for img_crops_list, _ in batch]
-            mask_crops_batch = [mask_crops_list for _, mask_crops_list in batch]
-            return (img_crops_batch, mask_crops_batch)
-        else:
-            # 기본 collate (단일 crop)
-            from torch.utils.data.dataloader import default_collate
-            return default_collate(batch)
-    
-    def _build_loader(dataset, batch_size, shuffle, sampler=None, pin_memory=True, use_multi_crop=False):
+    def _build_loader(dataset, batch_size, shuffle, sampler=None, pin_memory=True):
         return DataLoader(
             dataset,
             batch_size=batch_size,
@@ -455,7 +435,6 @@ def get_cascade_data_loaders(
             persistent_workers=(num_workers > 0),
             prefetch_factor=(4 if num_workers > 0 else None),
             worker_init_fn=_worker_init_fn,
-            collate_fn=_collate_fn_multi_crop if use_multi_crop else None,
         )
 
     roi_train_loader = _build_loader(roi_train_ds, roi_batch_size, shuffle=True, sampler=roi_train_sampler)
@@ -464,7 +443,7 @@ def get_cascade_data_loaders(
 
     # Multi-crop 사용 시: 배치 크기는 그대로 유지 (VRAM 여유에 맞게 조정 가능)
     # 각 배치 내에서 모든 샘플의 crop들을 순차 처리 (Gradient Accumulation)
-    seg_train_loader = _build_loader(seg_train_ds, seg_batch_size, shuffle=True, sampler=seg_train_sampler, use_multi_crop=(train_crops_per_center > 1))
+    seg_train_loader = _build_loader(seg_train_ds, seg_batch_size, shuffle=True, sampler=seg_train_sampler)
     seg_val_loader = _build_loader(seg_val_ds, seg_batch_size, shuffle=False, sampler=seg_val_sampler, pin_memory=False)
     seg_test_loader = _build_loader(seg_test_ds, seg_batch_size, shuffle=False, sampler=seg_test_sampler, pin_memory=False)
 

@@ -429,112 +429,46 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 torch.cuda.synchronize()
                 t_start = time.time()
             
-            # Multi-crop 처리: inputs가 리스트의 리스트인 경우 (각 샘플마다 crop 리스트)
-            if isinstance(inputs, list) and len(inputs) > 0 and isinstance(inputs[0], list):
-                # inputs는 [img_crops_list1, img_crops_list2, ...] 형태
-                # 각 샘플마다 모든 crop을 순차 처리 (Gradient Accumulation)
-                optimizer.zero_grad()
-                accumulated_loss = 0.0
-                accumulated_dice_sum = 0.0
-                
-                # 전체 crop 수 계산
-                total_crops = sum(len(img_crops_list) for img_crops_list in inputs)
-                
-                # 배치 내 각 샘플 처리
-                crop_counter = 0
-                for sample_idx, (img_crops_list, mask_crops_list) in enumerate(zip(inputs, labels)):
-                    num_crops = len(img_crops_list)
-                    
-                    # 각 샘플의 모든 crop 순차 처리
-                    for crop_idx, (img_crop, mask_crop) in enumerate(zip(img_crops_list, mask_crops_list)):
-                        img_crop = img_crop.to(device)
-                        mask_crop = mask_crop.to(device)
-                        
-                        # MobileUNETR 2D는 2D 입력을 그대로 사용 (depth 차원 추가 안함)
-                        # mobile_unetr_3d는 3D 입력을 그대로 사용
-                        # cascade 모델은 이미 3D 입력이므로 unsqueeze 불필요
-                        # 다른 모델들은 3D 입력 필요 (depth 차원 추가)
-                        if not model_name.startswith('cascade_') and model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(img_crop.shape) == 4:
-                            img_crop = img_crop.unsqueeze(2)  # Add depth dimension (C, H, W) -> (C, 1, H, W)
-                            mask_crop = mask_crop.unsqueeze(2)
-                        
-                        # 배치 차원 추가 (단일 crop)
-                        img_crop = img_crop.unsqueeze(0)  # (C, H, W, D) -> (1, C, H, W, D)
-                        mask_crop = mask_crop.unsqueeze(0)  # (H, W, D) -> (1, H, W, D)
-                        
-                        # Forward pass
-                        logits = model(img_crop)
-                        loss = criterion(logits, mask_crop)
-                        
-                        # Gradient accumulation (마지막 crop이 아니면 scaled loss)
-                        crop_counter += 1
-                        is_last = (crop_counter == total_crops)
-                        if not is_last:
-                            loss = loss / total_crops
-                        loss.backward()
-                        
-                        # Dice 계산 (평균용)
-                        dice_scores = calculate_wt_tc_et_dice(logits.detach(), mask_crop)
-                        mean_dice = dice_scores.mean()
-                        accumulated_loss += loss.item() * total_crops  # 원래 loss로 복원
-                        accumulated_dice_sum += mean_dice.item()
-                
-                # 모든 crop 처리 후 한 번만 optimizer step
-                optimizer.step()
-                
-                if step < profile_steps:
-                    torch.cuda.synchronize()
-                    t_load = time.time()
-                    load_times.append(t_load - t_start)
-                    t_fwd = time.time()
-                    fwd_times.append(t_fwd - t_load)
-                    t_bwd = time.time()
-                    bwd_times.append(t_bwd - t_fwd)
-                
-                tr_loss += accumulated_loss
-                tr_dice_sum += accumulated_dice_sum
-                n_tr += num_crops  # 실제 처리된 crop 수
-            else:
-                # 기존 방식 (단일 crop)
-                inputs, labels = inputs.to(device), labels.to(device)
-                
-                # MobileUNETR 2D는 2D 입력을 그대로 사용 (depth 차원 추가 안함)
-                # mobile_unetr_3d는 3D 입력을 그대로 사용
-                # 다른 모델들은 3D 입력 필요 (depth 차원 추가)
-                if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
-                    inputs = inputs.unsqueeze(2)  # Add depth dimension (B, C, H, W) -> (B, C, 1, H, W)
-                    labels = labels.unsqueeze(2)
-                
-                if step < profile_steps:
-                    t_load = time.time()
-                    load_times.append(t_load - t_start)
-                
-                optimizer.zero_grad()
-                # 학습 단계에서는 슬라이딩 윈도우를 사용하지 않음 (단일 패치 forward)
-                logits = model(inputs)
-                
-                if step < profile_steps:
-                    torch.cuda.synchronize()
-                    t_fwd = time.time()
-                    fwd_times.append(t_fwd - t_load)
-                
-                loss = criterion(logits, labels)
-                loss.backward()
-                optimizer.step()
-                
-                if step < profile_steps:
-                    torch.cuda.synchronize()
-                    t_bwd = time.time()
-                    bwd_times.append(t_bwd - t_fwd)
-                
-                # BraTS composite Dice (WT, TC, ET)
-                dice_scores = calculate_wt_tc_et_dice(logits.detach(), labels)
-                # 평균 Dice (WT/TC/ET 평균)
-                mean_dice = dice_scores.mean()
-                bsz = inputs.size(0)
-                tr_loss += loss.item() * bsz
-                tr_dice_sum += mean_dice.item() * bsz
-                n_tr += bsz
+            # 각 crop이 별도의 샘플로 취급되므로 일반적인 단일 crop 처리
+            inputs, labels = inputs.to(device), labels.to(device)
+            
+            # MobileUNETR 2D는 2D 입력을 그대로 사용 (depth 차원 추가 안함)
+            # mobile_unetr_3d는 3D 입력을 그대로 사용
+            # 다른 모델들은 3D 입력 필요 (depth 차원 추가)
+            if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
+                inputs = inputs.unsqueeze(2)  # Add depth dimension (B, C, H, W) -> (B, C, 1, H, W)
+                labels = labels.unsqueeze(2)
+            
+            if step < profile_steps:
+                t_load = time.time()
+                load_times.append(t_load - t_start)
+            
+            optimizer.zero_grad()
+            # 학습 단계에서는 슬라이딩 윈도우를 사용하지 않음 (단일 패치 forward)
+            logits = model(inputs)
+            
+            if step < profile_steps:
+                torch.cuda.synchronize()
+                t_fwd = time.time()
+                fwd_times.append(t_fwd - t_load)
+            
+            loss = criterion(logits, labels)
+            loss.backward()
+            optimizer.step()
+            
+            if step < profile_steps:
+                torch.cuda.synchronize()
+                t_bwd = time.time()
+                bwd_times.append(t_bwd - t_fwd)
+            
+            # BraTS composite Dice (WT, TC, ET)
+            dice_scores = calculate_wt_tc_et_dice(logits.detach(), labels)
+            # 평균 Dice (WT/TC/ET 평균)
+            mean_dice = dice_scores.mean()
+            bsz = inputs.size(0)
+            tr_loss += loss.item() * bsz
+            tr_dice_sum += mean_dice.item() * bsz
+            n_tr += bsz
         
         tr_loss /= max(1, n_tr)
         tr_dice = tr_dice_sum / max(1, n_tr)
