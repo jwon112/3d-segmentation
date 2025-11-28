@@ -372,36 +372,18 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     
     # BatchNorm Warmup: 초기 running stats를 실제 데이터 분포로 업데이트
     # 검증 모드에서 잘못된 running stats 사용으로 인한 문제 해결
-    if is_main_process(rank):
-        print("\n[Warmup] Initializing BatchNorm running statistics...")
-    model.train()  # train 모드로 설정 (running stats 업데이트됨)
-    warmup_batches = 20
-    with torch.no_grad():  # gradient 계산 불필요, 메모리 절약
-        for i, (inputs, labels) in enumerate(train_loader):
-            if i >= warmup_batches:
-                break
-            
-            # Multi-crop 처리: inputs가 리스트의 리스트인 경우 (각 샘플마다 crop 리스트)
-            if isinstance(inputs, list) and len(inputs) > 0 and isinstance(inputs[0], list):
-                # inputs는 [img_crops_list1, img_crops_list2, ...] 형태
-                # Warmup은 BatchNorm stats 초기화용이므로 각 샘플의 첫 번째 crop만 처리 (메모리 절약)
-                for img_crops_list, mask_crops_list in zip(inputs, labels):
-                    # 각 샘플의 첫 번째 crop만 사용 (warmup용)
-                    img_crop = img_crops_list[0]
-                    mask_crop = mask_crops_list[0]
-                    img_crop = img_crop.to(device)
-                    mask_crop = mask_crop.to(device)
-                    
-                    # 모델 입력 shape 조정
-                    # cascade 모델은 이미 3D 입력이므로 unsqueeze 불필요
-                    if not model_name.startswith('cascade_') and model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(img_crop.shape) == 4:
-                        img_crop = img_crop.unsqueeze(2)
-                    
-                    # 배치 차원 추가 (단일 crop)
-                    img_crop = img_crop.unsqueeze(0)  # (C, H, W, D) -> (1, C, H, W, D)
-                    
-                    _ = model(img_crop)  # forward만 수행하여 running stats 업데이트
-            else:
+    # Multi-crop 모드에서는 메모리 부족 방지를 위해 warmup 건너뛰기 또는 최소화
+    skip_warmup = (train_crops_per_center > 1)  # Multi-crop 모드에서는 warmup 건너뛰기
+    if not skip_warmup:
+        if is_main_process(rank):
+            print("\n[Warmup] Initializing BatchNorm running statistics...")
+        model.train()  # train 모드로 설정 (running stats 업데이트됨)
+        warmup_batches = 20
+        with torch.no_grad():  # gradient 계산 불필요, 메모리 절약
+            for i, (inputs, labels) in enumerate(train_loader):
+                if i >= warmup_batches:
+                    break
+                
                 # 기존 방식 (단일 crop)
                 inputs = inputs.to(device)
                 
@@ -410,10 +392,13 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     inputs = inputs.unsqueeze(2)
                 
                 _ = model(inputs)  # forward만 수행하여 running stats 업데이트
-            # 각 forward마다: running_mean = 0.9 * running_mean + 0.1 * batch_mean
-            # 점진적으로 실제 데이터 분포로 수렴
-    if is_main_process(rank):
-        print(f"[Warmup] Processed {warmup_batches} batches. Running stats initialized.\n")
+                # 각 forward마다: running_mean = 0.9 * running_mean + 0.1 * batch_mean
+                # 점진적으로 실제 데이터 분포로 수렴
+        if is_main_process(rank):
+            print(f"[Warmup] Processed {warmup_batches} batches. Running stats initialized.\n")
+    else:
+        if is_main_process(rank):
+            print("\n[Warmup] Skipped (multi-crop mode to save memory).\n")
     
     for epoch in range(epochs):
         # Training
