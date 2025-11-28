@@ -12,7 +12,6 @@ from torch.utils.data import Dataset, DataLoader, Subset
 from torch.utils.data.distributed import DistributedSampler
 
 from .brats_base import BratsDataset3D, get_brats_base_datasets
-from utils.cascade_utils import _generate_multi_crop_centers
 
 _COORD_MAP_CACHE: Dict[Tuple[int, int, int], torch.Tensor] = {}
 
@@ -138,6 +137,59 @@ def compute_tumor_center(mask: torch.Tensor) -> Tuple[float, float, float]:
     center = fg.float().mean(dim=0)
     cy, cx, cz = center.tolist()
     return float(cy), float(cx), float(cz)
+
+
+def _generate_multi_crop_centers(
+    center: Tuple[float, float, float],
+    crop_size: Sequence[int],
+    crops_per_center: int = 1,
+    crop_overlap: float = 0.5,
+) -> list:
+    """
+    중심 주변에서 여러 crop 위치를 생성합니다.
+    
+    Args:
+        center: 중심 좌표 (cy, cx, cz)
+        crop_size: crop 크기 (h, w, d)
+        crops_per_center: 중심당 crop 개수 (1, 2, 3 등)
+        crop_overlap: crop 간 겹침 비율 (0.0 ~ 1.0)
+    
+    Returns:
+        crop 중심 좌표 리스트
+    """
+    if crops_per_center <= 1:
+        return [center]
+    
+    # 겹침에 따른 offset 계산
+    # 예: crop_size=96, overlap=0.5이면 stride=48
+    stride = [int(s * (1.0 - crop_overlap)) for s in crop_size]
+    
+    # crops_per_center에 따라 grid 크기 결정
+    # crops_per_center=2 -> 2x2x2=8개
+    # crops_per_center=3 -> 3x3x3=27개
+    grid_size = crops_per_center
+    
+    centers = []
+    cy, cx, cz = center
+    
+    # 중심을 기준으로 grid 생성
+    for i in range(grid_size):
+        for j in range(grid_size):
+            for k in range(grid_size):
+                # grid 위치를 offset으로 변환
+                # 중심에서 offset만큼 이동
+                offset_y = (i - (grid_size - 1) / 2.0) * stride[0]
+                offset_x = (j - (grid_size - 1) / 2.0) * stride[1]
+                offset_z = (k - (grid_size - 1) / 2.0) * stride[2]
+                
+                new_center = (
+                    cy + offset_y,
+                    cx + offset_x,
+                    cz + offset_z,
+                )
+                centers.append(new_center)
+    
+    return centers
 
 
 class BratsCascadeROIDataset(Dataset):
