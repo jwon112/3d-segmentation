@@ -389,7 +389,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     mask_crop = mask_crop.to(device)
                     
                     # 모델 입력 shape 조정
-                    if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(img_crop.shape) == 4:
+                    # cascade 모델은 이미 3D 입력이므로 unsqueeze 불필요
+                    if not model_name.startswith('cascade_') and model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(img_crop.shape) == 4:
                         img_crop = img_crop.unsqueeze(2)
                     
                     # 배치 차원 추가 (단일 crop)
@@ -442,8 +443,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     
                     # MobileUNETR 2D는 2D 입력을 그대로 사용 (depth 차원 추가 안함)
                     # mobile_unetr_3d는 3D 입력을 그대로 사용
+                    # cascade 모델은 이미 3D 입력이므로 unsqueeze 불필요
                     # 다른 모델들은 3D 입력 필요 (depth 차원 추가)
-                    if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(img_crop.shape) == 4:
+                    if not model_name.startswith('cascade_') and model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(img_crop.shape) == 4:
                         img_crop = img_crop.unsqueeze(2)  # Add depth dimension (C, H, W) -> (C, 1, H, W)
                         mask_crop = mask_crop.unsqueeze(2)
                     
