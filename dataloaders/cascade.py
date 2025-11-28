@@ -433,9 +433,14 @@ def get_cascade_data_loaders(
         # batch는 [(img_crops_list, mask_crops_list), ...] 형태
         # 첫 번째 샘플이 리스트인지 확인
         if isinstance(batch[0][0], list):
-            # 모든 샘플의 crop 리스트를 그대로 반환
-            # 배치 크기가 1인 경우만 지원 (multi-crop 사용 시)
-            return batch[0]  # (img_crops_list, mask_crops_list)
+            # 배치 내 모든 샘플의 crop을 하나의 리스트로 합침
+            # 각 샘플마다 8개 crop이 있으면, 배치 크기 4일 때 총 32개 crop
+            all_img_crops = []
+            all_mask_crops = []
+            for img_crops_list, mask_crops_list in batch:
+                all_img_crops.extend(img_crops_list)
+                all_mask_crops.extend(mask_crops_list)
+            return (all_img_crops, all_mask_crops)
         else:
             # 기본 collate (단일 crop)
             from torch.utils.data.dataloader import default_collate
@@ -459,7 +464,10 @@ def get_cascade_data_loaders(
     roi_val_loader = _build_loader(roi_val_ds, roi_batch_size, shuffle=False, sampler=roi_val_sampler, pin_memory=False)
     roi_test_loader = _build_loader(roi_test_ds, roi_batch_size, shuffle=False, sampler=roi_test_sampler, pin_memory=False)
 
-    seg_train_loader = _build_loader(seg_train_ds, seg_batch_size, shuffle=True, sampler=seg_train_sampler, use_multi_crop=(train_crops_per_center > 1))
+    # Multi-crop 사용 시 배치 크기를 1로 고정 (각 샘플마다 여러 crop 처리)
+    # 배치 크기 1로 하면 step 수가 늘어나서 모든 crop을 처리할 수 있음
+    actual_seg_batch_size = 1 if train_crops_per_center > 1 else seg_batch_size
+    seg_train_loader = _build_loader(seg_train_ds, actual_seg_batch_size, shuffle=True, sampler=seg_train_sampler, use_multi_crop=(train_crops_per_center > 1))
     seg_val_loader = _build_loader(seg_val_ds, seg_batch_size, shuffle=False, sampler=seg_val_sampler, pin_memory=False)
     seg_test_loader = _build_loader(seg_test_ds, seg_batch_size, shuffle=False, sampler=seg_test_sampler, pin_memory=False)
 

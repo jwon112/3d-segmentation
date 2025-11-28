@@ -482,7 +482,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 
                 tr_loss += accumulated_loss
                 tr_dice_sum += accumulated_dice_sum
-                n_tr += num_crops
+                n_tr += num_crops  # 실제 처리된 crop 수
             else:
                 # 기존 방식 (단일 crop)
                 inputs, labels = inputs.to(device), labels.to(device)
