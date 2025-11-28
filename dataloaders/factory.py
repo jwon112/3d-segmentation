@@ -36,6 +36,8 @@ def get_data_loaders(
     fold_idx: Optional[int] = None,
     use_mri_augmentation: bool = False,
     model_name: Optional[str] = None,
+    train_crops_per_center: int = 1,
+    train_crop_overlap: float = 0.5,
 ):
     """공통 get_data_loaders 진입점 (기존 data_loader.get_data_loaders와 동일 인터페이스).
     
