@@ -12,6 +12,7 @@ from torch.utils.data import Dataset, DataLoader, Subset
 from torch.utils.data.distributed import DistributedSampler
 
 from .brats_base import BratsDataset3D, get_brats_base_datasets
+from utils.cascade_utils import _generate_multi_crop_centers
 
 _COORD_MAP_CACHE: Dict[Tuple[int, int, int], torch.Tensor] = {}
 
@@ -241,6 +242,18 @@ class BratsCascadeSegmentationDataset(Dataset):
         if self.center_jitter > 0:
             jitter = torch.randint(-self.center_jitter, self.center_jitter + 1, (3,))
             center = tuple(float(c + j) for c, j in zip(center, jitter.tolist()))
+        
+        # Multi-crop 샘플링: 여러 crop 위치 중 하나를 랜덤하게 선택
+        if self.crops_per_center > 1:
+            crop_centers = _generate_multi_crop_centers(
+                center=center,
+                crop_size=self.crop_size,
+                crops_per_center=self.crops_per_center,
+                crop_overlap=self.crop_overlap,
+            )
+            # 랜덤하게 하나 선택
+            center = crop_centers[random.randint(0, len(crop_centers) - 1)]
+        
         img_crop, origin = crop_volume_with_center(image, center, self.crop_size, return_origin=True)
         mask_crop = crop_volume_with_center(mask, center, self.crop_size, return_origin=False).long()
         if self.include_coords:
