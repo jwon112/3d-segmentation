@@ -187,6 +187,10 @@ def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_
     """Load ROI model weights for inference.
     
     Automatically detects the number of input channels from checkpoint and adjusts include_coords accordingly.
+    
+    Returns:
+        model: Loaded ROI model
+        include_coords: Detected or provided include_coords value
     """
     cfg = get_roi_model_config(roi_model_name)
     
@@ -227,7 +231,7 @@ def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_
     model.load_state_dict(state)
     model = model.to(device)
     model.eval()
-    return model
+    return model, include_coords
 
 
 def evaluate_segmentation_with_roi(
@@ -327,7 +331,7 @@ def save_hybrid_stats_to_csv(model, results_dir: str, model_name: str, seed: int
 
 
 def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
-                sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True, results_dir=None, ckpt_path=None):
+                sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True, results_dir=None, ckpt_path=None, train_crops_per_center=1):
     """모델 훈련 함수
     
     Args:
@@ -406,45 +410,100 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 torch.cuda.synchronize()
                 t_start = time.time()
             
-            inputs, labels = inputs.to(device), labels.to(device)
-            
-            # MobileUNETR 2D는 2D 입력을 그대로 사용 (depth 차원 추가 안함)
-            # mobile_unetr_3d는 3D 입력을 그대로 사용
-            # 다른 모델들은 3D 입력 필요 (depth 차원 추가)
-            if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
-                inputs = inputs.unsqueeze(2)  # Add depth dimension (B, C, H, W) -> (B, C, 1, H, W)
-                labels = labels.unsqueeze(2)
-            
-            if step < profile_steps:
-                t_load = time.time()
-                load_times.append(t_load - t_start)
-            
-            optimizer.zero_grad()
-            # 학습 단계에서는 슬라이딩 윈도우를 사용하지 않음 (단일 패치 forward)
-            logits = model(inputs)
-            
-            if step < profile_steps:
-                torch.cuda.synchronize()
-                t_fwd = time.time()
-                fwd_times.append(t_fwd - t_load)
-            
-            loss = criterion(logits, labels)
-            loss.backward()
-            optimizer.step()
-            
-            if step < profile_steps:
-                torch.cuda.synchronize()
-                t_bwd = time.time()
-                bwd_times.append(t_bwd - t_fwd)
-            
-            # BraTS composite Dice (WT, TC, ET)
-            dice_scores = calculate_wt_tc_et_dice(logits.detach(), labels)
-            # 평균 Dice (WT/TC/ET 평균)
-            mean_dice = dice_scores.mean()
-            bsz = inputs.size(0)
-            tr_loss += loss.item() * bsz
-            tr_dice_sum += mean_dice.item() * bsz
-            n_tr += bsz
+            # Multi-crop 처리: inputs가 리스트인 경우 (모든 crop 반환)
+            if isinstance(inputs, list):
+                # 모든 crop을 순차 처리 (Gradient Accumulation)
+                optimizer.zero_grad()
+                accumulated_loss = 0.0
+                accumulated_dice_sum = 0.0
+                num_crops = len(inputs)
+                
+                for crop_idx, (img_crop, mask_crop) in enumerate(zip(inputs, labels)):
+                    img_crop = img_crop.to(device)
+                    mask_crop = mask_crop.to(device)
+                    
+                    # MobileUNETR 2D는 2D 입력을 그대로 사용 (depth 차원 추가 안함)
+                    # mobile_unetr_3d는 3D 입력을 그대로 사용
+                    # 다른 모델들은 3D 입력 필요 (depth 차원 추가)
+                    if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(img_crop.shape) == 4:
+                        img_crop = img_crop.unsqueeze(2)  # Add depth dimension (C, H, W) -> (C, 1, H, W)
+                        mask_crop = mask_crop.unsqueeze(2)
+                    
+                    # 배치 차원 추가 (단일 crop)
+                    img_crop = img_crop.unsqueeze(0)  # (C, H, W, D) -> (1, C, H, W, D)
+                    mask_crop = mask_crop.unsqueeze(0)  # (H, W, D) -> (1, H, W, D)
+                    
+                    # Forward pass
+                    logits = model(img_crop)
+                    loss = criterion(logits, mask_crop)
+                    
+                    # Gradient accumulation (마지막 crop이 아니면 scaled loss)
+                    if crop_idx < num_crops - 1:
+                        loss = loss / num_crops
+                    loss.backward()
+                    
+                    # Dice 계산 (평균용)
+                    dice_scores = calculate_wt_tc_et_dice(logits.detach(), mask_crop)
+                    mean_dice = dice_scores.mean()
+                    accumulated_loss += loss.item() * num_crops  # 원래 loss로 복원
+                    accumulated_dice_sum += mean_dice.item()
+                
+                # 모든 crop 처리 후 한 번만 optimizer step
+                optimizer.step()
+                
+                if step < profile_steps:
+                    torch.cuda.synchronize()
+                    t_load = time.time()
+                    load_times.append(t_load - t_start)
+                    t_fwd = time.time()
+                    fwd_times.append(t_fwd - t_load)
+                    t_bwd = time.time()
+                    bwd_times.append(t_bwd - t_fwd)
+                
+                tr_loss += accumulated_loss
+                tr_dice_sum += accumulated_dice_sum
+                n_tr += num_crops
+            else:
+                # 기존 방식 (단일 crop)
+                inputs, labels = inputs.to(device), labels.to(device)
+                
+                # MobileUNETR 2D는 2D 입력을 그대로 사용 (depth 차원 추가 안함)
+                # mobile_unetr_3d는 3D 입력을 그대로 사용
+                # 다른 모델들은 3D 입력 필요 (depth 차원 추가)
+                if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
+                    inputs = inputs.unsqueeze(2)  # Add depth dimension (B, C, H, W) -> (B, C, 1, H, W)
+                    labels = labels.unsqueeze(2)
+                
+                if step < profile_steps:
+                    t_load = time.time()
+                    load_times.append(t_load - t_start)
+                
+                optimizer.zero_grad()
+                # 학습 단계에서는 슬라이딩 윈도우를 사용하지 않음 (단일 패치 forward)
+                logits = model(inputs)
+                
+                if step < profile_steps:
+                    torch.cuda.synchronize()
+                    t_fwd = time.time()
+                    fwd_times.append(t_fwd - t_load)
+                
+                loss = criterion(logits, labels)
+                loss.backward()
+                optimizer.step()
+                
+                if step < profile_steps:
+                    torch.cuda.synchronize()
+                    t_bwd = time.time()
+                    bwd_times.append(t_bwd - t_fwd)
+                
+                # BraTS composite Dice (WT, TC, ET)
+                dice_scores = calculate_wt_tc_et_dice(logits.detach(), labels)
+                # 평균 Dice (WT/TC/ET 평균)
+                mean_dice = dice_scores.mean()
+                bsz = inputs.size(0)
+                tr_loss += loss.item() * bsz
+                tr_dice_sum += mean_dice.item() * bsz
+                n_tr += bsz
         
         tr_loss /= max(1, n_tr)
         tr_dice = tr_dice_sum / max(1, n_tr)
@@ -1438,7 +1497,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
                         train_sampler=train_sampler, rank=rank,
                         sw_patch_size=(128, 128, 128), sw_overlap=0.10, dim=dim, use_nnunet_loss=use_nnunet_loss,
-                        results_dir=results_dir, ckpt_path=ckpt_path
+                        results_dir=results_dir, ckpt_path=ckpt_path, train_crops_per_center=train_crops_per_center
                     )
                     
                     # FLOPs 계산 (모델이 device에 있는 상태에서)
@@ -1598,11 +1657,11 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         
                         if roi_weight_path and os.path.exists(roi_weight_path):
                             try:
-                                roi_model = load_roi_model_from_checkpoint(
+                                roi_model, detected_include_coords = load_roi_model_from_checkpoint(
                                     roi_model_name_for_infer,
                                     roi_weight_path,
                                     device=device,
-                                    include_coords=True,
+                                    include_coords=True,  # 기본값만 제공, 실제로는 자동 감지된 값 사용
                                 )
                                 real_model = model.module if hasattr(model, 'module') else model
                                 cascade_metrics = evaluate_segmentation_with_roi(
@@ -1613,7 +1672,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                     seed=seed,
                                     roi_resize=roi_resize,
                                     crop_size=crop_size,
-                                    include_coords=True,
+                                    include_coords=detected_include_coords,  # 감지된 값 사용
                                     use_5fold=use_5fold,
                                     fold_idx=fold_idx if use_5fold else None,
                                     crops_per_center=crops_per_center,

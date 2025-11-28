@@ -256,6 +256,7 @@ class BratsCascadeSegmentationDataset(Dataset):
         return_metadata: bool = False,
         crops_per_center: int = 1,
         crop_overlap: float = 0.5,
+        return_all_crops: bool = False,
     ):
         self.base_dataset = base_dataset
         self.crop_size = _to_3tuple(crop_size)
@@ -265,6 +266,7 @@ class BratsCascadeSegmentationDataset(Dataset):
         self.return_metadata = return_metadata
         self.crops_per_center = max(1, int(crops_per_center))
         self.crop_overlap = max(0.0, min(1.0, float(crop_overlap)))
+        self.return_all_crops = return_all_crops
 
     def __len__(self):
         return len(self.base_dataset)
@@ -295,7 +297,7 @@ class BratsCascadeSegmentationDataset(Dataset):
             jitter = torch.randint(-self.center_jitter, self.center_jitter + 1, (3,))
             center = tuple(float(c + j) for c, j in zip(center, jitter.tolist()))
         
-        # Multi-crop 샘플링: 여러 crop 위치 중 하나를 랜덤하게 선택
+        # Multi-crop 샘플링
         if self.crops_per_center > 1:
             crop_centers = _generate_multi_crop_centers(
                 center=center,
@@ -303,7 +305,24 @@ class BratsCascadeSegmentationDataset(Dataset):
                 crops_per_center=self.crops_per_center,
                 crop_overlap=self.crop_overlap,
             )
-            # 랜덤하게 하나 선택
+            
+            # 모든 crop을 반환하는 경우
+            if self.return_all_crops:
+                img_crops = []
+                mask_crops = []
+                for crop_center in crop_centers:
+                    img_crop, origin = crop_volume_with_center(image, crop_center, self.crop_size, return_origin=True)
+                    mask_crop = crop_volume_with_center(mask, crop_center, self.crop_size, return_origin=False).long()
+                    if self.include_coords:
+                        coord_map = get_normalized_coord_map(mask.shape, device=image.device)
+                        coord_crop = crop_volume_with_center(coord_map, crop_center, self.crop_size, return_origin=False)
+                        img_crop = torch.cat([img_crop, coord_crop], dim=0)
+                    img_crop, mask_crop = self._maybe_augment(img_crop, mask_crop)
+                    img_crops.append(img_crop)
+                    mask_crops.append(mask_crop)
+                return img_crops, mask_crops
+            
+            # 랜덤하게 하나 선택 (기존 방식)
             center = crop_centers[random.randint(0, len(crop_centers) - 1)]
         
         img_crop, origin = crop_volume_with_center(image, center, self.crop_size, return_origin=True)
@@ -374,6 +393,7 @@ def get_cascade_data_loaders(
         return_metadata=False,
         crops_per_center=train_crops_per_center,
         crop_overlap=train_crop_overlap,
+        return_all_crops=(train_crops_per_center > 1),  # 모든 crop 반환
     )
     seg_val_ds = BratsCascadeSegmentationDataset(
         val_base,
@@ -408,7 +428,20 @@ def get_cascade_data_loaders(
         np.random.seed(base_seed)
         random.seed(base_seed)
 
-    def _build_loader(dataset, batch_size, shuffle, sampler=None, pin_memory=True):
+    def _collate_fn_multi_crop(batch):
+        """Multi-crop을 위한 collate function: 리스트를 그대로 반환"""
+        # batch는 [(img_crops_list, mask_crops_list), ...] 형태
+        # 첫 번째 샘플이 리스트인지 확인
+        if isinstance(batch[0][0], list):
+            # 모든 샘플의 crop 리스트를 그대로 반환
+            # 배치 크기가 1인 경우만 지원 (multi-crop 사용 시)
+            return batch[0]  # (img_crops_list, mask_crops_list)
+        else:
+            # 기본 collate (단일 crop)
+            from torch.utils.data.dataloader import default_collate
+            return default_collate(batch)
+    
+    def _build_loader(dataset, batch_size, shuffle, sampler=None, pin_memory=True, use_multi_crop=False):
         return DataLoader(
             dataset,
             batch_size=batch_size,
@@ -419,13 +452,14 @@ def get_cascade_data_loaders(
             persistent_workers=(num_workers > 0),
             prefetch_factor=(4 if num_workers > 0 else None),
             worker_init_fn=_worker_init_fn,
+            collate_fn=_collate_fn_multi_crop if use_multi_crop else None,
         )
 
     roi_train_loader = _build_loader(roi_train_ds, roi_batch_size, shuffle=True, sampler=roi_train_sampler)
     roi_val_loader = _build_loader(roi_val_ds, roi_batch_size, shuffle=False, sampler=roi_val_sampler, pin_memory=False)
     roi_test_loader = _build_loader(roi_test_ds, roi_batch_size, shuffle=False, sampler=roi_test_sampler, pin_memory=False)
 
-    seg_train_loader = _build_loader(seg_train_ds, seg_batch_size, shuffle=True, sampler=seg_train_sampler)
+    seg_train_loader = _build_loader(seg_train_ds, seg_batch_size, shuffle=True, sampler=seg_train_sampler, use_multi_crop=(train_crops_per_center > 1))
     seg_val_loader = _build_loader(seg_val_ds, seg_batch_size, shuffle=False, sampler=seg_val_sampler, pin_memory=False)
     seg_test_loader = _build_loader(seg_test_ds, seg_batch_size, shuffle=False, sampler=seg_test_sampler, pin_memory=False)
 
