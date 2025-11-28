@@ -381,22 +381,24 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             if i >= warmup_batches:
                 break
             
-            # Multi-crop 처리: inputs가 리스트인 경우 (모든 crop 반환)
-            if isinstance(inputs, list):
-                # 모든 crop을 순차 처리 (warmup용)
-                for img_crop, mask_crop in zip(inputs, labels):
-                    img_crop = img_crop.to(device)
-                    mask_crop = mask_crop.to(device)
-                    
-                    # 모델 입력 shape 조정
-                    # cascade 모델은 이미 3D 입력이므로 unsqueeze 불필요
-                    if not model_name.startswith('cascade_') and model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(img_crop.shape) == 4:
-                        img_crop = img_crop.unsqueeze(2)
-                    
-                    # 배치 차원 추가 (단일 crop)
-                    img_crop = img_crop.unsqueeze(0)  # (C, H, W, D) -> (1, C, H, W, D)
-                    
-                    _ = model(img_crop)  # forward만 수행하여 running stats 업데이트
+            # Multi-crop 처리: inputs가 리스트의 리스트인 경우 (각 샘플마다 crop 리스트)
+            if isinstance(inputs, list) and len(inputs) > 0 and isinstance(inputs[0], list):
+                # inputs는 [img_crops_list1, img_crops_list2, ...] 형태
+                # 배치 내 각 샘플의 모든 crop을 순차 처리 (warmup용)
+                for img_crops_list, mask_crops_list in zip(inputs, labels):
+                    for img_crop, mask_crop in zip(img_crops_list, mask_crops_list):
+                        img_crop = img_crop.to(device)
+                        mask_crop = mask_crop.to(device)
+                        
+                        # 모델 입력 shape 조정
+                        # cascade 모델은 이미 3D 입력이므로 unsqueeze 불필요
+                        if not model_name.startswith('cascade_') and model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(img_crop.shape) == 4:
+                            img_crop = img_crop.unsqueeze(2)
+                        
+                        # 배치 차원 추가 (단일 crop)
+                        img_crop = img_crop.unsqueeze(0)  # (C, H, W, D) -> (1, C, H, W, D)
+                        
+                        _ = model(img_crop)  # forward만 수행하여 running stats 업데이트
             else:
                 # 기존 방식 (단일 crop)
                 inputs = inputs.to(device)
