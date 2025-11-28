@@ -380,13 +380,31 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         for i, (inputs, labels) in enumerate(train_loader):
             if i >= warmup_batches:
                 break
-            inputs = inputs.to(device)
             
-            # 모델 입력 shape 조정 (일부 모델은 depth 차원 추가 필요)
-            if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
-                inputs = inputs.unsqueeze(2)
-            
-            _ = model(inputs)  # forward만 수행하여 running stats 업데이트
+            # Multi-crop 처리: inputs가 리스트인 경우 (모든 crop 반환)
+            if isinstance(inputs, list):
+                # 모든 crop을 순차 처리 (warmup용)
+                for img_crop, mask_crop in zip(inputs, labels):
+                    img_crop = img_crop.to(device)
+                    mask_crop = mask_crop.to(device)
+                    
+                    # 모델 입력 shape 조정
+                    if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(img_crop.shape) == 4:
+                        img_crop = img_crop.unsqueeze(2)
+                    
+                    # 배치 차원 추가 (단일 crop)
+                    img_crop = img_crop.unsqueeze(0)  # (C, H, W, D) -> (1, C, H, W, D)
+                    
+                    _ = model(img_crop)  # forward만 수행하여 running stats 업데이트
+            else:
+                # 기존 방식 (단일 crop)
+                inputs = inputs.to(device)
+                
+                # 모델 입력 shape 조정 (일부 모델은 depth 차원 추가 필요)
+                if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
+                    inputs = inputs.unsqueeze(2)
+                
+                _ = model(inputs)  # forward만 수행하여 running stats 업데이트
             # 각 forward마다: running_mean = 0.9 * running_mean + 0.1 * batch_mean
             # 점진적으로 실제 데이터 분포로 수렴
     if is_main_process(rank):
