@@ -25,6 +25,7 @@ from models.modules.shufflenet_modules import (
     ChannelAttention3D,
     channel_shuffle_3d,
 )
+from models.modules.mvit_modules import MobileViT3DBlockV3
 from models.model_3d_unet import _make_norm3d, _make_activation
 
 
@@ -693,11 +694,179 @@ def build_cascade_shufflenet_v2_unet3d_p3d(
     )
 
 
+# ============================================================================
+# MobileViT Variant (Stage 4 with MobileViT)
+# ============================================================================
+
+class CascadeShuffleNetV2UNet3D_MViT(nn.Module):
+    """
+    Cascade ShuffleNet V2 UNet with MobileViT at Stage 4.
+    
+    Stage 4의 MultiScaleDilatedDepthwise3D를 MobileViT3DBlockV3로 교체
+    - 글로벌 컨텍스트 모델링 능력 향상
+    - Vision Transformer의 self-attention 메커니즘 활용
+    - 96^3 -> 48^3 -> 24^3 -> 12^3 구조 유지
+    """
+    def __init__(
+        self,
+        n_image_channels: int = 4,
+        n_coord_channels: int = 3,
+        n_classes: int = 4,
+        norm: str = "bn",
+        size: str = "s",
+        include_coords: bool = True,
+        # MobileViT specific parameters
+        mvit_num_heads: int = 4,
+        mvit_mlp_ratio: int = 2,
+        mvit_patch_size: int = 2,
+        mvit_num_layers: int = 2,
+        mvit_attn_dropout: float = 0.0,
+        mvit_ffn_dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.n_image_channels = n_image_channels
+        self.n_coord_channels = n_coord_channels
+        self.include_coords = include_coords and n_coord_channels > 0
+        self.norm = norm or "bn"
+        self.size = size
+
+        activation = get_activation_type(size)
+        channels = get_singlebranch_channels_2step_decoder(size)
+
+        stem_in = n_image_channels + (n_coord_channels if self.include_coords else 0)
+        self.stem = Stem3x3(stem_in, channels["stem"], norm=self.norm, activation=activation)
+
+        self.down2 = Down3DShuffleNetV2(
+            channels["stem"],
+            channels["branch2"],
+            norm=self.norm,
+            use_channel_attention=True,
+            reduction=8,
+            activation=activation,
+        )
+        self.down3 = Down3DShuffleNetV2(
+            channels["branch2"],
+            channels["branch3"],
+            norm=self.norm,
+            use_channel_attention=True,
+            reduction=2,
+            activation=activation,
+        )
+        self.down3_extra = _build_shufflenet_v2_extra_blocks(
+            channels["branch3"], 4, self.norm, True, 2, activation
+        )
+
+        fused_channels = channels["branch3"]
+        expanded_channels = channels["down4"]
+
+        # Stage 4: MobileViT 블록으로 교체
+        self.down4_expand = nn.Sequential(
+            nn.Conv3d(fused_channels, expanded_channels, kernel_size=1, bias=False),
+            _make_norm3d(self.norm, expanded_channels),
+            _make_activation(activation, inplace=True),
+        )
+        # MultiScaleDilatedDepthwise3D 대신 MobileViT3DBlockV3 사용
+        self.down4_mvit = MobileViT3DBlockV3(
+            channels=expanded_channels,
+            hidden_dim=expanded_channels,
+            num_heads=mvit_num_heads,
+            mlp_ratio=mvit_mlp_ratio,
+            norm=self.norm,
+            patch_size=mvit_patch_size,
+            num_transformer_layers=mvit_num_layers,
+            attn_dropout=mvit_attn_dropout,
+            ffn_dropout=mvit_ffn_dropout,
+        )
+        self.down4_compress = nn.Identity()
+
+        # Upsampling blocks
+        self.up1 = Up3DShuffleNetV2(
+            channels["down4"],
+            skip_channels=fused_channels,
+            out_channels=channels["up1"],
+            norm=self.norm,
+            reduction=2,
+            activation=activation,
+        )
+        self.up2 = Up3DShuffleNetV2(
+            channels["up1"],
+            skip_channels=channels["branch2"],
+            out_channels=channels["up2"],
+            norm=self.norm,
+            reduction=8,
+            activation=activation,
+        )
+        self.up3 = Up3DShuffleNetV2(
+            channels["up2"],
+            skip_channels=channels["stem"],
+            out_channels=channels["out"],
+            norm=self.norm,
+            reduction=2,
+            activation=activation,
+        )
+        self.outc = nn.Conv3d(channels["out"], n_classes, kernel_size=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.include_coords and self.n_coord_channels > 0:
+            img = x[:, : self.n_image_channels]
+            coord = x[:, self.n_image_channels : self.n_image_channels + self.n_coord_channels]
+            x_in = torch.cat([img, coord], dim=1)
+        else:
+            x_in = x[:, : self.n_image_channels]
+
+        x1 = self.stem(x_in)
+        x2 = self.down2(x1)
+        x3 = self.down3(x2)
+        x3 = self.down3_extra(x3)
+
+        x4 = self.down4_expand(x3)
+        x4 = self.down4_mvit(x4)  # MobileViT 블록 사용
+        x4 = self.down4_compress(x4)
+
+        x = self.up1(x4, x3)
+        x = self.up2(x, x2)
+        x = self.up3(x, x1)
+        return self.outc(x)
+
+
+def build_cascade_shufflenet_v2_unet3d_mvit(
+    *,
+    n_image_channels: int = 4,
+    n_coord_channels: int = 3,
+    n_classes: int = 4,
+    norm: str = "bn",
+    size: str = "s",
+    include_coords: bool = True,
+    mvit_num_heads: int = 4,
+    mvit_mlp_ratio: int = 2,
+    mvit_patch_size: int = 2,
+    mvit_num_layers: int = 2,
+    mvit_attn_dropout: float = 0.0,
+    mvit_ffn_dropout: float = 0.0,
+) -> CascadeShuffleNetV2UNet3D_MViT:
+    return CascadeShuffleNetV2UNet3D_MViT(
+        n_image_channels=n_image_channels,
+        n_coord_channels=n_coord_channels,
+        n_classes=n_classes,
+        norm=norm,
+        size=size,
+        include_coords=include_coords,
+        mvit_num_heads=mvit_num_heads,
+        mvit_mlp_ratio=mvit_mlp_ratio,
+        mvit_patch_size=mvit_patch_size,
+        mvit_num_layers=mvit_num_layers,
+        mvit_attn_dropout=mvit_attn_dropout,
+        mvit_ffn_dropout=mvit_ffn_dropout,
+    )
+
+
 __all__ = [
     "CascadeShuffleNetV2UNet3D",
     "build_cascade_shufflenet_v2_unet3d",
     "CascadeShuffleNetV2UNet3D_P3D",
     "build_cascade_shufflenet_v2_unet3d_p3d",
+    "CascadeShuffleNetV2UNet3D_MViT",
+    "build_cascade_shufflenet_v2_unet3d_mvit",
 ]
 
 
