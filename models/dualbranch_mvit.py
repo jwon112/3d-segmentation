@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 
 from .dualbranch_mobile import MobileNetV2Block3D, Down3DMobileNetV2
-from .modules.mvit_modules import Down3DStrideMViT
+from .modules.mvit_modules import Down3DStrideMViTV3
 from .model_3d_unet import Up3D, OutConv3D
 from .channel_configs import get_dualbranch_channels
 
@@ -19,11 +19,16 @@ from .channel_configs import get_dualbranch_channels
 # ============================================================================
 
 class DualBranchUNet3D_MViT_Extended(nn.Module):
-    """Dual-branch UNet with MobileViT extended to FLAIR branch Stage 3,4 + MViT Stage5 - Base class with configurable channel sizes
+    """Dual-branch UNet with MobileViT V3 extended to FLAIR branch Stage 3,4 + MViT Stage5 - Base class with configurable channel sizes
     
     - Stage 1-2: MobileNetV2 (both branches)
-    - Stage 3-4: FLAIR = MobileViT, t1ce = MobileNetV2
-    - Stage 5: MobileViT (fused branch)
+    - Stage 3-4: FLAIR = MobileViT V3, t1ce = MobileNetV2
+    - Stage 5: MobileViT V3 (fused branch)
+    
+    MobileViT V3 improvements:
+    - Fusion uses 1x1 conv instead of 3x3 conv
+    - Fuses local (conv_kxk output) and global (transformer output) features
+    - Adds input feature as residual to fusion output
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
@@ -48,18 +53,18 @@ class DualBranchUNet3D_MViT_Extended(nn.Module):
         self.branch_flair = Down3DMobileNetV2(channels['stem'], channels['branch2'], norm=self.norm, expand_ratio=self.expand_ratio)
         self.branch_t1ce = Down3DMobileNetV2(channels['stem'], channels['branch2'], norm=self.norm, expand_ratio=self.expand_ratio)
         
-        # Stage 3 branches: FLAIR = MobileViT, t1ce = MobileNetV2
-        self.branch_flair3 = Down3DStrideMViT(channels['branch2'], channels['branch3'], norm=self.norm, num_heads=4, mlp_ratio=2)
+        # Stage 3 branches: FLAIR = MobileViT V3, t1ce = MobileNetV2
+        self.branch_flair3 = Down3DStrideMViTV3(channels['branch2'], channels['branch3'], norm=self.norm, num_heads=4, mlp_ratio=2)
         self.branch_t1ce3 = Down3DMobileNetV2(channels['branch2'], channels['branch3'], norm=self.norm, expand_ratio=self.expand_ratio)
         
-        # Stage 4 branches: FLAIR = MobileViT, t1ce = MobileNetV2
-        self.branch_flair4 = Down3DStrideMViT(channels['branch3'], channels['down4'], norm=self.norm, num_heads=4, mlp_ratio=2)
+        # Stage 4 branches: FLAIR = MobileViT V3, t1ce = MobileNetV2
+        self.branch_flair4 = Down3DStrideMViTV3(channels['branch3'], channels['down4'], norm=self.norm, num_heads=4, mlp_ratio=2)
         self.branch_t1ce4 = Down3DMobileNetV2(channels['branch3'], channels['down4'], norm=self.norm, expand_ratio=self.expand_ratio)
         
-        # Stage 5 fused branch with MobileViT
+        # Stage 5 fused branch with MobileViT V3
         factor = 2 if self.bilinear else 1
         fused_channels = channels['down4'] * 2
-        self.down5 = Down3DStrideMViT(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
+        self.down5 = Down3DStrideMViTV3(fused_channels, channels['down5'] // factor, norm=self.norm, num_heads=4, mlp_ratio=2)
         
         # Decoder
         # skip_channels: 각 stage에서 concat된 skip connection의 채널 수

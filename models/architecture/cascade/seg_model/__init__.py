@@ -9,6 +9,8 @@ from .shufflenet_v2 import (
     build_cascade_shufflenet_v2_unet3d_p3d,
     CascadeShuffleNetV2UNet3D_MViT,
     build_cascade_shufflenet_v2_unet3d_mvit,
+    CascadeShuffleNetV2UNet3D_P3D_MViT,
+    build_cascade_shufflenet_v2_unet3d_p3d_mvit,
 )
 
 __all__ = [
@@ -18,6 +20,8 @@ __all__ = [
     "build_cascade_shufflenet_v2_unet3d_p3d",
     "CascadeShuffleNetV2UNet3D_MViT",
     "build_cascade_shufflenet_v2_unet3d_mvit",
+    "CascadeShuffleNetV2UNet3D_P3D_MViT",
+    "build_cascade_shufflenet_v2_unet3d_p3d_mvit",
 ]
 
 

@@ -556,8 +556,6 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
 
     # Save CBAM attention statistics and histograms
     if collect_cbam and cbam_blocks:
-        import matplotlib.pyplot as plt
-        
         if rank0:
             print(f"[CBAM Debug] Saving CBAM statistics: {len(cbam_blocks)} blocks found")
             for block_name, data_list in cbam_channel_data.items():
@@ -652,8 +650,6 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     
     # Save ChannelAttention3D weights from inside blocks (e.g., ShuffleNetV1Unit3D)
     if collect_cbam and channel_attention_blocks:
-        import matplotlib.pyplot as plt
-        
         if rank0:
             print(f"[CBAM Debug] Saving ChannelAttention3D statistics: {len(channel_attention_blocks)} blocks found")
             for block_name, data_list in channel_attention_data.items():

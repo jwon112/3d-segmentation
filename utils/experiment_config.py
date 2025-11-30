@@ -47,6 +47,7 @@ SIZE_SUFFIX_MODELS = {
     'cascade_shufflenet_v2_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_p3d_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_mvit_': ['xs', 's', 'm', 'l'],
+    'cascade_shufflenet_v2_p3d_mvit_': ['xs', 's', 'm', 'l'],
 }
 
 # Size suffix를 지원하는 dualbranch_14 backbone들
