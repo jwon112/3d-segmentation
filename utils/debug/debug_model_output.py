@@ -18,10 +18,10 @@ from pathlib import Path
 import argparse
 
 # 프로젝트 루트를 경로에 추가
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from dataloaders import get_data_loaders
-from integrated_experiment import get_model
+from utils.experiment_utils import get_model
 import torch.nn.functional as F
 
 

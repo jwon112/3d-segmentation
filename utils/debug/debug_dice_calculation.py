@@ -17,7 +17,7 @@ from pathlib import Path
 import argparse
 
 # 프로젝트 루트를 경로에 추가
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from metrics.metrics import calculate_dice_score
 import torch.nn.functional as F
@@ -194,7 +194,7 @@ def test_dice_with_real_data(data_dir=None):
     )
     
     # 모델 준비 (더미 모델)
-    from integrated_experiment import get_model
+    from utils.experiment_utils import get_model
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = get_model('mobile_unetr_3d', n_channels=2, n_classes=4, dim='3d', use_pretrained=False)
@@ -247,7 +247,7 @@ def test_dice_with_real_data(data_dir=None):
     
     # 검증 데이터 테스트 (전체 볼륨이므로 슬라이딩 윈도우 추론 사용)
     print("\n[검증 데이터 테스트]")
-    from integrated_experiment import sliding_window_inference_3d
+    from utils.experiment_utils import sliding_window_inference_3d
     
     patch_size = (128, 128, 128)
     overlap = 0.1

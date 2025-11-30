@@ -55,10 +55,16 @@
 │   ├── patch_3d.py                     # nnU-Net 스타일 3D 패치 데이터셋
 │   ├── cascade.py                      # Cascade/CoordConv용 ROI·Seg 데이터셋 및 유틸
 │   └── factory.py                      # 설정 기반 DataLoader 팩토리
+│   └── runner/                         # 실험 실행 모듈 (리팩토링됨)
+│       ├── __init__.py                 # 모든 함수 re-export
+│       ├── roi_training.py             # ROI 모델 학습
+│       ├── cascade_evaluation.py       # Cascade 평가
+│       ├── training.py                 # 메인 모델 학습
+│       ├── evaluation.py               # 모델 평가
+│       └── experiment_orchestrator.py  # 통합 실험 실행
 ├── baseline_results/                   # 실험 결과 저장
 ├── data/                               # 데이터셋
 ├── integrated_experiment.py            # 통합 실험 스크립트 (CLI 진입점)
-├── experiment_runner.py                # 실험 실행 로직 (train_model, evaluate_model, run_integrated_experiment)
 ├── evaluate_experiment.py              # 체크포인트 평가 스크립트
 ├── train_roi.py                        # ROI 탐지 모델 전용 학습/평가 스크립트
 ├── data_loader.py                      # 하위 호환용 래퍼 (내부적으로 dataloaders 사용, 신규 코드는 dataloaders 사용 권장)

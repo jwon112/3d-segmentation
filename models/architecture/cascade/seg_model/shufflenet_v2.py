@@ -806,7 +806,18 @@ class CascadeShuffleNetV2UNet3D_MViT(nn.Module):
         )
         self.outc = nn.Conv3d(channels["out"], n_classes, kernel_size=1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_attention: bool = False):
+        """
+        Args:
+            x: Input tensor (B, C, D, H, W)
+            return_attention: If True, returns attention weights along with output
+        
+        Returns:
+            If return_attention=False: output tensor (B, n_classes, D, H, W)
+            If return_attention=True: (output, attention_dict) where attention_dict contains:
+                - 'mvit_attn': List of attention weights from MobileViT transformer layers
+                  Each element is (B, num_heads, num_patches, num_patches) or averaged
+        """
         if self.include_coords and self.n_coord_channels > 0:
             img = x[:, : self.n_image_channels]
             coord = x[:, self.n_image_channels : self.n_image_channels + self.n_coord_channels]
@@ -820,13 +831,23 @@ class CascadeShuffleNetV2UNet3D_MViT(nn.Module):
         x3 = self.down3_extra(x3)
 
         x4 = self.down4_expand(x3)
-        x4 = self.down4_mvit(x4)  # MobileViT 블록 사용
+        if return_attention:
+            x4, mvit_attn = self.down4_mvit(x4, return_attn=True)  # MobileViT 블록에서 attention 반환
+        else:
+            x4 = self.down4_mvit(x4, return_attn=False)
         x4 = self.down4_compress(x4)
 
         x = self.up1(x4, x3)
         x = self.up2(x, x2)
         x = self.up3(x, x1)
-        return self.outc(x)
+        output = self.outc(x)
+        
+        if return_attention:
+            attention_dict = {
+                'mvit_attn': mvit_attn,  # List of attention weights from transformer layers
+            }
+            return output, attention_dict
+        return output
 
 
 def build_cascade_shufflenet_v2_unet3d_mvit(

@@ -26,7 +26,7 @@ import argparse
 import torch.multiprocessing as mp
 
 # Import experiment runner
-from experiment_runner import run_integrated_experiment
+from utils.runner import run_integrated_experiment
 
 
 if __name__ == "__main__":

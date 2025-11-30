@@ -20,13 +20,14 @@ import os
 import torch.multiprocessing as mp
 
 # 프로젝트 루트를 경로에 추가
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from dataloaders import get_data_loaders
-from integrated_experiment import get_model, train_model
+from utils.experiment_utils import get_model
+from utils.runner import train_model
 from metrics.metrics import calculate_dice_score
 from losses.losses import combined_loss
-from integrated_experiment import sliding_window_inference_3d
+from utils.experiment_utils import sliding_window_inference_3d
 import torch.nn.functional as F
 
 
@@ -522,10 +523,10 @@ def main():
     print("="*60)
     print("\n권장 사항:")
     print("1. 각 단계별 디버그 스크립트를 개별 실행하여 상세한 문제 확인")
-    print("2. utils/debug_data_loader.py: 데이터 로더 검증")
-    print("3. utils/debug_model_output.py: 모델 출력 검증")
-    print("4. utils/debug_dice_calculation.py: Dice 계산 검증")
-    print("5. utils/debug_sliding_window.py: 슬라이딩 윈도우 검증")
+    print("2. utils/debug/debug_data_loader.py: 데이터 로더 검증")
+    print("3. utils/debug/debug_model_output.py: 모델 출력 검증")
+    print("4. utils/debug/debug_dice_calculation.py: Dice 계산 검증")
+    print("5. utils/debug/debug_sliding_window.py: 슬라이딩 윈도우 검증")
 
 
 if __name__ == "__main__":

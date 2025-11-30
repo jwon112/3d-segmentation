@@ -18,7 +18,7 @@ from pathlib import Path
 import argparse
 
 # 프로젝트 루트를 경로에 추가
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from dataloaders import get_data_loaders, BratsDataset3D, BratsPatchDataset3D, BratsDataset2D
 import torch.nn.functional as F

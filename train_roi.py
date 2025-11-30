@@ -24,7 +24,7 @@ from utils.experiment_utils import (
     set_seed,
     get_roi_model,
 )
-from experiment_runner import train_roi_model
+from utils.runner import train_roi_model
 from metrics import calculate_dice_score
 from utils.experiment_config import get_roi_model_config
 
