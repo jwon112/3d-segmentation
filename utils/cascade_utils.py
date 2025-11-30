@@ -250,6 +250,7 @@ def run_cascade_inference(
     crops_per_center: int = 1,
     crop_overlap: float = 0.5,
     use_blending: bool = True,
+    return_attention: bool = False,
 ) -> Dict:
     """
     Full cascade inference: ROI -> multi-crop -> segmentation -> merge & uncrop.
@@ -262,6 +263,7 @@ def run_cascade_inference(
         crops_per_center: 각 중심당 crop 개수 (1=단일 crop, 2=2x2x2=8개, 3=3x3x3=27개)
         crop_overlap: crop 간 겹침 비율 (0.0 ~ 1.0)
         use_blending: True면 cosine blending, False면 voxel-wise max
+        return_attention: True면 MobileViT attention weights도 반환
     """
     roi_info = run_roi_localization(
         roi_model=roi_model,
@@ -277,14 +279,18 @@ def run_cascade_inference(
 
     seg_model.eval()
     
+    # MobileViT attention 수집 (첫 번째 crop만)
+    all_attention_weights = [] if return_attention else None
+    
     # Blending을 사용하는 경우 accumulator와 weight sum 초기화
     if use_blending and crops_per_center > 1:
         # 출력 채널 수 확인
+        # Cascade segmentation 모델은 항상 7채널 입력(4 MRI + 3 CoordConv)을 기대
         dummy_input = build_segmentation_input(
             image=image,
             center=centers_full[0],
             crop_size=crop_size,
-            include_coords=include_coords,
+            include_coords=True,  # Cascade segmentation 모델은 항상 CoordConv 포함
         )['inputs'].unsqueeze(0).to(device)
         with torch.no_grad():
             dummy_logits = seg_model(dummy_input)
@@ -308,15 +314,26 @@ def run_cascade_inference(
         )
         
         for crop_center in crop_centers:
+            # Cascade segmentation 모델은 항상 7채널 입력(4 MRI + 3 CoordConv)을 기대
             seg_inputs = build_segmentation_input(
                 image=image,
                 center=crop_center,
                 crop_size=crop_size,
-                include_coords=include_coords,
+                include_coords=True,  # Cascade segmentation 모델은 항상 CoordConv 포함
             )
             seg_tensor = seg_inputs['inputs'].unsqueeze(0).to(device)
             with torch.no_grad():
-                seg_logits = seg_model(seg_tensor)
+                if return_attention and all_attention_weights is not None and len(all_attention_weights) == 0:
+                    # MobileViT attention 수집 (첫 번째 crop만)
+                    seg_result = seg_model(seg_tensor, return_attention=True)
+                    if isinstance(seg_result, tuple):
+                        seg_logits, attn_dict = seg_result
+                        if attn_dict is not None:
+                            all_attention_weights.append(attn_dict)
+                    else:
+                        seg_logits = seg_result
+                else:
+                    seg_logits = seg_model(seg_tensor, return_attention=False)
             patch_logits = seg_logits.squeeze(0).cpu()  # (C, h, w, d)
             
             if use_blending and crops_per_center > 1 and blend_weights is not None:
@@ -357,11 +374,14 @@ def run_cascade_inference(
 
     full_mask = torch.argmax(full_logits, dim=0)
 
-    return {
+    result = {
         'roi': roi_info,
         'full_logits': full_logits,
         'full_mask': full_mask,
         # 참고용: 첫 번째 crop 정보만 유지 (필요시 확장 가능)
         'crop_origin': None,
     }
+    if return_attention and all_attention_weights is not None:
+        result['attention_weights'] = all_attention_weights
+    return result
 

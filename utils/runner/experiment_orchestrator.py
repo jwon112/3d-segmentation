@@ -449,6 +449,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                     crops_per_center=crops_per_center,
                                     crop_overlap=crop_overlap,
                                     use_blending=use_blending,
+                                    results_dir=results_dir,  # MobileViT attention 분석용
+                                    model_name=model_name,  # MobileViT attention 분석용
                                 )
                                 print(
                                     f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "

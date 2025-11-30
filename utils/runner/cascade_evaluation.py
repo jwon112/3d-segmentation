@@ -15,7 +15,8 @@ from metrics import calculate_wt_tc_et_dice
 
 def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                               roi_resize=(64, 64, 64), crop_size=(96, 96, 96), include_coords=True,
-                              crops_per_center=1, crop_overlap=0.5, use_blending=True):
+                              crops_per_center=1, crop_overlap=0.5, use_blending=True,
+                              collect_attention=False, results_dir=None, model_name='model'):
     """
     Run cascade inference on base dataset and compute WT/TC/ET dice.
     
@@ -23,10 +24,15 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
         crops_per_center: 각 중심당 crop 개수 (1=단일 crop, 2=2x2x2=8개, 3=3x3x3=27개)
         crop_overlap: crop 간 겹침 비율 (0.0 ~ 1.0)
         use_blending: True면 cosine blending, False면 voxel-wise max
+        collect_attention: True면 MobileViT attention weights 수집 및 분석
+        results_dir: 결과 저장 디렉토리 (attention 분석용)
+        model_name: 모델 이름 (attention 분석용)
     """
     roi_model.eval()
     seg_model.eval()
     dice_rows = []
+    all_attention_weights = [] if collect_attention else None
+    
     for idx in range(len(base_dataset)):
         image, target = base_dataset[idx]
         image = image.to(device)
@@ -42,15 +48,42 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             crops_per_center=crops_per_center,
             crop_overlap=crop_overlap,
             use_blending=use_blending,
+            return_attention=collect_attention,
         )
         full_logits = result['full_logits'].unsqueeze(0).to(device)
         target_batch = target.unsqueeze(0)
         dice = calculate_wt_tc_et_dice(full_logits, target_batch).detach().cpu()
         dice_rows.append(dice)
+        
+        # Attention weights 수집
+        if collect_attention and all_attention_weights is not None and 'attention_weights' in result:
+            all_attention_weights.extend(result['attention_weights'])
+    
     if not dice_rows:
         return {'wt': 0.0, 'tc': 0.0, 'et': 0.0, 'mean': 0.0}
     dice_tensor = torch.stack(dice_rows, dim=0)
     mean_scores = dice_tensor.mean(dim=0)
+    
+    # MobileViT attention 분석
+    if collect_attention and all_attention_weights and len(all_attention_weights) > 0 and results_dir:
+        try:
+            from utils.mvit_attention_utils import analyze_mvit_attention_weights, check_mvit_attention_learning
+            
+            analysis_result = analyze_mvit_attention_weights(
+                all_attention_weights,
+                results_dir=results_dir,
+                model_name=model_name,
+            )
+            
+            is_learning, message = check_mvit_attention_learning(all_attention_weights)
+            print(f"\nMobileViT Attention Learning Status (Cascade): {message}")
+            if not is_learning:
+                print(f"⚠️  Warning: MobileViT attention may not be learning properly!")
+        except Exception as e:
+            print(f"Warning: Failed to analyze/save MobileViT attention weights: {e}")
+            import traceback
+            traceback.print_exc()
+    
     return {
         'wt': float(mean_scores[0].item()),
         'tc': float(mean_scores[1].item()),
@@ -125,6 +158,8 @@ def evaluate_segmentation_with_roi(
     crops_per_center=1,
     crop_overlap=0.5,
     use_blending=True,
+    results_dir=None,
+    model_name='model',
 ):
     """
     Evaluate trained segmentation model with pre-trained ROI detector.
@@ -133,6 +168,8 @@ def evaluate_segmentation_with_roi(
         crops_per_center: 각 중심당 crop 개수 (1=단일 crop, 2=2x2x2=8개, 3=3x3x3=27개)
         crop_overlap: crop 간 겹침 비율 (0.0 ~ 1.0)
         use_blending: True면 cosine blending, False면 voxel-wise max
+        results_dir: 결과 저장 디렉토리 (MobileViT attention 분석용)
+        model_name: 모델 이름 (MobileViT attention 분석용)
     """
     _, _, test_base = get_brats_base_datasets(
         data_dir=data_dir,
@@ -145,6 +182,28 @@ def evaluate_segmentation_with_roi(
     )
     seg_model.eval()
     roi_model.eval()
+    
+    # MobileViT attention 수집 여부 확인
+    collect_attention = False
+    if results_dir is not None:
+        try:
+            from models.modules.mvit_modules import MobileViT3DBlock, MobileViT3DBlockV3
+            real_model = seg_model.module if hasattr(seg_model, 'module') else seg_model
+            mvit_blocks_found = []
+            for name, module in real_model.named_modules():
+                if isinstance(module, (MobileViT3DBlock, MobileViT3DBlockV3)):
+                    mvit_blocks_found.append((name, module))
+            
+            import inspect
+            sig = inspect.signature(real_model.forward)
+            has_return_attention = 'return_attention' in sig.parameters
+            
+            if len(mvit_blocks_found) > 0 and has_return_attention:
+                collect_attention = True
+                print(f"[Cascade MobileViT] Found {len(mvit_blocks_found)} MobileViT blocks, will collect attention weights")
+        except Exception as e:
+            print(f"[Cascade MobileViT] Error checking for MobileViT blocks: {e}")
+    
     return evaluate_cascade_pipeline(
         roi_model=roi_model,
         seg_model=seg_model,
@@ -156,5 +215,8 @@ def evaluate_segmentation_with_roi(
         crops_per_center=crops_per_center,
         crop_overlap=crop_overlap,
         use_blending=use_blending,
+        collect_attention=collect_attention,
+        results_dir=results_dir,
+        model_name=model_name,
     )
 
