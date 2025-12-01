@@ -52,8 +52,14 @@ def cleanup_distributed():
 def is_main_process(rank: int):
     return rank == 0
 
-def set_seed(seed):
-    """랜덤 시드 설정 (완전한 재현성을 위한 전역 시드 고정)"""
+def set_seed(seed, use_deterministic_algorithms=False):
+    """랜덤 시드 설정 (완전한 재현성을 위한 전역 시드 고정)
+    
+    Args:
+        seed: 랜덤 시드 값
+        use_deterministic_algorithms: True면 완전한 재현성을 위해 deterministic 알고리즘 사용
+            (성능 저하 10-20% 가능, 대부분의 경우 False로도 충분히 재현 가능)
+    """
     # Python 내장 random
     random.seed(seed)
     # NumPy
@@ -67,14 +73,12 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     # PyTorch deterministic 알고리즘 강제 (선택적)
-    # 주의: 완전한 재현성을 위해 필요하지만, 성능 저하가 있을 수 있음 (약 10-20%)
-    # 대부분의 연구에서는 이 설정 없이도 충분히 재현 가능한 결과를 얻음
-    # 필요시 주석 해제: torch.use_deterministic_algorithms(True, warn_only=True)
-    # try:
-    #     torch.use_deterministic_algorithms(True, warn_only=True)
-    # except Exception:
-    #     # PyTorch 버전이 낮거나 지원하지 않는 경우 무시
-    #     pass
+    if use_deterministic_algorithms:
+        try:
+            torch.use_deterministic_algorithms(True, warn_only=True)
+        except Exception as e:
+            # PyTorch 버전이 낮거나 지원하지 않는 경우 무시
+            print(f"Warning: Could not enable deterministic algorithms: {e}")
     # Python hash seed (딕셔너리 순서 등에 영향)
     os.environ['PYTHONHASHSEED'] = str(seed)
 

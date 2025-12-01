@@ -125,14 +125,18 @@ def get_data_loaders(
         test_sampler = DistributedSampler(test_dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=False)
 
     def _worker_init_fn(worker_id):
+        # 각 worker마다 고유한 seed 설정 (재현성 보장)
+        # base_seed + worker_id를 사용하여 각 worker가 다른 seed를 가지도록 함
         base_seed = (seed if seed is not None else 0)
-        torch.manual_seed(base_seed)
-        np.random.seed(base_seed)
-        random.seed(base_seed)
+        worker_seed = base_seed + worker_id
+        torch.manual_seed(worker_seed)
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
 
-    _generator = torch.Generator()
+    _generator = None
     if seed is not None:
-        _generator = _generator.manual_seed(seed)
+        _generator = torch.Generator()
+        _generator.manual_seed(seed)
 
     train_loader = DataLoader(
         train_dataset,

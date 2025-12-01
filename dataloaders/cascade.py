@@ -423,10 +423,18 @@ def get_cascade_data_loaders(
         seg_test_sampler = DistributedSampler(seg_test_ds, num_replicas=world_size, rank=rank, shuffle=False)
 
     def _worker_init_fn(worker_id):
+        # 각 worker마다 고유한 seed 설정 (재현성 보장)
+        # base_seed + worker_id를 사용하여 각 worker가 다른 seed를 가지도록 함
         base_seed = (seed if seed is not None else 0)
-        torch.manual_seed(base_seed)
-        np.random.seed(base_seed)
-        random.seed(base_seed)
+        worker_seed = base_seed + worker_id
+        torch.manual_seed(worker_seed)
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
+    _generator = None
+    if seed is not None:
+        _generator = torch.Generator()
+        _generator.manual_seed(seed)
 
     def _build_loader(dataset, batch_size, shuffle, sampler=None, pin_memory=True):
         return DataLoader(
@@ -439,6 +447,7 @@ def get_cascade_data_loaders(
             persistent_workers=(num_workers > 0),
             prefetch_factor=(4 if num_workers > 0 else None),
             worker_init_fn=_worker_init_fn,
+            generator=_generator,
         )
 
     roi_train_loader = _build_loader(roi_train_ds, roi_batch_size, shuffle=True, sampler=roi_train_sampler)
@@ -519,10 +528,18 @@ def get_roi_data_loaders(
         test_sampler = DistributedSampler(test_ds, num_replicas=world_size, rank=rank, shuffle=False)
 
     def _worker_init_fn(worker_id):
+        # 각 worker마다 고유한 seed 설정 (재현성 보장)
+        # base_seed + worker_id를 사용하여 각 worker가 다른 seed를 가지도록 함
         base_seed = (seed if seed is not None else 0)
-        torch.manual_seed(base_seed)
-        np.random.seed(base_seed)
-        random.seed(base_seed)
+        worker_seed = base_seed + worker_id
+        torch.manual_seed(worker_seed)
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
+    _generator = None
+    if seed is not None:
+        _generator = torch.Generator()
+        _generator.manual_seed(seed)
 
     def _build_loader(dataset, sampler=None, shuffle=False, pin_memory=True):
         return DataLoader(
@@ -535,6 +552,7 @@ def get_roi_data_loaders(
             persistent_workers=(num_workers > 0),
             prefetch_factor=(4 if num_workers > 0 else None),
             worker_init_fn=_worker_init_fn,
+            generator=_generator,
         )
 
     return {

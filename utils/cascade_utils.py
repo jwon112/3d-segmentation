@@ -296,8 +296,8 @@ def run_cascade_inference(
             dummy_logits = seg_model(dummy_input)
         n_classes = dummy_logits.shape[1]
         
-        full_logits = torch.zeros((n_classes,) + image.shape[1:], dtype=torch.float32)
-        weight_sum = torch.zeros((1,) + image.shape[1:], dtype=torch.float32)
+        full_logits = torch.zeros((n_classes,) + image.shape[1:], dtype=torch.float32)  # (C, H, W, D)
+        weight_sum = torch.zeros(image.shape[1:], dtype=torch.float32)  # (H, W, D) - 배치 차원 없음
         blend_weights = _make_blend_weights_3d(crop_size)
     else:
         full_logits: Optional[torch.Tensor] = None
@@ -353,15 +353,16 @@ def run_cascade_inference(
                     patch_logits,
                     seg_inputs['origin'],
                     image.shape[1:],
-                )
+                )  # (C, H, W, D)
                 patch_weights = paste_patch_to_volume(
                     blend_weights.squeeze(0).squeeze(0),  # (h, w, d)
                     seg_inputs['origin'],
                     image.shape[1:],
-                )
+                )  # (H, W, D)
                 
-                full_logits += patch_full_logits * patch_weights.unsqueeze(0)
-                weight_sum += patch_weights
+                # patch_weights를 (1, H, W, D)로 확장하여 broadcasting
+                full_logits += patch_full_logits * patch_weights.unsqueeze(0)  # (C, H, W, D) * (1, H, W, D) -> (C, H, W, D)
+                weight_sum += patch_weights  # (H, W, D)
             else:
                 # Voxel-wise max 사용 (기존 방식)
                 patch_full_logits = paste_patch_to_volume(
@@ -378,10 +379,14 @@ def run_cascade_inference(
     if full_logits is None:
         # 안전장치: ROI가 완전히 비었을 경우, 전부 background로 설정
         c = seg_model.out_channels if hasattr(seg_model, "out_channels") else 4
-        full_logits = torch.zeros((c,) + image.shape[1:], dtype=torch.float32)
+        full_logits = torch.zeros((c,) + image.shape[1:], dtype=torch.float32)  # (C, H, W, D)
     elif use_blending and weight_sum is not None:
         # Blending 가중치로 정규화
-        full_logits = full_logits / weight_sum.unsqueeze(0).clamp_min(1e-6)
+        # full_logits: (C, H, W, D), weight_sum: (H, W, D)
+        full_logits = full_logits / weight_sum.unsqueeze(0).clamp_min(1e-6)  # (C, H, W, D) / (1, H, W, D) -> (C, H, W, D)
+    
+    # full_logits는 항상 (C, H, W, D) 형태여야 함 (배치 차원 없음)
+    assert full_logits.dim() == 4, f"full_logits should be 4D (C, H, W, D), got {full_logits.shape}"
 
     full_mask = torch.argmax(full_logits, dim=0)
 

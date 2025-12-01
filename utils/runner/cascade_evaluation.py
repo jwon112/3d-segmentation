@@ -50,7 +50,31 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             use_blending=use_blending,
             return_attention=collect_attention,
         )
-        full_logits = result['full_logits'].unsqueeze(0).to(device)  # (1, C, H, W, D)
+        
+        # Attention weights 수집 (dice 계산 전에 먼저 수집하여, 에러가 발생해도 보존)
+        if collect_attention and all_attention_weights is not None:
+            if 'attention_weights' in result and result['attention_weights']:
+                all_attention_weights.extend(result['attention_weights'])
+                if idx == 0:  # 첫 번째 샘플만 출력
+                    print(f"[Cascade Evaluation] Collected attention weights from sample {idx+1}/{len(base_dataset)}")
+        
+        # full_logits shape 처리: run_cascade_inference는 (C, H, W, D) 형태를 반환
+        full_logits_raw = result['full_logits'].to(device)
+        if full_logits_raw.dim() == 4:  # (C, H, W, D) - 정상
+            full_logits = full_logits_raw.unsqueeze(0)  # (1, C, H, W, D)
+        elif full_logits_raw.dim() == 5:  # 이미 (1, C, H, W, D) - 이미 배치 차원 있음
+            full_logits = full_logits_raw
+        elif full_logits_raw.dim() == 6:  # (1, 1, C, H, W, D) - 배치 차원 중복
+            # 첫 번째 배치 차원 제거
+            full_logits = full_logits_raw.squeeze(0)  # (1, C, H, W, D)
+            if full_logits.dim() == 6:
+                # 여전히 6차원이면 다시 squeeze
+                full_logits = full_logits.squeeze(0)  # (C, H, W, D)
+                full_logits = full_logits.unsqueeze(0)  # (1, C, H, W, D)
+        else:
+            # 예상치 못한 shape인 경우 처리
+            raise ValueError(f"Unexpected full_logits shape: {full_logits_raw.shape}, expected (C, H, W, D), (1, C, H, W, D), or (1, 1, C, H, W, D)")
+        
         # target이 배치 차원이 없으면 추가, 있으면 그대로 사용
         if target.dim() == 3:  # (H, W, D)
             target_batch = target.unsqueeze(0)  # (1, H, W, D)
@@ -65,14 +89,6 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
         
         dice = calculate_wt_tc_et_dice(full_logits, target_batch).detach().cpu()
         dice_rows.append(dice)
-        
-        # Attention weights 수집
-        if collect_attention and all_attention_weights is not None:
-            if 'attention_weights' in result and result['attention_weights']:
-                all_attention_weights.extend(result['attention_weights'])
-                print(f"[Cascade Evaluation] Collected attention weights from sample {idx+1}/{len(base_dataset)}")
-            else:
-                print(f"[Cascade Evaluation] Warning: No attention weights in result for sample {idx+1}")
     
     if not dice_rows:
         return {'wt': 0.0, 'tc': 0.0, 'et': 0.0, 'mean': 0.0}
