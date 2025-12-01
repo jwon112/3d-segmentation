@@ -325,13 +325,24 @@ def run_cascade_inference(
             with torch.no_grad():
                 if return_attention and all_attention_weights is not None and len(all_attention_weights) == 0:
                     # MobileViT attention 수집 (첫 번째 crop만)
-                    seg_result = seg_model(seg_tensor, return_attention=True)
-                    if isinstance(seg_result, tuple):
-                        seg_logits, attn_dict = seg_result
-                        if attn_dict is not None:
-                            all_attention_weights.append(attn_dict)
-                    else:
-                        seg_logits = seg_result
+                    try:
+                        seg_result = seg_model(seg_tensor, return_attention=True)
+                        if isinstance(seg_result, tuple):
+                            seg_logits, attn_dict = seg_result
+                            if attn_dict is not None and len(attn_dict) > 0:
+                                all_attention_weights.append(attn_dict)
+                                print(f"[Cascade] Collected MobileViT attention weights: {len(attn_dict)} layers")
+                            else:
+                                print(f"[Cascade] Warning: seg_model returned tuple but attn_dict is None or empty")
+                                seg_logits = seg_result[0] if len(seg_result) > 0 else seg_result
+                        else:
+                            print(f"[Cascade] Warning: seg_model did not return tuple for attention. Got type: {type(seg_result)}")
+                            seg_logits = seg_result
+                    except Exception as e:
+                        print(f"[Cascade] Warning: Failed to collect attention weights: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        seg_logits = seg_model(seg_tensor, return_attention=False)
                 else:
                     seg_logits = seg_model(seg_tensor, return_attention=False)
             patch_logits = seg_logits.squeeze(0).cpu()  # (C, h, w, d)

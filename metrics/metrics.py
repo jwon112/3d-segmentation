@@ -83,14 +83,28 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5):
 
     def dice_bin(pb, tb):
         # Compute per-sample dice then average over batch
-        spatial_dims = tuple(range(1, pb.dim()))
+        # spatial_dims: 배치 차원(0)을 제외한 모든 공간 차원
+        # pb/tb shape: (B, H, W[, D]) 또는 (H, W[, D])
+        if pb.dim() == 0:
+            # Scalar case (shouldn't happen, but handle gracefully)
+            return torch.tensor(0.0, device=pb.device, dtype=pb.dtype)
+        
+        # 배치 차원이 있으면 1부터, 없으면 0부터 시작
+        start_dim = 1 if pb.dim() > 1 else 0
+        spatial_dims = tuple(range(start_dim, pb.dim()))
+        
         inter = (pb & tb).sum(dim=spatial_dims).float()
         union = pb.sum(dim=spatial_dims).float() + tb.sum(dim=spatial_dims).float()
         d = (2.0 * inter + smooth) / (union + smooth)
         # If tb is empty across sample, set dice to 0 (exclude meaningless perfect)
         has_t = (tb.sum(dim=spatial_dims) > 0)
         d = torch.where(has_t, d, torch.zeros_like(d))
-        return d.mean()
+        
+        # 배치 차원이 있으면 평균, 없으면 그대로 반환
+        if d.dim() > 0:
+            return d.mean()
+        else:
+            return d
 
     wt = dice_bin(pred_wt, tgt_wt)
     tc = dice_bin(pred_tc, tgt_tc)

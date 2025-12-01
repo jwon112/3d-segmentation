@@ -50,14 +50,24 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             use_blending=use_blending,
             return_attention=collect_attention,
         )
-        full_logits = result['full_logits'].unsqueeze(0).to(device)
-        target_batch = target.unsqueeze(0)
+        full_logits = result['full_logits'].unsqueeze(0).to(device)  # (1, C, H, W, D)
+        # target이 배치 차원이 없으면 추가, 있으면 그대로 사용
+        if target.dim() == 3:  # (H, W, D)
+            target_batch = target.unsqueeze(0)  # (1, H, W, D)
+        elif target.dim() == 4:  # 이미 (1, H, W, D)
+            target_batch = target
+        else:
+            target_batch = target.unsqueeze(0)  # 안전장치
         dice = calculate_wt_tc_et_dice(full_logits, target_batch).detach().cpu()
         dice_rows.append(dice)
         
         # Attention weights 수집
-        if collect_attention and all_attention_weights is not None and 'attention_weights' in result:
-            all_attention_weights.extend(result['attention_weights'])
+        if collect_attention and all_attention_weights is not None:
+            if 'attention_weights' in result and result['attention_weights']:
+                all_attention_weights.extend(result['attention_weights'])
+                print(f"[Cascade Evaluation] Collected attention weights from sample {idx+1}/{len(base_dataset)}")
+            else:
+                print(f"[Cascade Evaluation] Warning: No attention weights in result for sample {idx+1}")
     
     if not dice_rows:
         return {'wt': 0.0, 'tc': 0.0, 'et': 0.0, 'mean': 0.0}
@@ -65,24 +75,31 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
     mean_scores = dice_tensor.mean(dim=0)
     
     # MobileViT attention 분석
-    if collect_attention and all_attention_weights and len(all_attention_weights) > 0 and results_dir:
-        try:
-            from utils.mvit_attention_utils import analyze_mvit_attention_weights, check_mvit_attention_learning
-            
-            analysis_result = analyze_mvit_attention_weights(
-                all_attention_weights,
-                results_dir=results_dir,
-                model_name=model_name,
-            )
-            
-            is_learning, message = check_mvit_attention_learning(all_attention_weights)
-            print(f"\nMobileViT Attention Learning Status (Cascade): {message}")
-            if not is_learning:
-                print(f"⚠️  Warning: MobileViT attention may not be learning properly!")
-        except Exception as e:
-            print(f"Warning: Failed to analyze/save MobileViT attention weights: {e}")
-            import traceback
-            traceback.print_exc()
+    if collect_attention:
+        if all_attention_weights and len(all_attention_weights) > 0:
+            print(f"\n[Cascade Evaluation] Analyzing {len(all_attention_weights)} attention weight samples...")
+            if results_dir:
+                try:
+                    from utils.mvit_attention_utils import analyze_mvit_attention_weights, check_mvit_attention_learning
+                    
+                    analysis_result = analyze_mvit_attention_weights(
+                        all_attention_weights,
+                        results_dir=results_dir,
+                        model_name=model_name,
+                    )
+                    
+                    is_learning, message = check_mvit_attention_learning(all_attention_weights)
+                    print(f"\nMobileViT Attention Learning Status (Cascade): {message}")
+                    if not is_learning:
+                        print(f"⚠️  Warning: MobileViT attention may not be learning properly!")
+                except Exception as e:
+                    print(f"Warning: Failed to analyze/save MobileViT attention weights: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"[Cascade Evaluation] Warning: results_dir is None, skipping attention analysis")
+        else:
+            print(f"[Cascade Evaluation] Warning: No attention weights collected (collect_attention={collect_attention}, len={len(all_attention_weights) if all_attention_weights else 0})")
     
     return {
         'wt': float(mean_scores[0].item()),
