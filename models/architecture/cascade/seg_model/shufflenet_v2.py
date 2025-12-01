@@ -27,6 +27,7 @@ from models.modules.shufflenet_modules import (
     channel_shuffle_3d,
 )
 from models.modules.mvit_modules import MobileViT3DBlockV3
+from models.modules.aspp_modules import ASPP3D_Simplified
 from models.model_3d_unet import _make_norm3d, _make_activation
 
 
@@ -187,8 +188,15 @@ class CascadeShuffleNetV2UNet3D(nn.Module):
             _make_norm3d(self.norm, expanded_channels),
             _make_activation(activation, inplace=True),
         )
-        self.down4_depth = MultiScaleDilatedDepthwise3D(
-            expanded_channels, dilation_rates=[1, 2, 3], norm=self.norm, activation=activation
+        # Stage 4가 12^3으로 작아졌으므로 ASPP3D_Simplified 사용
+        self.down4_depth = ASPP3D_Simplified(
+            in_channels=expanded_channels,
+            out_channels=expanded_channels,
+            # ASPP는 병렬 브랜치라 동일 rate라도 sequential dilated conv보다 erf가 작음
+            # 기존 dilated conv 시퀀스 [1, 2, 5]와 동일 구성을 유지
+            dilation_rates=[1, 2, 5],
+            norm=self.norm,
+            use_image_pooling=False,  # 작은 크기에서는 pooling 불필요
         )
         self.down4_compress = nn.Identity()
 
@@ -615,14 +623,20 @@ class CascadeShuffleNetV2UNet3D_P3D(nn.Module):
         fused_channels = channels["branch3"]
         expanded_channels = channels["down4"]
 
-        # down4는 기존 MultiScaleDilatedDepthwise3D 사용 (P3D 변환 복잡)
+        # Stage 4가 12^3으로 작아졌으므로 ASPP3D_Simplified 사용
         self.down4_expand = nn.Sequential(
             nn.Conv3d(fused_channels, expanded_channels, kernel_size=1, bias=False),
             _make_norm3d(self.norm, expanded_channels),
             _make_activation(activation, inplace=True),
         )
-        self.down4_depth = MultiScaleDilatedDepthwise3D(
-            expanded_channels, dilation_rates=[1, 2, 3], norm=self.norm, activation=activation
+        self.down4_depth = ASPP3D_Simplified(
+            in_channels=expanded_channels,
+            out_channels=expanded_channels,
+            # ASPP는 병렬 브랜치라 동일 rate라도 sequential dilated conv보다 erf가 작음
+            # 기존 dilated conv 시퀀스 [1, 2, 5]와 동일 구성을 유지
+            dilation_rates=[1, 2, 5],
+            norm=self.norm,
+            use_image_pooling=False,  # 작은 크기에서는 pooling 불필요
         )
         self.down4_compress = nn.Identity()
 
