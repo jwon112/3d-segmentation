@@ -58,6 +58,11 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             target_batch = target
         else:
             target_batch = target.unsqueeze(0)  # 안전장치
+        
+        # Shape 확인 (디버깅용)
+        if idx == 0:  # 첫 번째 샘플만 출력
+            print(f"[Cascade Evaluation] full_logits.shape={full_logits.shape}, target_batch.shape={target_batch.shape}")
+        
         dice = calculate_wt_tc_et_dice(full_logits, target_batch).detach().cpu()
         dice_rows.append(dice)
         

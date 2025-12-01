@@ -89,22 +89,48 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5):
             # Scalar case (shouldn't happen, but handle gracefully)
             return torch.tensor(0.0, device=pb.device, dtype=pb.dtype)
         
-        # 배치 차원이 있으면 1부터, 없으면 0부터 시작
-        start_dim = 1 if pb.dim() > 1 else 0
-        spatial_dims = tuple(range(start_dim, pb.dim()))
+        # pb와 tb의 차원이 같아야 함
+        if pb.dim() != tb.dim():
+            raise ValueError(f"pb and tb must have same number of dimensions, got pb.dim()={pb.dim()}, tb.dim()={tb.dim()}")
         
-        inter = (pb & tb).sum(dim=spatial_dims).float()
-        union = pb.sum(dim=spatial_dims).float() + tb.sum(dim=spatial_dims).float()
-        d = (2.0 * inter + smooth) / (union + smooth)
-        # If tb is empty across sample, set dice to 0 (exclude meaningless perfect)
-        has_t = (tb.sum(dim=spatial_dims) > 0)
-        d = torch.where(has_t, d, torch.zeros_like(d))
-        
-        # 배치 차원이 있으면 평균, 없으면 그대로 반환
-        if d.dim() > 0:
-            return d.mean()
+        # 공간 차원 계산: 배치 차원(0)을 제외한 모든 차원
+        # (B, H, W, D) -> spatial_dims = (1, 2, 3)
+        # (H, W, D) -> spatial_dims = (0, 1, 2)
+        ndim = pb.dim()
+        if ndim == 1:
+            # 1D: (B,) 또는 (H,)
+            spatial_dims = (0,)
+        elif ndim >= 2:
+            # 2D 이상: 배치 차원(0)을 제외한 나머지
+            # range(1, ndim)은 1부터 ndim-1까지이므로 안전
+            spatial_dims = tuple(range(1, ndim))
         else:
-            return d
+            # 0D는 이미 처리됨
+            return torch.tensor(0.0, device=pb.device, dtype=pb.dtype)
+        
+        try:
+            # 공간 차원에 대해 sum 연산 수행
+            inter = (pb & tb).sum(dim=spatial_dims).float()
+            union = pb.sum(dim=spatial_dims).float() + tb.sum(dim=spatial_dims).float()
+            d = (2.0 * inter + smooth) / (union + smooth)
+            
+            # If tb is empty across sample, set dice to 0 (exclude meaningless perfect)
+            has_t = (tb.sum(dim=spatial_dims) > 0)
+            d = torch.where(has_t, d, torch.zeros_like(d))
+            
+            # 배치 차원이 있으면 평균, 없으면 그대로 반환
+            if d.dim() > 0:
+                return d.mean()
+            else:
+                return d
+        except IndexError as e:
+            # 디버깅 정보 출력
+            import warnings
+            warnings.warn(
+                f"dice_bin IndexError: pb.shape={pb.shape}, tb.shape={tb.shape}, "
+                f"pb.dim()={pb.dim()}, tb.dim()={tb.dim()}, spatial_dims={spatial_dims}, error={e}"
+            )
+            raise
 
     wt = dice_bin(pred_wt, tgt_wt)
     tc = dice_bin(pred_tc, tgt_tc)
