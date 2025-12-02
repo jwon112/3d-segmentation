@@ -46,6 +46,8 @@ SIZE_SUFFIX_MODELS = {
     'quadbranch_spatial_distributed_conv_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_p3d_': ['xs', 's', 'm', 'l'],
+    'cascade_shufflenet_v2_aspp_': ['xs', 's', 'm', 'l'],
+    'cascade_shufflenet_v2_p3d_aspp_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_mvit_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_p3d_mvit_': ['xs', 's', 'm', 'l'],
 }
