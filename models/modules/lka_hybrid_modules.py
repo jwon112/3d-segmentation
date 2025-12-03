@@ -140,6 +140,8 @@ class LKAHybridCBAM3D(nn.Module):
         self.use_residual = use_residual
 
         # stride > 1 인 경우, dense 3x3x3 depthwise conv에서 다운샘플링을 수행
+        self.stride = stride
+
         self.lka_kernel = LKAKernel3D(
             channels=channels,
             norm=norm,
@@ -151,6 +153,24 @@ class LKAHybridCBAM3D(nn.Module):
             reduction=reduction,
         )
 
+        # stride > 1인 경우 residual connection을 유지하기 위한 projection 경로
+        # ShuffleNetV2에서 stride=2일 때 identity branch에 projection을 두는 것과 유사하게,
+        # 여기서는 간단한 1x1x1 conv(stride=stride) + norm으로 spatial 크기를 맞춰줍니다.
+        if self.use_residual and self.stride > 1:
+            self.proj = nn.Sequential(
+                nn.Conv3d(
+                    channels,
+                    channels,
+                    kernel_size=1,
+                    stride=stride,
+                    padding=0,
+                    bias=False,
+                ),
+                _make_norm3d(norm, channels),
+            )
+        else:
+            self.proj = None
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
@@ -159,11 +179,17 @@ class LKAHybridCBAM3D(nn.Module):
         Returns:
             LKA 커널 + CBAM Channel Attention (+ optional residual)이 적용된 출력
         """
-        out = self.lka_kernel(x)          # 커널 구조로 특징 추출 (7x7x7 ERF)
+        out = self.lka_kernel(x)          # 커널 구조로 특징 추출 (7x7x7 ERF + stride에 따른 downsample)
         out = self.channel_attention(out) # 채널 어텐션 적용
 
+        # Projection 있는 정석 residual:
+        # - stride == 1: out + x
+        # - stride > 1: out + proj(x)  (spatial 크기를 맞춘 identity)
         if self.use_residual:
-            out = out + x
+            identity = x
+            if self.proj is not None:
+                identity = self.proj(identity)
+            out = out + identity
         return out
 
 

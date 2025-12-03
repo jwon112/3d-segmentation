@@ -1105,21 +1105,30 @@ class CascadeShuffleNetV2UNet3D_LKAHybrid(nn.Module):
         fused_channels = channels["branch3"]
         expanded_channels = channels["down4"]
 
-        # Stage 4: 24^3 -> 12^3 다운샘플 + 채널 확장 후 Hybrid LKA 블록 적용
+        # Stage 4: 24^3 -> 12^3 다운샘플 + 채널 확장 후 Hybrid LKA 블록 2번 적용
         # Expand: 채널 확장 (해상도는 24^3 유지)
         self.down4_expand = nn.Sequential(
             nn.Conv3d(fused_channels, expanded_channels, kernel_size=1, bias=False),
             _make_norm3d(self.norm, expanded_channels),
             _make_activation(activation, inplace=True),
         )
-        # ShuffleNetV2Unit3D_LKAHybrid 대신, 채널 split 없이 모든 채널에 LKA+CBAM 적용
-        self.down4_lka = LKAHybridCBAM3D(
+        # 첫 번째 LKA: stride=2로 24^3 -> 12^3 다운샘플 + 넓은 ERF 확보
+        self.down4_lka1 = LKAHybridCBAM3D(
             channels=expanded_channels,
             reduction=2,
             norm=self.norm,
             activation=activation,
             use_residual=True,
-            stride=2,  # dense 3x3x3 depthwise conv에서 다운샘플링 수행
+            stride=2,
+        )
+        # 두 번째 LKA: stride=1로 12^3 유지, 맵 전체를 한 번 더 덮어 ERF 강화
+        self.down4_lka2 = LKAHybridCBAM3D(
+            channels=expanded_channels,
+            reduction=2,
+            norm=self.norm,
+            activation=activation,
+            use_residual=True,
+            stride=1,
         )
         self.down4_compress = nn.Identity()
 
@@ -1163,9 +1172,10 @@ class CascadeShuffleNetV2UNet3D_LKAHybrid(nn.Module):
         x3 = self.down3(x2)
         x3 = self.down3_extra(x3)
 
-        # Stage 4: 24^3 -> 12^3 다운샘플 + LKA 적용
+        # Stage 4: 24^3 -> 12^3 다운샘플 + LKA 2번 적용 (맵 전체를 충분히 덮도록)
         x4 = self.down4_expand(x3)
-        x4 = self.down4_lka(x4)
+        x4 = self.down4_lka1(x4)
+        x4 = self.down4_lka2(x4)
         x4 = self.down4_compress(x4)
 
         x = self.up1(x4, x3)
