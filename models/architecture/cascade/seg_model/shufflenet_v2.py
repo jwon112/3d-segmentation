@@ -119,6 +119,7 @@ def _build_shufflenet_v2_lka_extra_blocks(
     norm: str,
     reduction: int,
     activation: str,
+    drop_path_rates: list[float] | None = None,
 ) -> nn.Module:
     """ShuffleNetV2 + Hybrid LKA extra blocks (stride=1).
 
@@ -127,17 +128,23 @@ def _build_shufflenet_v2_lka_extra_blocks(
     """
     if num_blocks <= 0:
         return nn.Identity()
-    layers = [
-        ShuffleNetV2Unit3D_LKAHybrid(
-            channels,
-            channels,
-            stride=1,
-            norm=norm,
-            reduction=reduction,
-            activation=activation,
+
+    layers: list[nn.Module] = []
+    for idx in range(num_blocks):
+        drop_rate = 0.0
+        if drop_path_rates is not None and idx < len(drop_path_rates):
+            drop_rate = float(drop_path_rates[idx])
+        layers.append(
+            ShuffleNetV2Unit3D_LKAHybrid(
+                channels,
+                channels,
+                stride=1,
+                norm=norm,
+                reduction=reduction,
+                activation=activation,
+                drop_path=drop_rate,
+            )
         )
-        for _ in range(num_blocks)
-    ]
     return nn.Sequential(*layers)
 
 
@@ -1094,12 +1101,18 @@ class CascadeShuffleNetV2UNet3D_LKAHybrid(nn.Module):
             channels["branch2"],
             channels["branch3"],
             norm=self.norm,
-            reduction=2,
+            reduction=4,
             activation=activation,
         )
         # Stage 3 extra blocks: Hybrid LKA ShuffleNetV2 units
         self.down3_extra = _build_shufflenet_v2_lka_extra_blocks(
-            channels["branch3"], 4, self.norm, reduction=2, activation=activation
+            channels["branch3"],
+            4,
+            self.norm,
+            reduction=4,
+            activation=activation,
+            # Stage3에서만 Stochastic Depth(Linear schedule) 적용
+            drop_path_rates=[0.0, 0.05, 0.1, 0.15],
         )
 
         fused_channels = channels["branch3"]
@@ -1115,7 +1128,7 @@ class CascadeShuffleNetV2UNet3D_LKAHybrid(nn.Module):
         # 첫 번째 LKA: stride=2로 24^3 -> 12^3 다운샘플 + 넓은 ERF 확보
         self.down4_lka1 = LKAHybridCBAM3D(
             channels=expanded_channels,
-            reduction=2,
+            reduction=4,
             norm=self.norm,
             activation=activation,
             use_residual=True,
@@ -1124,7 +1137,7 @@ class CascadeShuffleNetV2UNet3D_LKAHybrid(nn.Module):
         # 두 번째 LKA: stride=1로 12^3 유지, 맵 전체를 한 번 더 덮어 ERF 강화
         self.down4_lka2 = LKAHybridCBAM3D(
             channels=expanded_channels,
-            reduction=2,
+            reduction=4,
             norm=self.norm,
             activation=activation,
             use_residual=True,

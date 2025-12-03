@@ -181,11 +181,16 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
             channels["branch2"],
             channels["branch3"],
             norm=self.norm,
-            reduction=2,
+            reduction=4,
             activation=activation,
         )
         self.down3_extra = _build_shufflenet_v2_lka_extra_blocks(
-            channels["branch3"], 4, self.norm, reduction=2, activation=activation
+            channels["branch3"],
+            4,
+            self.norm,
+            reduction=4,
+            activation=activation,
+            drop_path_rates=[0.0, 0.05, 0.1, 0.15],
         )
 
         fused_channels = channels["branch3"]
@@ -199,7 +204,7 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
         )
         self.down4_lka1 = LKAHybridCBAM3D(
             channels=expanded_channels,
-            reduction=2,
+            reduction=4,
             norm=self.norm,
             activation=activation,
             use_residual=True,
@@ -207,7 +212,7 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
         )
         self.down4_lka2 = LKAHybridCBAM3D(
             channels=expanded_channels,
-            reduction=2,
+            reduction=4,
             norm=self.norm,
             activation=activation,
             use_residual=True,

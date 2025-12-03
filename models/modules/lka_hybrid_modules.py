@@ -23,6 +23,25 @@ from ..model_3d_unet import _make_norm3d, _make_activation
 from .cbam_modules import ChannelAttention3D
 
 
+def drop_path(x: torch.Tensor, drop_prob: float = 0.0, training: bool = False) -> torch.Tensor:
+    """
+    Stochastic Depth / DropPath 구현.
+
+    Conv 블록 자체를 부분적으로 무작위로 꺼서(reg) 과적합을 완화합니다.
+    - per-sample drop (batch 차원 기준)
+    - residual branch에만 적용하는 것을 가정합니다.
+    """
+    if drop_prob == 0.0 or not training:
+        return x
+    keep_prob = 1.0 - drop_prob
+    # (B, 1, 1, 1, 1) 형태로 broadcast
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+    random_tensor = x.new_empty(shape).bernoulli_(keep_prob)
+    # scale to keep expectation
+    x = x / keep_prob * random_tensor
+    return x
+
+
 class LKAKernel3D(nn.Module):
     """
     3D LKA-style kernel (dense + sparse + mixer), attention 없이 순수 커널만 구현.
@@ -135,6 +154,7 @@ class LKAHybridCBAM3D(nn.Module):
         activation: str = "relu",
         use_residual: bool = True,
         stride: int = 1,
+        drop_path_rate: float = 0.0,
     ) -> None:
         super().__init__()
         self.use_residual = use_residual
@@ -152,6 +172,9 @@ class LKAHybridCBAM3D(nn.Module):
             channels=channels,
             reduction=reduction,
         )
+
+        # Stochastic depth 비율 (0이면 사용 안 함)
+        self.drop_path_rate = float(drop_path_rate)
 
         # stride > 1인 경우 residual connection을 유지하기 위한 projection 경로
         # ShuffleNetV2에서 stride=2일 때 identity branch에 projection을 두는 것과 유사하게,
@@ -189,13 +212,15 @@ class LKAHybridCBAM3D(nn.Module):
             identity = x
             if self.proj is not None:
                 identity = self.proj(identity)
-            out = out + identity
+            # Stochastic depth (DropPath)를 residual branch에만 적용
+            out = identity + drop_path(out, self.drop_path_rate, self.training)
         return out
 
 
 __all__ = [
     "LKAKernel3D",
     "LKAHybridCBAM3D",
+    "drop_path",
 ]
 
 

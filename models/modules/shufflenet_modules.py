@@ -457,11 +457,14 @@ class ShuffleNetV2Unit3D_LKAHybrid(nn.Module):
         norm: str = "bn",
         reduction: int = 16,
         activation: str = "relu",
+        drop_path: float = 0.0,
     ) -> None:
         super().__init__()
         self.stride = stride
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.reduction = reduction
+        self.drop_path = float(drop_path)
 
         activation_fn = _make_activation(activation, inplace=True)
 
@@ -493,6 +496,7 @@ class ShuffleNetV2Unit3D_LKAHybrid(nn.Module):
                 activation=activation,
                 use_residual=True,
                 stride=1,
+                drop_path_rate=self.drop_path,
             )
         else:
             # Stride=2: No split, both branches process full input
@@ -539,6 +543,7 @@ class ShuffleNetV2Unit3D_LKAHybrid(nn.Module):
                 activation=activation,
                 use_residual=True,
                 stride=2,
+                drop_path_rate=self.drop_path,
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

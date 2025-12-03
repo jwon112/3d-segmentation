@@ -213,20 +213,55 @@ class BratsCascadeROIDataset(Dataset):
     def _maybe_augment(self, img_vol: torch.Tensor, mask_vol: torch.Tensor):
         if not self.augment:
             return img_vol, mask_vol
+        
+        # 1. Multi-axis flipping (각 축에 대해 독립적으로)
         if torch.rand(1).item() < 0.5:
             img_vol = torch.flip(img_vol, dims=(2,))
             mask_vol = torch.flip(mask_vol, dims=(1,))
         if torch.rand(1).item() < 0.5:
-            scale = 1.0 + 0.1 * torch.randn(1).item()
-            shift = 0.05 * torch.randn(1).item()
+            img_vol = torch.flip(img_vol, dims=(3,))
+            mask_vol = torch.flip(mask_vol, dims=(2,))
+        if torch.rand(1).item() < 0.5:
+            img_vol = torch.flip(img_vol, dims=(4,))
+            mask_vol = torch.flip(mask_vol, dims=(3,))
+        
+        # 2. 90-degree rotations (의료 영상에 적합)
+        if torch.rand(1).item() < 0.5:
+            # XY plane rotation (90, 180, 270도)
+            k = torch.randint(1, 4, (1,)).item()
+            img_vol = torch.rot90(img_vol, k=k, dims=(3, 4))
+            mask_vol = torch.rot90(mask_vol, k=k, dims=(2, 3))
+        
+        # 3. Intensity augmentation: Scale + Shift (강화)
+        if torch.rand(1).item() < 0.5:
+            scale = 1.0 + 0.15 * torch.randn(1).item()  # 0.1 -> 0.15
+            shift = 0.08 * torch.randn(1).item()  # 0.05 -> 0.08
             img_vol = img_vol * scale + shift
-        if torch.rand(1).item() < 0.3:
-            gamma = 0.7 + 0.6 * torch.rand(1).item()
+        
+        # 4. Gamma correction (강화)
+        if torch.rand(1).item() < 0.4:  # 0.3 -> 0.4
+            gamma = 0.6 + 0.8 * torch.rand(1).item()  # 0.7~1.3 -> 0.6~1.4
             sign = torch.sign(img_vol)
             img_vol = sign * (torch.abs(img_vol) ** gamma)
+        
+        # 5. Contrast adjustment
         if torch.rand(1).item() < 0.3:
-            noise = torch.randn_like(img_vol) * 0.03
+            # Contrast: (x - mean) * factor + mean
+            mean = img_vol.mean()
+            factor = 0.7 + 0.6 * torch.rand(1).item()  # 0.7~1.3
+            img_vol = (img_vol - mean) * factor + mean
+        
+        # 6. Brightness adjustment
+        if torch.rand(1).item() < 0.3:
+            brightness = 0.1 * torch.randn(1).item()
+            img_vol = img_vol + brightness
+        
+        # 7. Gaussian noise (강화)
+        if torch.rand(1).item() < 0.4:  # 0.3 -> 0.4
+            noise_std = 0.02 + 0.03 * torch.rand(1).item()  # 0.02~0.05 (기존 0.03 고정)
+            noise = torch.randn_like(img_vol) * noise_std
             img_vol = img_vol + noise
+        
         return img_vol, mask_vol
 
     def __getitem__(self, idx):
@@ -277,20 +312,55 @@ class BratsCascadeSegmentationDataset(Dataset):
     def _maybe_augment(self, img_patch: torch.Tensor, msk_patch: torch.Tensor):
         if not self.augment:
             return img_patch, msk_patch
+        
+        # 1. Multi-axis flipping (각 축에 대해 독립적으로)
         if torch.rand(1).item() < 0.5:
             img_patch = torch.flip(img_patch, dims=(2,))
             msk_patch = torch.flip(msk_patch, dims=(1,))
         if torch.rand(1).item() < 0.5:
-            scale = 1.0 + 0.1 * torch.randn(1).item()
-            shift = 0.05 * torch.randn(1).item()
+            img_patch = torch.flip(img_patch, dims=(3,))
+            msk_patch = torch.flip(msk_patch, dims=(2,))
+        if torch.rand(1).item() < 0.5:
+            img_patch = torch.flip(img_patch, dims=(4,))
+            msk_patch = torch.flip(msk_patch, dims=(3,))
+        
+        # 2. 90-degree rotations (의료 영상에 적합)
+        if torch.rand(1).item() < 0.5:
+            # XY plane rotation (90, 180, 270도)
+            k = torch.randint(1, 4, (1,)).item()
+            img_patch = torch.rot90(img_patch, k=k, dims=(3, 4))
+            msk_patch = torch.rot90(msk_patch, k=k, dims=(2, 3))
+        
+        # 3. Intensity augmentation: Scale + Shift (강화)
+        if torch.rand(1).item() < 0.5:
+            scale = 1.0 + 0.15 * torch.randn(1).item()  # 0.1 -> 0.15
+            shift = 0.08 * torch.randn(1).item()  # 0.05 -> 0.08
             img_patch = img_patch * scale + shift
-        if torch.rand(1).item() < 0.3:
-            gamma = 0.7 + 0.6 * torch.rand(1).item()
+        
+        # 4. Gamma correction (강화)
+        if torch.rand(1).item() < 0.4:  # 0.3 -> 0.4
+            gamma = 0.6 + 0.8 * torch.rand(1).item()  # 0.7~1.3 -> 0.6~1.4
             sign = torch.sign(img_patch)
             img_patch = sign * (torch.abs(img_patch) ** gamma)
+        
+        # 5. Contrast adjustment
         if torch.rand(1).item() < 0.3:
-            noise = torch.randn_like(img_patch) * 0.03
+            # Contrast: (x - mean) * factor + mean
+            mean = img_patch.mean()
+            factor = 0.7 + 0.6 * torch.rand(1).item()  # 0.7~1.3
+            img_patch = (img_patch - mean) * factor + mean
+        
+        # 6. Brightness adjustment
+        if torch.rand(1).item() < 0.3:
+            brightness = 0.1 * torch.randn(1).item()
+            img_patch = img_patch + brightness
+        
+        # 7. Gaussian noise (강화)
+        if torch.rand(1).item() < 0.4:  # 0.3 -> 0.4
+            noise_std = 0.02 + 0.03 * torch.rand(1).item()  # 0.02~0.05 (기존 0.03 고정)
+            noise = torch.randn_like(img_patch) * noise_std
             img_patch = img_patch + noise
+        
         return img_patch, msk_patch
 
     def __getitem__(self, idx):
