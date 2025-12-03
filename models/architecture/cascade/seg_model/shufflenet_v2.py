@@ -25,7 +25,9 @@ from models.modules.shufflenet_modules import (
     MultiScaleDilatedDepthwise3D,
     ChannelAttention3D,
     channel_shuffle_3d,
+    ShuffleNetV2Unit3D_LKAHybrid,
 )
+from models.modules.lka_hybrid_modules import LKAHybridCBAM3D
 from models.modules.mvit_modules import MobileViT3DBlockV3
 from models.model_3d_unet import _make_norm3d, _make_activation
 
@@ -103,6 +105,34 @@ def _build_shufflenet_v2_extra_blocks(
             stride=1,
             norm=norm,
             use_channel_attention=use_channel_attention,
+            reduction=reduction,
+            activation=activation,
+        )
+        for _ in range(num_blocks)
+    ]
+    return nn.Sequential(*layers)
+
+
+def _build_shufflenet_v2_lka_extra_blocks(
+    channels: int,
+    num_blocks: int,
+    norm: str,
+    reduction: int,
+    activation: str,
+) -> nn.Module:
+    """ShuffleNetV2 + Hybrid LKA extra blocks (stride=1).
+
+    Stage3/Stage4에서 해상도는 유지하고, 채널만 유지한 채로
+    ShuffleNetV2Unit3D_LKAHybrid 블록을 반복적으로 적용합니다.
+    """
+    if num_blocks <= 0:
+        return nn.Identity()
+    layers = [
+        ShuffleNetV2Unit3D_LKAHybrid(
+            channels,
+            channels,
+            stride=1,
+            norm=norm,
             reduction=reduction,
             activation=activation,
         )
@@ -313,6 +343,47 @@ class CascadeShuffleNetV2UNet3D(nn.Module):
         x = self.up2(x, x2)
         x = self.up3(x, x1)
         return self.outc(x)
+
+
+class Down3DShuffleNetV2_LKAHybrid(nn.Module):
+    """Downsampling using ShuffleNetV2Unit3D_LKAHybrid (stride=2 then stride=1).
+
+    - unit1: stride=2 (해상도 절반으로 감소)
+    - unit2: stride=1 (해상도 유지, 특징 정제)
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        norm: str = "bn",
+        reduction: int = 16,
+        activation: str = "relu",
+    ) -> None:
+        super().__init__()
+        # First unit: stride=2 for downsampling
+        self.unit1 = ShuffleNetV2Unit3D_LKAHybrid(
+            in_channels,
+            out_channels,
+            stride=2,
+            norm=norm,
+            reduction=reduction,
+            activation=activation,
+        )
+        # Second unit: stride=1 for feature refinement
+        self.unit2 = ShuffleNetV2Unit3D_LKAHybrid(
+            out_channels,
+            out_channels,
+            stride=1,
+            norm=norm,
+            reduction=reduction,
+            activation=activation,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.unit1(x)
+        x = self.unit2(x)
+        return x
 
 
 def build_cascade_shufflenet_v2_unet3d(
@@ -976,6 +1047,150 @@ class CascadeShuffleNetV2UNet3D_LK(nn.Module):
         x = self.up2(x, x2)
         x = self.up3(x, x1)
         return self.outc(x)
+
+
+class CascadeShuffleNetV2UNet3D_LKAHybrid(nn.Module):
+    """
+    Cascade ShuffleNet V2 UNet with Hybrid LKA at Stage 3 and Stage 4.
+
+    - Stage 3: Down3DShuffleNetV2_LKAHybrid 사용 + ShuffleNetV2Unit3D_LKAHybrid extra blocks
+    - Stage 4: 1x1x1 conv 확장 후 ShuffleNetV2Unit3D_LKAHybrid 블록 적용
+    - Decoder 및 Stem 구조는 기본 CascadeShuffleNetV2UNet3D와 동일
+    """
+
+    def __init__(
+        self,
+        n_image_channels: int = 4,
+        n_coord_channels: int = 3,
+        n_classes: int = 4,
+        norm: str = "bn",
+        size: str = "s",
+        include_coords: bool = True,
+    ):
+        super().__init__()
+        self.n_image_channels = n_image_channels
+        self.n_coord_channels = n_coord_channels
+        self.include_coords = include_coords and n_coord_channels > 0
+        self.norm = norm or "bn"
+        self.size = size
+
+        activation = get_activation_type(size)
+        channels = get_singlebranch_channels_2step_decoder(size)
+
+        stem_in = n_image_channels + (n_coord_channels if self.include_coords else 0)
+        self.stem = Stem3x3(stem_in, channels["stem"], norm=self.norm, activation=activation)
+
+        # Stage 2: 기본 ShuffleNetV2 Down 블록 사용
+        self.down2 = Down3DShuffleNetV2(
+            channels["stem"],
+            channels["branch2"],
+            norm=self.norm,
+            use_channel_attention=True,
+            reduction=8,
+            activation=activation,
+        )
+        # Stage 3: Hybrid LKA Down 블록 사용
+        self.down3 = Down3DShuffleNetV2_LKAHybrid(
+            channels["branch2"],
+            channels["branch3"],
+            norm=self.norm,
+            reduction=2,
+            activation=activation,
+        )
+        # Stage 3 extra blocks: Hybrid LKA ShuffleNetV2 units
+        self.down3_extra = _build_shufflenet_v2_lka_extra_blocks(
+            channels["branch3"], 4, self.norm, reduction=2, activation=activation
+        )
+
+        fused_channels = channels["branch3"]
+        expanded_channels = channels["down4"]
+
+        # Stage 4: 24^3 -> 12^3 다운샘플 + 채널 확장 후 Hybrid LKA 블록 적용
+        # Expand: 채널 확장 (해상도는 24^3 유지)
+        self.down4_expand = nn.Sequential(
+            nn.Conv3d(fused_channels, expanded_channels, kernel_size=1, bias=False),
+            _make_norm3d(self.norm, expanded_channels),
+            _make_activation(activation, inplace=True),
+        )
+        # ShuffleNetV2Unit3D_LKAHybrid 대신, 채널 split 없이 모든 채널에 LKA+CBAM 적용
+        self.down4_lka = LKAHybridCBAM3D(
+            channels=expanded_channels,
+            reduction=2,
+            norm=self.norm,
+            activation=activation,
+            use_residual=True,
+            stride=2,  # dense 3x3x3 depthwise conv에서 다운샘플링 수행
+        )
+        self.down4_compress = nn.Identity()
+
+        # Upsampling blocks (기본 모델과 동일)
+        self.up1 = Up3DShuffleNetV2(
+            channels["down4"],
+            skip_channels=fused_channels,
+            out_channels=channels["up1"],
+            norm=self.norm,
+            reduction=2,
+            activation=activation,
+        )
+        self.up2 = Up3DShuffleNetV2(
+            channels["up1"],
+            skip_channels=channels["branch2"],
+            out_channels=channels["up2"],
+            norm=self.norm,
+            reduction=8,
+            activation=activation,
+        )
+        self.up3 = Up3DShuffleNetV2(
+            channels["up2"],
+            skip_channels=channels["stem"],
+            out_channels=channels["out"],
+            norm=self.norm,
+            reduction=2,
+            activation=activation,
+        )
+        self.outc = nn.Conv3d(channels["out"], n_classes, kernel_size=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.include_coords and self.n_coord_channels > 0:
+            img = x[:, : self.n_image_channels]
+            coord = x[:, self.n_image_channels : self.n_image_channels + self.n_coord_channels]
+            x_in = torch.cat([img, coord], dim=1)
+        else:
+            x_in = x[:, : self.n_image_channels]
+
+        x1 = self.stem(x_in)
+        x2 = self.down2(x1)
+        x3 = self.down3(x2)
+        x3 = self.down3_extra(x3)
+
+        # Stage 4: 24^3 -> 12^3 다운샘플 + LKA 적용
+        x4 = self.down4_expand(x3)
+        x4 = self.down4_lka(x4)
+        x4 = self.down4_compress(x4)
+
+        x = self.up1(x4, x3)
+        x = self.up2(x, x2)
+        x = self.up3(x, x1)
+        return self.outc(x)
+
+
+def build_cascade_shufflenet_v2_unet3d_lka_hybrid(
+    *,
+    n_image_channels: int = 4,
+    n_coord_channels: int = 3,
+    n_classes: int = 4,
+    norm: str = "bn",
+    size: str = "s",
+    include_coords: bool = True,
+) -> CascadeShuffleNetV2UNet3D_LKAHybrid:
+    return CascadeShuffleNetV2UNet3D_LKAHybrid(
+        n_image_channels=n_image_channels,
+        n_coord_channels=n_coord_channels,
+        n_classes=n_classes,
+        norm=norm,
+        size=size,
+        include_coords=include_coords,
+    )
 
 
 def build_cascade_shufflenet_v2_unet3d_lk(

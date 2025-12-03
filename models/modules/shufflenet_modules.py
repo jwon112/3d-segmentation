@@ -8,6 +8,7 @@ import torch.nn as nn
 
 from ..model_3d_unet import _make_norm3d, _make_activation
 from .cbam_modules import ChannelAttention3D
+from .lka_hybrid_modules import LKAHybridCBAM3D
 
 
 def channel_shuffle_3d(x: torch.Tensor, groups: int) -> torch.Tensor:
@@ -428,6 +429,152 @@ class ShuffleNetV2Unit3D_Dilated(nn.Module):
             # Concat
             out = torch.cat([out1, out2], dim=1)
         
+        # Channel Shuffle
+        out = channel_shuffle_3d(out, groups=2)
+        return out
+
+
+class ShuffleNetV2Unit3D_LKAHybrid(nn.Module):
+    """3D ShuffleNetV2 Unit with Hybrid LKA branch.
+
+    - Stride=1:
+        Split -> Branch1 (identity) +
+        Branch2 (1x1 -> LKAHybridCBAM3D -> 출력) -> Concat -> Shuffle
+    - Stride=2:
+        No split ->
+        Branch1 (DWConv stride=2 -> 1x1) +
+        Branch2 (1x1 -> LKAHybridCBAM3D -> 출력 채널) -> Concat -> Shuffle
+
+    LKAHybridCBAM3D 내부에서 이미 ChannelAttention3D를 사용하므로,
+    여기서는 추가 채널 어텐션을 사용하지 않습니다.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        stride: int = 1,
+        norm: str = "bn",
+        reduction: int = 16,
+        activation: str = "relu",
+    ) -> None:
+        super().__init__()
+        self.stride = stride
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        activation_fn = _make_activation(activation, inplace=True)
+
+        if stride == 1:
+            # Stride=1: Split operation
+            assert in_channels == out_channels, "For stride=1, in_channels must equal out_channels"
+            mid_channels = out_channels // 2
+
+            # Branch 1: Identity (no operation)
+            self.branch1 = nn.Identity()
+
+            # Branch 2: 1x1 -> Hybrid LKA
+            self.branch2_conv1 = nn.Conv3d(
+                mid_channels,
+                mid_channels,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=False,
+            )
+            self.branch2_bn1 = _make_norm3d(norm, mid_channels)
+            self.branch2_activation = activation_fn
+
+            # Hybrid LKA block (includes depthwise dense + sparse + CBAM channel attention + residual)
+            self.branch2_lka = LKAHybridCBAM3D(
+                channels=mid_channels,
+                reduction=reduction,
+                norm=norm,
+                activation=activation,
+                use_residual=True,
+                stride=1,
+            )
+        else:
+            # Stride=2: No split, both branches process full input
+            mid_out = out_channels // 2
+
+            # Branch 1: DWConv stride=2 -> 1x1
+            self.branch1_conv1 = nn.Conv3d(
+                in_channels,
+                in_channels,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                groups=in_channels,
+                bias=False,
+            )
+            self.branch1_bn1 = _make_norm3d(norm, in_channels)
+            self.branch1_conv2 = nn.Conv3d(
+                in_channels,
+                mid_out,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=False,
+            )
+            self.branch1_bn2 = _make_norm3d(norm, mid_out)
+            self.branch1_activation = activation_fn
+
+            # Branch 2: 1x1 -> Hybrid LKA (stride=2) for downsampling
+            self.branch2_conv1 = nn.Conv3d(
+                in_channels,
+                mid_out,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=False,
+            )
+            self.branch2_bn1 = _make_norm3d(norm, mid_out)
+            self.branch2_activation = activation_fn
+
+            self.branch2_lka = LKAHybridCBAM3D(
+                channels=mid_out,
+                reduction=reduction,
+                norm=norm,
+                activation=activation,
+                use_residual=True,
+                stride=2,
+            )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.stride == 1:
+            # Split channels
+            x1, x2 = x.chunk(2, dim=1)
+
+            # Branch 1: Identity
+            out1 = self.branch1(x1)
+
+            # Branch 2: 1x1 -> Hybrid LKA
+            out2 = self.branch2_conv1(x2)
+            out2 = self.branch2_bn1(out2)
+            out2 = self.branch2_activation(out2)
+            out2 = self.branch2_lka(out2)
+
+            # Concat
+            out = torch.cat([out1, out2], dim=1)
+        else:
+            # Both branches process full input
+            # Branch 1
+            out1 = self.branch1_conv1(x)
+            out1 = self.branch1_bn1(out1)
+            out1 = self.branch1_conv2(out1)
+            out1 = self.branch1_bn2(out1)
+            out1 = self.branch1_activation(out1)
+
+            # Branch 2
+            out2 = self.branch2_conv1(x)
+            out2 = self.branch2_bn1(out2)
+            out2 = self.branch2_activation(out2)
+            out2 = self.branch2_lka(out2)
+
+            # Concat
+            out = torch.cat([out1, out2], dim=1)
+
         # Channel Shuffle
         out = channel_shuffle_3d(out, groups=2)
         return out

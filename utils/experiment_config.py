@@ -48,6 +48,7 @@ SIZE_SUFFIX_MODELS = {
     'cascade_shufflenet_v2_p3d_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_lk_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_p3d_lk_': ['xs', 's', 'm', 'l'],
+    'cascade_shufflenet_v2_lka_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_mvit_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_p3d_mvit_': ['xs', 's', 'm', 'l'],
 }
