@@ -215,22 +215,23 @@ class BratsCascadeROIDataset(Dataset):
             return img_vol, mask_vol
         
         # 1. Multi-axis flipping (각 축에 대해 독립적으로)
+        # img_vol: (C, D, H, W), mask_vol: (D, H, W)
         if torch.rand(1).item() < 0.5:
-            img_vol = torch.flip(img_vol, dims=(2,))
-            mask_vol = torch.flip(mask_vol, dims=(1,))
+            img_vol = torch.flip(img_vol, dims=(1,))  # Depth flip
+            mask_vol = torch.flip(mask_vol, dims=(0,))  # Depth flip
         if torch.rand(1).item() < 0.5:
-            img_vol = torch.flip(img_vol, dims=(3,))
-            mask_vol = torch.flip(mask_vol, dims=(2,))
+            img_vol = torch.flip(img_vol, dims=(2,))  # Height flip
+            mask_vol = torch.flip(mask_vol, dims=(1,))  # Height flip
         if torch.rand(1).item() < 0.5:
-            img_vol = torch.flip(img_vol, dims=(4,))
-            mask_vol = torch.flip(mask_vol, dims=(3,))
+            img_vol = torch.flip(img_vol, dims=(3,))  # Width flip
+            mask_vol = torch.flip(mask_vol, dims=(2,))  # Width flip
         
         # 2. 90-degree rotations (의료 영상에 적합)
         if torch.rand(1).item() < 0.5:
             # XY plane rotation (90, 180, 270도)
             k = torch.randint(1, 4, (1,)).item()
-            img_vol = torch.rot90(img_vol, k=k, dims=(3, 4))
-            mask_vol = torch.rot90(mask_vol, k=k, dims=(2, 3))
+            img_vol = torch.rot90(img_vol, k=k, dims=(2, 3))  # Height, Width
+            mask_vol = torch.rot90(mask_vol, k=k, dims=(1, 2))  # Height, Width
         
         # 3. Intensity augmentation: Scale + Shift (강화)
         if torch.rand(1).item() < 0.5:
@@ -314,22 +315,23 @@ class BratsCascadeSegmentationDataset(Dataset):
             return img_patch, msk_patch
         
         # 1. Multi-axis flipping (각 축에 대해 독립적으로)
+        # img_patch: (C, D, H, W), msk_patch: (D, H, W)
         if torch.rand(1).item() < 0.5:
-            img_patch = torch.flip(img_patch, dims=(2,))
-            msk_patch = torch.flip(msk_patch, dims=(1,))
+            img_patch = torch.flip(img_patch, dims=(1,))  # Depth flip
+            msk_patch = torch.flip(msk_patch, dims=(0,))  # Depth flip
         if torch.rand(1).item() < 0.5:
-            img_patch = torch.flip(img_patch, dims=(3,))
-            msk_patch = torch.flip(msk_patch, dims=(2,))
+            img_patch = torch.flip(img_patch, dims=(2,))  # Height flip
+            msk_patch = torch.flip(msk_patch, dims=(1,))  # Height flip
         if torch.rand(1).item() < 0.5:
-            img_patch = torch.flip(img_patch, dims=(4,))
-            msk_patch = torch.flip(msk_patch, dims=(3,))
+            img_patch = torch.flip(img_patch, dims=(3,))  # Width flip
+            msk_patch = torch.flip(msk_patch, dims=(2,))  # Width flip
         
         # 2. 90-degree rotations (의료 영상에 적합)
         if torch.rand(1).item() < 0.5:
             # XY plane rotation (90, 180, 270도)
             k = torch.randint(1, 4, (1,)).item()
-            img_patch = torch.rot90(img_patch, k=k, dims=(3, 4))
-            msk_patch = torch.rot90(msk_patch, k=k, dims=(2, 3))
+            img_patch = torch.rot90(img_patch, k=k, dims=(2, 3))  # Height, Width
+            msk_patch = torch.rot90(msk_patch, k=k, dims=(1, 2))  # Height, Width
         
         # 3. Intensity augmentation: Scale + Shift (강화)
         if torch.rand(1).item() < 0.5:
