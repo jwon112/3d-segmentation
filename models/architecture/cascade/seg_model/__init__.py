@@ -18,6 +18,10 @@ from .shufflenet_v2 import (
     CascadeShuffleNetV2UNet3D_P3D_MViT,
     build_cascade_shufflenet_v2_unet3d_p3d_mvit,
 )
+from .shufflenet_v2_segnext import (
+    CascadeShuffleNetV2SegNeXt3D_LKA,
+    build_cascade_shufflenet_v2_segnext_lka,
+)
 
 __all__ = [
     "CascadeShuffleNetV2UNet3D",
@@ -30,6 +34,8 @@ __all__ = [
     "build_cascade_shufflenet_v2_unet3d_p3d_lk",
     "CascadeShuffleNetV2UNet3D_LKAHybrid",
     "build_cascade_shufflenet_v2_unet3d_lka_hybrid",
+    "CascadeShuffleNetV2SegNeXt3D_LKA",
+    "build_cascade_shufflenet_v2_segnext_lka",
     "CascadeShuffleNetV2UNet3D_MViT",
     "build_cascade_shufflenet_v2_unet3d_mvit",
     "CascadeShuffleNetV2UNet3D_P3D_MViT",

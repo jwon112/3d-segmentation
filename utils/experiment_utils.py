@@ -553,6 +553,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         'cascade_shufflenet_v2_lk_',
         'cascade_shufflenet_v2_p3d_lk_',
         'cascade_shufflenet_v2_lka_',
+        'cascade_shufflenet_v2_lka_segnext_',
         'cascade_shufflenet_v2_mvit_',
         'cascade_shufflenet_v2_p3d_mvit_',
         'quadbranch_unet_', 'quadbranch_channel_centralized_concat_',
@@ -1080,7 +1081,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             )
         return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_lk)
     elif model_name.startswith('cascade_shufflenet_v2_lka_'):
-        # Cascade ShuffleNet V2 UNet with Hybrid LKA at Stage 3 & 4
+        # Cascade ShuffleNet V2 UNet with Hybrid LKA at Stage 3 & 4 (UNet-style decoder)
         # Input: 7 channels (4 MRI + 3 CoordConv)
         # Support xs, s, m, l sizes
         try:
@@ -1103,6 +1104,30 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 include_coords=True,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_lka)
+    elif model_name.startswith('cascade_shufflenet_v2_lka_segnext_'):
+        # Cascade ShuffleNet V2 encoder with Hybrid LKA + SegNeXt-style decoder
+        # Input: 7 channels (4 MRI + 3 CoordConv)
+        # Support xs, s, m, l sizes
+        try:
+            # Remove 'lka_segnext_' prefix for size parsing
+            base_name_for_parsing = model_name.replace('cascade_shufflenet_v2_lka_segnext_', 'cascade_shufflenet_v2_')
+            base_name, size = parse_model_size(base_name_for_parsing)
+        except Exception as e:
+            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
+        
+        def _create_cascade_shufflenet_v2_lka_segnext():
+            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_segnext_lka
+            # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
+            # include_coords는 기본적으로 True (CoordConv 사용)
+            return build_cascade_shufflenet_v2_segnext_lka(
+                n_image_channels=4,
+                n_coord_channels=3,
+                n_classes=n_classes,
+                norm=norm,
+                size=size,
+                include_coords=True,
+            )
+        return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_lka_segnext)
     elif model_name.startswith('cascade_shufflenet_v2_p3d_'):
         # Cascade ShuffleNet V2 UNet with P3D (Pseudo-3D) convolutions
         # Input: 7 channels (4 MRI + 3 CoordConv)
