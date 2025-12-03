@@ -550,6 +550,8 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         'dualbranch_19_shufflenet_v2_stage3fused_',
         'cascade_shufflenet_v2_',
         'cascade_shufflenet_v2_p3d_',
+        'cascade_shufflenet_v2_lk_',
+        'cascade_shufflenet_v2_p3d_lk_',
         'cascade_shufflenet_v2_mvit_',
         'cascade_shufflenet_v2_p3d_mvit_',
         'quadbranch_unet_', 'quadbranch_channel_centralized_concat_',
@@ -1028,22 +1030,22 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 include_coords=True,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_p3d_mvit)
-    elif model_name.startswith('cascade_shufflenet_v2_p3d_aspp_'):
-        # Cascade ShuffleNet V2 UNet with P3D + ASPP (P3D convolutions + ASPP at Stage 4)
+    elif model_name.startswith('cascade_shufflenet_v2_p3d_lk_'):
+        # Cascade ShuffleNet V2 UNet with P3D + Large Kernel (P3D convolutions + 7x7x7 x2 at Stage 4)
         # Input: 7 channels (4 MRI + 3 CoordConv)
         # Support xs, s, m, l sizes
         try:
-            # Remove 'p3d_aspp_' prefix for size parsing
-            base_name_for_parsing = model_name.replace('cascade_shufflenet_v2_p3d_aspp_', 'cascade_shufflenet_v2_')
+            # Remove 'p3d_lk_' prefix for size parsing
+            base_name_for_parsing = model_name.replace('cascade_shufflenet_v2_p3d_lk_', 'cascade_shufflenet_v2_')
             base_name, size = parse_model_size(base_name_for_parsing)
         except Exception as e:
             raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
         
-        def _create_cascade_shufflenet_v2_p3d_aspp():
-            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_unet3d_p3d_aspp
+        def _create_cascade_shufflenet_v2_p3d_lk():
+            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_unet3d_p3d_lk
             # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
             # include_coords는 기본적으로 True (CoordConv 사용)
-            return build_cascade_shufflenet_v2_unet3d_p3d_aspp(
+            return build_cascade_shufflenet_v2_unet3d_p3d_lk(
                 n_image_channels=4,
                 n_coord_channels=3,
                 n_classes=n_classes,
@@ -1051,23 +1053,23 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 size=size,
                 include_coords=True,
             )
-        return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_p3d_aspp)
-    elif model_name.startswith('cascade_shufflenet_v2_aspp_'):
-        # Cascade ShuffleNet V2 UNet with ASPP at Stage 4
+        return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_p3d_lk)
+    elif model_name.startswith('cascade_shufflenet_v2_lk_'):
+        # Cascade ShuffleNet V2 UNet with Large Kernel (7x7x7 x2 at Stage 4)
         # Input: 7 channels (4 MRI + 3 CoordConv)
         # Support xs, s, m, l sizes
         try:
-            # Remove 'aspp_' prefix for size parsing
-            base_name_for_parsing = model_name.replace('cascade_shufflenet_v2_aspp_', 'cascade_shufflenet_v2_')
+            # Remove 'lk_' prefix for size parsing
+            base_name_for_parsing = model_name.replace('cascade_shufflenet_v2_lk_', 'cascade_shufflenet_v2_')
             base_name, size = parse_model_size(base_name_for_parsing)
         except Exception as e:
             raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
         
-        def _create_cascade_shufflenet_v2_aspp():
-            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_unet3d_aspp
+        def _create_cascade_shufflenet_v2_lk():
+            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_unet3d_lk
             # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
             # include_coords는 기본적으로 True (CoordConv 사용)
-            return build_cascade_shufflenet_v2_unet3d_aspp(
+            return build_cascade_shufflenet_v2_unet3d_lk(
                 n_image_channels=4,
                 n_coord_channels=3,
                 n_classes=n_classes,
@@ -1075,7 +1077,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 size=size,
                 include_coords=True,
             )
-        return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_aspp)
+        return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_lk)
     elif model_name.startswith('cascade_shufflenet_v2_p3d_'):
         # Cascade ShuffleNet V2 UNet with P3D (Pseudo-3D) convolutions
         # Input: 7 channels (4 MRI + 3 CoordConv)

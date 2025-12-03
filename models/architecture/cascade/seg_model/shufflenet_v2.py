@@ -27,7 +27,6 @@ from models.modules.shufflenet_modules import (
     channel_shuffle_3d,
 )
 from models.modules.mvit_modules import MobileViT3DBlockV3
-from models.modules.aspp_modules import ASPP3D_Simplified
 from models.model_3d_unet import _make_norm3d, _make_activation
 
 
@@ -251,21 +250,11 @@ class CascadeShuffleNetV2UNet3D(nn.Module):
             _make_norm3d(self.norm, expanded_channels),
             _make_activation(activation, inplace=True),
         )
-        # Stage 4: 기존 시퀀스 Dilated conv + 7x7x7 Depthwise Separable Conv
-        # Dilated conv의 듬성듬성한 영역을 7x7x7 conv로 평가/보완
+        # Stage 4: Sequential Dilated conv만 사용
         self.down4_dilated = MultiScaleDilatedDepthwise3D(
             channels=expanded_channels,
             dilation_rates=[1, 2, 5],
             kernel_size=3,
-            norm=self.norm,
-            activation=activation,
-        )
-        # 7x7x7 depthwise separable conv: dilated conv의 sparse 영역을 채워주는 심판자 역할
-        # Pointwise conv로 채널 간 정보 교환
-        self.down4_dense = DepthwiseSeparableConv3D(
-            channels=expanded_channels,
-            kernel_size=7,
-            stride=1,
             norm=self.norm,
             activation=activation,
         )
@@ -317,8 +306,7 @@ class CascadeShuffleNetV2UNet3D(nn.Module):
         x3 = self.down3_extra(x3)
 
         x4 = self.down4_expand(x3)
-        x4_dilated = self.down4_dilated(x4)  # Dilated conv로 넓은 receptive field (내부에 residual 있음)
-        x4 = x4_dilated + self.down4_dense(x4_dilated)  # Residual connection: 7x7x7 conv로 sparse 영역 보완
+        x4 = self.down4_dilated(x4)  # Dilated conv로 넓은 receptive field (내부에 residual 있음)
         x4 = self.down4_compress(x4)
 
         x = self.up1(x4, x3)
@@ -702,8 +690,7 @@ class CascadeShuffleNetV2UNet3D_P3D(nn.Module):
         fused_channels = channels["branch3"]
         expanded_channels = channels["down4"]
 
-        # Stage 4: 기존 시퀀스 Dilated conv + 7x7x7 Depthwise Separable Conv
-        # Dilated conv의 듬성듬성한 영역을 7x7x7 conv로 평가/보완
+        # Stage 4: Sequential Dilated conv만 사용
         self.down4_expand = nn.Sequential(
             nn.Conv3d(fused_channels, expanded_channels, kernel_size=1, bias=False),
             _make_norm3d(self.norm, expanded_channels),
@@ -713,15 +700,6 @@ class CascadeShuffleNetV2UNet3D_P3D(nn.Module):
             channels=expanded_channels,
             dilation_rates=[1, 2, 5],
             kernel_size=3,
-            norm=self.norm,
-            activation=activation,
-        )
-        # 7x7x7 depthwise separable conv: dilated conv의 sparse 영역을 채워주는 심판자 역할
-        # Pointwise conv로 채널 간 정보 교환
-        self.down4_dense = DepthwiseSeparableConv3D(
-            channels=expanded_channels,
-            kernel_size=7,
-            stride=1,
             norm=self.norm,
             activation=activation,
         )
@@ -768,8 +746,7 @@ class CascadeShuffleNetV2UNet3D_P3D(nn.Module):
         x3 = self.down3_extra(x3)
 
         x4 = self.down4_expand(x3)
-        x4_dilated = self.down4_dilated(x4)  # Dilated conv로 넓은 receptive field (내부에 residual 있음)
-        x4 = x4_dilated + self.down4_dense(x4_dilated)  # Residual connection: 7x7x7 conv로 sparse 영역 보완
+        x4 = self.down4_dilated(x4)  # Dilated conv로 넓은 receptive field (내부에 residual 있음)
         x4 = self.down4_compress(x4)
 
         x = self.up1(x4, x3)
@@ -798,15 +775,87 @@ def build_cascade_shufflenet_v2_unet3d_p3d(
 
 
 # ============================================================================
-# ASPP Variant (Stage 4 with ASPP)
+# Large Kernel (7x7x7 x2) Variants
 # ============================================================================
 
-class CascadeShuffleNetV2UNet3D_ASPP(nn.Module):
+class P3DDepthwiseSeparableConv3D(nn.Module):
     """
-    Cascade ShuffleNet V2 UNet with ASPP at Stage 4.
+    P3D Depthwise Separable Convolution
     
-    Stage 4의 MultiScaleDilatedDepthwise3D를 ASPP3D_Simplified로 교체
-    - 병렬 dilated convolution으로 다양한 receptive field 동시 처리
+    3D Depthwise Separable Conv를 P3D 방식으로 구현
+    - Depthwise: P3DConv (2D spatial + 1D depth)
+    - Pointwise: 1x1x1 conv (채널 혼합)
+    """
+    def __init__(
+        self,
+        channels: int,
+        kernel_size: int = 7,
+        stride: int = 1,
+        padding: int = None,
+        norm: str = "bn",
+        activation: str = "relu",
+    ):
+        super().__init__()
+        if padding is None:
+            padding = kernel_size // 2
+        
+        # P3D Depthwise conv: 2D spatial + 1D depth
+        self.depthwise_2d = nn.Conv2d(
+            channels, channels, kernel_size=(kernel_size, kernel_size),
+            stride=(stride, stride), padding=(padding, padding),
+            groups=channels, bias=False
+        )
+        self.depthwise_1d = nn.Conv1d(
+            channels, channels, kernel_size=kernel_size,
+            stride=stride, padding=padding, groups=channels, bias=False
+        )
+        self.dw_bn = _make_norm3d(norm, channels)
+        self.dw_act = _make_activation(activation, inplace=True)
+        
+        # Pointwise conv: 1x1x1 채널 혼합
+        self.pointwise = nn.Sequential(
+            nn.Conv3d(channels, channels, kernel_size=1, stride=1, padding=0, bias=False),
+            _make_norm3d(norm, channels),
+            _make_activation(activation, inplace=True),
+        )
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, C, D, H, W)
+        B, C, D, H, W = x.shape
+        
+        # P3D Depthwise: 2D spatial conv
+        x_2d = x.permute(0, 2, 1, 3, 4).contiguous().view(B * D, C, H, W)
+        x_2d = self.depthwise_2d(x_2d)  # (B*D, C, H', W')
+        _, _, H_out, W_out = x_2d.shape
+        x_3d = x_2d.view(B, D, C, H_out, W_out).permute(0, 2, 1, 3, 4).contiguous()
+        
+        # P3D Depthwise: 1D depth conv
+        x_1d = x_3d.permute(0, 3, 4, 1, 2).contiguous().view(B * H_out * W_out, C, D)
+        x_1d = self.depthwise_1d(x_1d)  # (B*H*W, C, D')
+        _, _, D_out = x_1d.shape
+        x_3d = x_1d.view(B, H_out, W_out, C, D_out).permute(0, 3, 4, 1, 2).contiguous()
+        
+        # Norm & Activation
+        x_3d = self.dw_bn(x_3d)
+        x_3d = self.dw_act(x_3d)
+        
+        # Pointwise conv
+        identity = x  # Residual connection
+        x_3d = self.pointwise(x_3d)
+        return identity + x_3d  # Residual connection
+
+
+# ============================================================================
+# Large Kernel (7x7x7 x2) Variants
+# ============================================================================
+
+class CascadeShuffleNetV2UNet3D_LK(nn.Module):
+    """
+    Cascade ShuffleNet V2 UNet with Large Kernel (7x7x7 x2) at Stage 4.
+    
+    Stage 4에서 7x7x7 depthwise separable conv를 2개 순차적으로 사용
+    - 각 conv는 residual connection 포함
+    - Dilated conv보다 비싸지만 더 dense한 receptive field
     - 96^3 -> 48^3 -> 24^3 -> 12^3 구조 유지
     """
     def __init__(
@@ -854,21 +903,27 @@ class CascadeShuffleNetV2UNet3D_ASPP(nn.Module):
         fused_channels = channels["branch3"]
         expanded_channels = channels["down4"]
 
-        # Stage 4: ASPP 사용
+        # Stage 4: 7x7x7 depthwise separable conv 2개 (residual 포함)
         self.down4_expand = nn.Sequential(
             nn.Conv3d(fused_channels, expanded_channels, kernel_size=1, bias=False),
             _make_norm3d(self.norm, expanded_channels),
             _make_activation(activation, inplace=True),
         )
-        # Stage 4가 12^3으로 작아졌으므로 ASPP3D_Simplified 사용
-        self.down4_depth = ASPP3D_Simplified(
-            in_channels=expanded_channels,
-            out_channels=expanded_channels,
-            # ASPP는 병렬 브랜치라 동일 rate라도 sequential dilated conv보다 erf가 작음
-            # 기존 dilated conv 시퀀스 [1, 2, 5]와 동일 구성을 유지
-            dilation_rates=[1, 2, 5],
+        # 첫 번째 7x7x7 conv
+        self.down4_lk1 = DepthwiseSeparableConv3D(
+            channels=expanded_channels,
+            kernel_size=7,
+            stride=1,
             norm=self.norm,
-            use_image_pooling=False,  # 작은 크기에서는 pooling 불필요
+            activation=activation,
+        )
+        # 두 번째 7x7x7 conv (residual connection 포함)
+        self.down4_lk2 = DepthwiseSeparableConv3D(
+            channels=expanded_channels,
+            kernel_size=7,
+            stride=1,
+            norm=self.norm,
+            activation=activation,
         )
         self.down4_compress = nn.Identity()
 
@@ -913,7 +968,8 @@ class CascadeShuffleNetV2UNet3D_ASPP(nn.Module):
         x3 = self.down3_extra(x3)
 
         x4 = self.down4_expand(x3)
-        x4 = self.down4_depth(x4)
+        x4 = self.down4_lk1(x4)  # 첫 번째 7x7x7 conv (residual 포함)
+        x4 = self.down4_lk2(x4)  # 두 번째 7x7x7 conv (residual 포함)
         x4 = self.down4_compress(x4)
 
         x = self.up1(x4, x3)
@@ -922,7 +978,7 @@ class CascadeShuffleNetV2UNet3D_ASPP(nn.Module):
         return self.outc(x)
 
 
-def build_cascade_shufflenet_v2_unet3d_aspp(
+def build_cascade_shufflenet_v2_unet3d_lk(
     *,
     n_image_channels: int = 4,
     n_coord_channels: int = 3,
@@ -930,8 +986,8 @@ def build_cascade_shufflenet_v2_unet3d_aspp(
     norm: str = "bn",
     size: str = "s",
     include_coords: bool = True,
-) -> CascadeShuffleNetV2UNet3D_ASPP:
-    return CascadeShuffleNetV2UNet3D_ASPP(
+) -> CascadeShuffleNetV2UNet3D_LK:
+    return CascadeShuffleNetV2UNet3D_LK(
         n_image_channels=n_image_channels,
         n_coord_channels=n_coord_channels,
         n_classes=n_classes,
@@ -941,15 +997,15 @@ def build_cascade_shufflenet_v2_unet3d_aspp(
     )
 
 
-class CascadeShuffleNetV2UNet3D_P3D_ASPP(nn.Module):
+class CascadeShuffleNetV2UNet3D_P3D_LK(nn.Module):
     """
-    Cascade ShuffleNet V2 UNet with P3D convolutions + ASPP at Stage 4.
+    Cascade ShuffleNet V2 UNet with P3D convolutions + Large Kernel (7x7x7 x2) at Stage 4.
     
     P3D 구조: 3D conv를 2D spatial conv + 1D depth conv로 분리
-    Stage 4: ASPP3D_Simplified로 다양한 receptive field 동시 처리
+    Stage 4: P3D 방식의 7x7x7 depthwise separable conv 2개 사용
     - 메모리 효율적 (P3D)
     - 파라미터 수 감소 (P3D)
-    - 병렬 dilated convolution (ASPP)
+    - 각 conv는 residual connection 포함
     - 96^3 -> 48^3 -> 24^3 -> 12^3 구조 유지
     """
     def __init__(
@@ -999,21 +1055,27 @@ class CascadeShuffleNetV2UNet3D_P3D_ASPP(nn.Module):
         fused_channels = channels["branch3"]
         expanded_channels = channels["down4"]
 
-        # Stage 4: ASPP 사용
+        # Stage 4: P3D 방식의 7x7x7 depthwise separable conv 2개 (residual 포함)
         self.down4_expand = nn.Sequential(
             nn.Conv3d(fused_channels, expanded_channels, kernel_size=1, bias=False),
             _make_norm3d(self.norm, expanded_channels),
             _make_activation(activation, inplace=True),
         )
-        # Stage 4가 12^3으로 작아졌으므로 ASPP3D_Simplified 사용
-        self.down4_depth = ASPP3D_Simplified(
-            in_channels=expanded_channels,
-            out_channels=expanded_channels,
-            # ASPP는 병렬 브랜치라 동일 rate라도 sequential dilated conv보다 erf가 작음
-            # 기존 dilated conv 시퀀스 [1, 2, 5]와 동일 구성을 유지
-            dilation_rates=[1, 2, 5],
+        # 첫 번째 P3D 7x7x7 conv
+        self.down4_lk1 = P3DDepthwiseSeparableConv3D(
+            channels=expanded_channels,
+            kernel_size=7,
+            stride=1,
             norm=self.norm,
-            use_image_pooling=False,  # 작은 크기에서는 pooling 불필요
+            activation=activation,
+        )
+        # 두 번째 P3D 7x7x7 conv (residual connection 포함)
+        self.down4_lk2 = P3DDepthwiseSeparableConv3D(
+            channels=expanded_channels,
+            kernel_size=7,
+            stride=1,
+            norm=self.norm,
+            activation=activation,
         )
         self.down4_compress = nn.Identity()
 
@@ -1058,7 +1120,8 @@ class CascadeShuffleNetV2UNet3D_P3D_ASPP(nn.Module):
         x3 = self.down3_extra(x3)
 
         x4 = self.down4_expand(x3)
-        x4 = self.down4_depth(x4)
+        x4 = self.down4_lk1(x4)  # 첫 번째 P3D 7x7x7 conv (residual 포함)
+        x4 = self.down4_lk2(x4)  # 두 번째 P3D 7x7x7 conv (residual 포함)
         x4 = self.down4_compress(x4)
 
         x = self.up1(x4, x3)
@@ -1067,7 +1130,7 @@ class CascadeShuffleNetV2UNet3D_P3D_ASPP(nn.Module):
         return self.outc(x)
 
 
-def build_cascade_shufflenet_v2_unet3d_p3d_aspp(
+def build_cascade_shufflenet_v2_unet3d_p3d_lk(
     *,
     n_image_channels: int = 4,
     n_coord_channels: int = 3,
@@ -1075,8 +1138,8 @@ def build_cascade_shufflenet_v2_unet3d_p3d_aspp(
     norm: str = "bn",
     size: str = "s",
     include_coords: bool = True,
-) -> CascadeShuffleNetV2UNet3D_P3D_ASPP:
-    return CascadeShuffleNetV2UNet3D_P3D_ASPP(
+) -> CascadeShuffleNetV2UNet3D_P3D_LK:
+    return CascadeShuffleNetV2UNet3D_P3D_LK(
         n_image_channels=n_image_channels,
         n_coord_channels=n_coord_channels,
         n_classes=n_classes,
@@ -1453,10 +1516,10 @@ __all__ = [
     "build_cascade_shufflenet_v2_unet3d",
     "CascadeShuffleNetV2UNet3D_P3D",
     "build_cascade_shufflenet_v2_unet3d_p3d",
-    "CascadeShuffleNetV2UNet3D_ASPP",
-    "build_cascade_shufflenet_v2_unet3d_aspp",
-    "CascadeShuffleNetV2UNet3D_P3D_ASPP",
-    "build_cascade_shufflenet_v2_unet3d_p3d_aspp",
+    "CascadeShuffleNetV2UNet3D_LK",
+    "build_cascade_shufflenet_v2_unet3d_lk",
+    "CascadeShuffleNetV2UNet3D_P3D_LK",
+    "build_cascade_shufflenet_v2_unet3d_p3d_lk",
     "CascadeShuffleNetV2UNet3D_MViT",
     "build_cascade_shufflenet_v2_unet3d_mvit",
     "CascadeShuffleNetV2UNet3D_P3D_MViT",
