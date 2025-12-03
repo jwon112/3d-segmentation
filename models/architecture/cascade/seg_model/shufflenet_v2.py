@@ -81,9 +81,10 @@ class DepthwiseSeparableConv3D(nn.Module):
         )
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        identity = x  # Residual connection
         x = self.depthwise(x)
         x = self.pointwise(x)
-        return x
+        return identity + x  # Residual connection 추가
 
 
 def _build_shufflenet_v2_extra_blocks(
@@ -114,17 +115,24 @@ def _build_shufflenet_v2_extra_blocks(
 class Stem3x3(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, norm: str = "bn", activation: str = "relu"):
         super().__init__()
-        self.block = nn.Sequential(
+        # 첫 번째 conv: in_channels -> out_channels (채널 변경, residual 불가)
+        self.conv1 = nn.Sequential(
             nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
             _make_norm3d(norm, out_channels),
             _make_activation(activation, inplace=True),
+        )
+        # 두 번째 conv: out_channels -> out_channels (채널 동일, residual 가능)
+        self.conv2 = nn.Sequential(
             nn.Conv3d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
             _make_norm3d(norm, out_channels),
             _make_activation(activation, inplace=True),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.block(x)
+        x = self.conv1(x)  # in_channels -> out_channels
+        identity = x  # Residual connection을 위한 identity 저장
+        x = self.conv2(x)  # out_channels -> out_channels
+        return identity + x  # Residual connection 추가
 
 
 class Up3DShuffleNetV2(nn.Module):
@@ -399,17 +407,24 @@ class P3DStem3x3(nn.Module):
     """P3D Stem: 3x3x3 conv를 3x3 2D + 3 1D로 분리"""
     def __init__(self, in_channels: int, out_channels: int, norm: str = "bn", activation: str = "relu"):
         super().__init__()
-        self.block = nn.Sequential(
+        # 첫 번째 P3DConv: in_channels -> out_channels (채널 변경, residual 불가)
+        self.conv1 = nn.Sequential(
             P3DConv3d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
             _make_norm3d(norm, out_channels),
             _make_activation(activation, inplace=True),
+        )
+        # 두 번째 P3DConv: out_channels -> out_channels (채널 동일, residual 가능)
+        self.conv2 = nn.Sequential(
             P3DConv3d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
             _make_norm3d(norm, out_channels),
             _make_activation(activation, inplace=True),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.block(x)
+        x = self.conv1(x)  # in_channels -> out_channels
+        identity = x  # Residual connection을 위한 identity 저장
+        x = self.conv2(x)  # out_channels -> out_channels
+        return identity + x  # Residual connection 추가
 
 
 class P3DShuffleNetV2Unit3D(nn.Module):
