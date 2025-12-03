@@ -36,7 +36,7 @@ class DepthwiseSeparableConv3D(nn.Module):
     3D Depthwise Separable Convolution
     
     Depthwise conv (각 채널별 독립 conv) + Pointwise conv (1x1x1 채널 혼합)
-    파라미터 효율적인 대형 커널 conv 구현
+    채널 간 정보 교환을 위해 pointwise conv 포함
     """
     def __init__(
         self,
@@ -66,7 +66,7 @@ class DepthwiseSeparableConv3D(nn.Module):
             _make_activation(activation, inplace=True),
         )
         
-        # Pointwise conv: 1x1x1 채널 혼합
+        # Pointwise conv: 1x1x1 채널 혼합 (채널 간 정보 교환)
         self.pointwise = nn.Sequential(
             nn.Conv3d(
                 channels,
@@ -253,6 +253,7 @@ class CascadeShuffleNetV2UNet3D(nn.Module):
             activation=activation,
         )
         # 7x7x7 depthwise separable conv: dilated conv의 sparse 영역을 채워주는 심판자 역할
+        # Pointwise conv로 채널 간 정보 교환
         self.down4_dense = DepthwiseSeparableConv3D(
             channels=expanded_channels,
             kernel_size=7,
@@ -308,8 +309,8 @@ class CascadeShuffleNetV2UNet3D(nn.Module):
         x3 = self.down3_extra(x3)
 
         x4 = self.down4_expand(x3)
-        x4 = self.down4_dilated(x4)  # Dilated conv로 넓은 receptive field
-        x4 = self.down4_dense(x4)    # 7x7x7 conv로 sparse 영역 보완
+        x4_dilated = self.down4_dilated(x4)  # Dilated conv로 넓은 receptive field (내부에 residual 있음)
+        x4 = x4_dilated + self.down4_dense(x4_dilated)  # Residual connection: 7x7x7 conv로 sparse 영역 보완
         x4 = self.down4_compress(x4)
 
         x = self.up1(x4, x3)
@@ -701,6 +702,7 @@ class CascadeShuffleNetV2UNet3D_P3D(nn.Module):
             activation=activation,
         )
         # 7x7x7 depthwise separable conv: dilated conv의 sparse 영역을 채워주는 심판자 역할
+        # Pointwise conv로 채널 간 정보 교환
         self.down4_dense = DepthwiseSeparableConv3D(
             channels=expanded_channels,
             kernel_size=7,
@@ -751,8 +753,8 @@ class CascadeShuffleNetV2UNet3D_P3D(nn.Module):
         x3 = self.down3_extra(x3)
 
         x4 = self.down4_expand(x3)
-        x4 = self.down4_dilated(x4)  # Dilated conv로 넓은 receptive field
-        x4 = self.down4_dense(x4)    # 7x7x7 conv로 sparse 영역 보완
+        x4_dilated = self.down4_dilated(x4)  # Dilated conv로 넓은 receptive field (내부에 residual 있음)
+        x4 = x4_dilated + self.down4_dense(x4_dilated)  # Residual connection: 7x7x7 conv로 sparse 영역 보완
         x4 = self.down4_compress(x4)
 
         x = self.up1(x4, x3)

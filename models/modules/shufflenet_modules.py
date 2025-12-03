@@ -90,12 +90,13 @@ class MultiScaleDilatedDepthwise3D(nn.Module):
         self.post_act = _make_activation(activation, inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        identity = x  # Residual connection을 위한 identity 저장
         out = x
         for layer in self.layers:
             out = layer(out)
         out = self.post_norm(out)
         out = self.post_act(out)
-        return out
+        return identity + out  # Residual connection 추가
 
 
 # ============================================================================
