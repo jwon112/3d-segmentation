@@ -184,13 +184,18 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
             reduction=4,
             activation=activation,
         )
+        # LKA 블록이 더 많은 레이어를 포함하므로 2개로 감소
+        # down3에 이미 2개 블록이 있으므로 extra의 첫 블록부터 drop path 적용
         self.down3_extra = _build_shufflenet_v2_lka_extra_blocks(
             channels["branch3"],
-            4,
+            2,
             self.norm,
             reduction=4,
             activation=activation,
-            drop_path_rates=[0.0, 0.05, 0.1, 0.15],
+            # down3의 2개 블록 이후이므로 첫 블록부터 drop path 적용
+            drop_path_rates=[0.1, 0.2],
+            # Spatial dropout (width 앙상블) - Stage 3에 적용
+            drop_channel_rates=[0.05, 0.05],
         )
 
         fused_channels = channels["branch3"]
@@ -202,6 +207,7 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
             _make_norm3d(self.norm, expanded_channels),
             _make_activation(activation, inplace=True),
         )
+        # lka1은 항상 실행되어 Stage 4가 완전히 사라지지 않도록 보장
         self.down4_lka1 = LKAHybridCBAM3D(
             channels=expanded_channels,
             reduction=4,
@@ -209,7 +215,10 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
             activation=activation,
             use_residual=True,
             stride=2,
+            drop_path_rate=0.0,  # 첫 번째 블록은 항상 실행
+            drop_channel_rate=0.0,  # 첫 번째 블록은 spatial dropout 미적용
         )
+        # lka2만 drop path 및 spatial dropout 적용하여 regularization 효과
         self.down4_lka2 = LKAHybridCBAM3D(
             channels=expanded_channels,
             reduction=4,
@@ -217,6 +226,8 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
             activation=activation,
             use_residual=True,
             stride=1,
+            drop_path_rate=0.15,  # 두 번째 블록에만 drop path 적용
+            drop_channel_rate=0.05,  # Bottleneck이므로 낮은 spatial dropout
         )
 
         # SegNeXt-style decoder

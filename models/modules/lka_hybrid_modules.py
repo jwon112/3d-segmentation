@@ -144,6 +144,8 @@ class LKAHybridCBAM3D(nn.Module):
         norm: 정규화 타입 ('bn', 'in', 'gn')
         activation: 활성화 함수 타입 ('relu', 'hardswish', 'gelu')
         use_residual: 입력과 출력 사이에 residual connection을 사용할지 여부
+        drop_path_rate: Stochastic depth (depth 앙상블) 비율
+        drop_channel_rate: Spatial dropout (width 앙상블) 비율
     """
 
     def __init__(
@@ -155,6 +157,7 @@ class LKAHybridCBAM3D(nn.Module):
         use_residual: bool = True,
         stride: int = 1,
         drop_path_rate: float = 0.0,
+        drop_channel_rate: float = 0.0,
     ) -> None:
         super().__init__()
         self.use_residual = use_residual
@@ -173,8 +176,14 @@ class LKAHybridCBAM3D(nn.Module):
             reduction=reduction,
         )
 
-        # Stochastic depth 비율 (0이면 사용 안 함)
+        # Stochastic depth 비율 (depth 앙상블, 0이면 사용 안 함)
         self.drop_path_rate = float(drop_path_rate)
+        
+        # Spatial dropout (width 앙상블, CNN에 적합한 채널 단위 dropout)
+        if drop_channel_rate > 0:
+            self.drop_channel = nn.Dropout3d(drop_channel_rate)
+        else:
+            self.drop_channel = nn.Identity()
 
         # stride > 1인 경우 residual connection을 유지하기 위한 projection 경로
         # ShuffleNetV2에서 stride=2일 때 identity branch에 projection을 두는 것과 유사하게,
@@ -204,6 +213,10 @@ class LKAHybridCBAM3D(nn.Module):
         """
         out = self.lka_kernel(x)          # 커널 구조로 특징 추출 (7x7x7 ERF + stride에 따른 downsample)
         out = self.channel_attention(out) # 채널 어텐션 적용
+        
+        # Spatial dropout (width 앙상블) - CBAM 이후 적용
+        # CNN에 적합한 채널 단위 dropout으로 width 앙상블 효과 제공
+        out = self.drop_channel(out)
 
         # Projection 있는 정석 residual:
         # - stride == 1: out + x
@@ -212,7 +225,7 @@ class LKAHybridCBAM3D(nn.Module):
             identity = x
             if self.proj is not None:
                 identity = self.proj(identity)
-            # Stochastic depth (DropPath)를 residual branch에만 적용
+            # Stochastic depth (DropPath)를 residual branch에만 적용 (depth 앙상블)
             out = identity + drop_path(out, self.drop_path_rate, self.training)
         return out
 

@@ -120,6 +120,7 @@ def _build_shufflenet_v2_lka_extra_blocks(
     reduction: int,
     activation: str,
     drop_path_rates: list[float] | None = None,
+    drop_channel_rates: list[float] | None = None,
 ) -> nn.Module:
     """ShuffleNetV2 + Hybrid LKA extra blocks (stride=1).
 
@@ -134,6 +135,11 @@ def _build_shufflenet_v2_lka_extra_blocks(
         drop_rate = 0.0
         if drop_path_rates is not None and idx < len(drop_path_rates):
             drop_rate = float(drop_path_rates[idx])
+        
+        drop_channel_rate = 0.0
+        if drop_channel_rates is not None and idx < len(drop_channel_rates):
+            drop_channel_rate = float(drop_channel_rates[idx])
+        
         layers.append(
             ShuffleNetV2Unit3D_LKAHybrid(
                 channels,
@@ -143,6 +149,7 @@ def _build_shufflenet_v2_lka_extra_blocks(
                 reduction=reduction,
                 activation=activation,
                 drop_path=drop_rate,
+                drop_channel=drop_channel_rate,
             )
         )
     return nn.Sequential(*layers)
@@ -1105,14 +1112,19 @@ class CascadeShuffleNetV2UNet3D_LKAHybrid(nn.Module):
             activation=activation,
         )
         # Stage 3 extra blocks: Hybrid LKA ShuffleNetV2 units
+        # LKA 블록이 더 많은 레이어를 포함하므로 2개로 감소
+        # down3에 이미 2개 블록이 있으므로 extra의 첫 블록부터 drop path 적용
         self.down3_extra = _build_shufflenet_v2_lka_extra_blocks(
             channels["branch3"],
-            4,
+            2,
             self.norm,
             reduction=4,
             activation=activation,
             # Stage3에서만 Stochastic Depth(Linear schedule) 적용
-            drop_path_rates=[0.0, 0.05, 0.1, 0.15],
+            # down3의 2개 블록 이후이므로 첫 블록부터 drop path 적용
+            drop_path_rates=[0.1, 0.2],
+            # Spatial dropout (width 앙상블) - Stage 3에 적용
+            drop_channel_rates=[0.05, 0.05],
         )
 
         fused_channels = channels["branch3"]
@@ -1126,6 +1138,7 @@ class CascadeShuffleNetV2UNet3D_LKAHybrid(nn.Module):
             _make_activation(activation, inplace=True),
         )
         # 첫 번째 LKA: stride=2로 24^3 -> 12^3 다운샘플 + 넓은 ERF 확보
+        # lka1은 항상 실행되어 Stage 4가 완전히 사라지지 않도록 보장
         self.down4_lka1 = LKAHybridCBAM3D(
             channels=expanded_channels,
             reduction=4,
@@ -1133,8 +1146,11 @@ class CascadeShuffleNetV2UNet3D_LKAHybrid(nn.Module):
             activation=activation,
             use_residual=True,
             stride=2,
+            drop_path_rate=0.0,  # 첫 번째 블록은 항상 실행
+            drop_channel_rate=0.0,  # 첫 번째 블록은 spatial dropout 미적용
         )
         # 두 번째 LKA: stride=1로 12^3 유지, 맵 전체를 한 번 더 덮어 ERF 강화
+        # lka2만 drop path 및 spatial dropout 적용하여 regularization 효과
         self.down4_lka2 = LKAHybridCBAM3D(
             channels=expanded_channels,
             reduction=4,
@@ -1142,6 +1158,8 @@ class CascadeShuffleNetV2UNet3D_LKAHybrid(nn.Module):
             activation=activation,
             use_residual=True,
             stride=1,
+            drop_path_rate=0.15,  # 두 번째 블록에만 drop path 적용
+            drop_channel_rate=0.05,  # Bottleneck이므로 낮은 spatial dropout
         )
         self.down4_compress = nn.Identity()
 
