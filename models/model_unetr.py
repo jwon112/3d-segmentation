@@ -41,21 +41,33 @@ class PositionalEncoding3D(nn.Module):
         div_term = torch.exp(torch.arange(0, embed_dim, 2).float() * (-torch.log(torch.tensor(10000.0)) / embed_dim))
         
         # Create sin and cos separately
-        sin_vals = torch.sin(position * div_term)
-        cos_vals = torch.cos(position * div_term)
+        sin_vals = torch.sin(position * div_term)  # (max_len, embed_dim//2)
+        cos_vals = torch.cos(position * div_term)  # (max_len, embed_dim//2)
         
-        # Build pe tensor using torch.empty and direct assignment to avoid in-place issues
-        pe = torch.empty(max_len, embed_dim)
-        pe[:, 0::2] = sin_vals
-        if embed_dim % 2 == 0:
-            pe[:, 1::2] = cos_vals
-        else:
-            pe[:, 1::2] = cos_vals[:, :embed_dim//2]
-        
-        # Clone to ensure independent memory before any view operations
+        # Interleave sin and cos without any in-place assignment
+        # Build column by column to avoid memory sharing
+        # Clone each column slice to ensure independent memory
+        pe_columns = []
+        for i in range(embed_dim):
+            if i % 2 == 0:
+                pe_columns.append(sin_vals[:, i // 2].clone())
+            else:
+                if i // 2 < cos_vals.shape[1]:
+                    pe_columns.append(cos_vals[:, i // 2].clone())
+                else:
+                    pe_columns.append(torch.zeros(max_len, dtype=sin_vals.dtype))
+        # Stack columns to create (max_len, embed_dim) tensor
+        pe = torch.stack(pe_columns, dim=1)  # (max_len, embed_dim)
+        # Clone after stack to ensure independent memory
         pe = pe.clone()
-        # Reshape and ensure contiguous with clone to avoid memory sharing
-        pe = pe.unsqueeze(0).transpose(0, 1).contiguous().clone()
+        
+        # Reshape for transformer: (max_len, embed_dim) -> (max_len, 1, embed_dim)
+        # Original: unsqueeze(0).transpose(0, 1) = (max_len, embed_dim) -> (1, max_len, embed_dim) -> (max_len, 1, embed_dim)
+        pe = pe.unsqueeze(0).transpose(0, 1)  # (max_len, 1, embed_dim)
+        
+        # Clone to ensure completely independent memory for DDP
+        # Must clone after transpose as it may create a view
+        pe = pe.contiguous().clone()
         
         self.register_buffer('pe', pe)
         
