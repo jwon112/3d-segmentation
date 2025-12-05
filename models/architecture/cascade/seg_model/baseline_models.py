@@ -19,9 +19,9 @@ import torch.nn as nn
 from typing import Union, Tuple
 
 # Import baseline models
-from ...model_3d_unet import UNet3D
-from ...model_unetr import UNETR
-from ...model_swin_unetr import SwinUNETR
+from models.model_3d_unet import UNet3D
+from models.model_unetr import UNETR
+from models.model_swin_unetr import SwinUNETR
 
 
 class CascadeUNet3D(nn.Module):
@@ -110,7 +110,7 @@ class CascadeUNETR(nn.Module):
         in_channels = n_image_channels + (n_coord_channels if self.include_coords else 0)
         
         # Import UNETR components
-        from ...model_unetr import PatchEmbedding3D, PositionalEncoding3D, TransformerBlock
+        from models.model_unetr import PatchEmbedding3D, PositionalEncoding3D, TransformerBlock
         
         self.embed_dim = embed_dim
         self.patch_size_tuple = patch_size
@@ -261,7 +261,7 @@ class CascadeSwinUNETR(nn.Module):
         in_channels = n_image_channels + (n_coord_channels if self.include_coords else 0)
         
         # Import SwinUNETR components
-        from ...model_swin_unetr import (
+        from models.model_swin_unetr import (
             PatchEmbedding3D, SwinTransformerBlock3D, PatchMerging3D
         )
         
