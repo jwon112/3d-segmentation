@@ -55,13 +55,13 @@ class WindowAttention3D(nn.Module):
         coords = torch.stack(torch.meshgrid([coords_d, coords_h, coords_w]))  # 3, Wh, Ww
         coords_flatten = torch.flatten(coords, 1)  # 3, Wh*Ww
         relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 3, Wh*Ww, Wh*Ww
-        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 3
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous().clone()  # Wh*Ww, Wh*Ww, 3 - DDP 호환성을 위해 clone() 추가
         relative_coords[:, :, 0] += self.window_size[0] - 1  # shift to start from 0
         relative_coords[:, :, 1] += self.window_size[1] - 1
         relative_coords[:, :, 2] += self.window_size[2] - 1
         relative_coords[:, :, 0] *= (2 * self.window_size[1] - 1) * (2 * self.window_size[2] - 1)
         relative_coords[:, :, 1] *= (2 * self.window_size[2] - 1)
-        relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+        relative_position_index = relative_coords.sum(-1).clone()  # Wh*Ww, Wh*Ww - DDP 호환성을 위해 clone() 추가
         self.register_buffer("relative_position_index", relative_position_index)
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
@@ -138,9 +138,31 @@ class SwinTransformerBlock3D(nn.Module):
         )
 
     def forward(self, x):
-        H, W, D = self.input_resolution
         B, L, C = x.shape
-        assert L == H * W * D, "input feature has wrong size"
+        # Compute actual resolution from input size (for dynamic size support)
+        H, W, D = self.input_resolution
+        # If L doesn't match, compute from L (approximate cubic root)
+        if L != H * W * D:
+            # Infer resolution from L (for dynamic sizes)
+            side = int(round((L ** (1/3))))
+            H = W = D = side
+            # Adjust to make H*W*D == L
+            while H * W * D < L:
+                if H <= W and H <= D:
+                    H += 1
+                elif W <= D:
+                    W += 1
+                else:
+                    D += 1
+            # If still too large, reduce
+            while H * W * D > L and H > 1 and W > 1 and D > 1:
+                if H >= W and H >= D:
+                    H -= 1
+                elif W >= D:
+                    W -= 1
+                else:
+                    D -= 1
+        assert L == H * W * D, f"input feature has wrong size: L={L}, H*W*D={H*W*D} (H={H}, W={W}, D={D})"
 
         shortcut = x
         x = self.norm1(x)
@@ -217,9 +239,31 @@ class PatchMerging3D(nn.Module):
         self.norm = norm_layer(4 * dim)
 
     def forward(self, x):
-        H, W, D = self.input_resolution
         B, L, C = x.shape
-        assert L == H * W * D, "input feature has wrong size"
+        # Compute actual resolution from input size
+        H, W, D = self.input_resolution
+        # If L doesn't match, compute from L (approximate cubic root)
+        if L != H * W * D:
+            # Infer resolution from L (for dynamic sizes)
+            side = int(round((L ** (1/3))))
+            H = W = D = side
+            # Adjust to make H*W*D == L
+            while H * W * D < L:
+                if H <= W and H <= D:
+                    H += 1
+                elif W <= D:
+                    W += 1
+                else:
+                    D += 1
+            # If still too large, reduce
+            while H * W * D > L and H > 1 and W > 1 and D > 1:
+                if H >= W and H >= D:
+                    H -= 1
+                elif W >= D:
+                    W -= 1
+                else:
+                    D -= 1
+        assert L == H * W * D, f"input feature has wrong size: L={L}, H*W*D={H*W*D} (H={H}, W={W}, D={D})"
         assert H % 2 == 0 and W % 2 == 0 and D % 2 == 0, f"x size ({H}*{W}*{D}) are not even."
 
         x = x.view(B, H, W, D, C)

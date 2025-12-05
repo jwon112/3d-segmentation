@@ -42,7 +42,7 @@ class PositionalEncoding3D(nn.Module):
         
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
+        pe = pe.unsqueeze(0).transpose(0, 1).contiguous().clone()  # DDP 호환성을 위해 clone() 추가
         
         self.register_buffer('pe', pe)
         
