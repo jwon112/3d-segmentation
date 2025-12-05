@@ -450,8 +450,31 @@ def build_cascade_unetr(
     mlp_ratio: float = 4.0,
     dropout: float = 0.1,
     include_coords: bool = True,
+    size: str = "s",
 ) -> CascadeUNETR:
-    """Build CascadeUNETR model."""
+    """Build CascadeUNETR model with size variant support.
+    
+    Note: UNETR 공식 구현에서는 size variant를 제공하지 않지만,
+    표준 ViT 스케일링을 참고하여 추가했습니다:
+    - xs: ViT-Small scale (384 dim, 6 heads, 6 layers)
+    - s: ViT-Base scale (768 dim, 12 heads, 12 layers) - 공식 기본값
+    - m: ViT-Large scale (1024 dim, 16 heads, 16 layers)
+    - l: ViT-Huge scale (1536 dim, 24 heads, 24 layers)
+    """
+    # Size-based configuration (ViT 표준 스케일링 참고)
+    size_configs = {
+        "xs": {"embed_dim": 384, "num_heads": 6, "num_layers": 6},   # ViT-Small scale
+        "s": {"embed_dim": 768, "num_heads": 12, "num_layers": 12},  # ViT-Base (공식 기본값)
+        "m": {"embed_dim": 1024, "num_heads": 16, "num_layers": 16}, # ViT-Large scale
+        "l": {"embed_dim": 1536, "num_heads": 24, "num_layers": 24}, # ViT-Huge scale
+    }
+    
+    if size in size_configs:
+        config = size_configs[size]
+        embed_dim = config["embed_dim"]
+        num_heads = config["num_heads"]
+        num_layers = config["num_layers"]
+    
     return CascadeUNETR(
         n_image_channels=n_image_channels,
         n_coord_channels=n_coord_channels,
@@ -482,8 +505,47 @@ def build_cascade_swin_unetr(
     attn_drop_rate: float = 0.0,
     drop_path_rate: float = 0.1,
     include_coords: bool = True,
+    size: str = "s",
 ) -> CascadeSwinUNETR:
-    """Build CascadeSwinUNETR model."""
+    """Build CascadeSwinUNETR model with size variant support.
+    
+    Note: SwinUNETR 공식 구현에서는 size variant를 제공하지 않지만,
+    표준 Swin Transformer 스케일링을 참고하여 추가했습니다:
+    - xs: Custom small scale (48 dim)
+    - s: Swin-Tiny scale (96 dim, depths=(2,2,6,2)) - 공식 기본값
+    - m: Swin-Small scale (96 dim) 또는 Swin-Base scale (128 dim) 참고
+    - l: Swin-Large scale (192 dim) 참고
+    """
+    # Size-based configuration (Swin Transformer 표준 스케일링 참고)
+    size_configs = {
+        "xs": {
+            "embed_dim": 48,  # Custom small scale
+            "depths": (2, 2, 4, 2),
+            "num_heads": (2, 4, 8, 16),
+        },
+        "s": {
+            "embed_dim": 96,  # Swin-Tiny (공식 기본값)
+            "depths": (2, 2, 6, 2),
+            "num_heads": (3, 6, 12, 24),
+        },
+        "m": {
+            "embed_dim": 192,  # Swin-Large scale 참고
+            "depths": (2, 2, 8, 2),
+            "num_heads": (6, 12, 24, 48),
+        },
+        "l": {
+            "embed_dim": 384,  # Swin-Large scale 확장
+            "depths": (2, 2, 12, 2),
+            "num_heads": (12, 24, 48, 96),
+        },
+    }
+    
+    if size in size_configs:
+        config = size_configs[size]
+        embed_dim = config["embed_dim"]
+        depths = config["depths"]
+        num_heads = config["num_heads"]
+    
     return CascadeSwinUNETR(
         n_image_channels=n_image_channels,
         n_coord_channels=n_coord_channels,

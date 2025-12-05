@@ -557,8 +557,8 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         'cascade_shufflenet_v2_mvit_',
         'cascade_shufflenet_v2_p3d_mvit_',
         'cascade_unet3d_',  # Baseline: Standard 3D U-Net
-        'cascade_unetr',  # Baseline: UNETR
-        'cascade_swin_unetr',  # Baseline: SwinUNETR
+        'cascade_unetr_',  # Baseline: UNETR (with size suffix)
+        'cascade_swin_unetr_',  # Baseline: SwinUNETR (with size suffix)
         'quadbranch_unet_', 'quadbranch_channel_centralized_concat_',
         'quadbranch_channel_distributed_concat_', 'quadbranch_channel_distributed_conv_',
         'quadbranch_spatial_centralized_concat_', 'quadbranch_spatial_distributed_concat_',
@@ -1197,10 +1197,15 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 include_coords=True,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_unet3d)
-    elif model_name == 'cascade_unetr':
+    elif model_name.startswith('cascade_unetr_'):
         # Baseline: UNETR for cascade segmentation
         # Input: 7 channels (4 MRI + 3 CoordConv)
-        # Fixed model (no size suffix), uses patch_size for scaling
+        # Support xs, s, m, l sizes
+        try:
+            base_name, size = parse_model_size(model_name)
+        except Exception as e:
+            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
+        
         def _create_cascade_unetr():
             from models.architecture.cascade.seg_model import build_cascade_unetr
             # 96^3 input -> patch_size (12, 12, 12) gives 8^3 patches
@@ -1209,18 +1214,21 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 n_coord_channels=3,
                 n_classes=n_classes,
                 patch_size=(12, 12, 12),  # 96 / 8 = 12
-                embed_dim=768,
-                num_heads=12,
-                num_layers=12,
                 mlp_ratio=4.0,
                 dropout=0.1,
                 include_coords=True,
+                size=size,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_unetr)
-    elif model_name == 'cascade_swin_unetr':
+    elif model_name.startswith('cascade_swin_unetr_'):
         # Baseline: SwinUNETR for cascade segmentation
         # Input: 7 channels (4 MRI + 3 CoordConv)
-        # Fixed model (no size suffix), uses patch_size for scaling
+        # Support xs, s, m, l sizes
+        try:
+            base_name, size = parse_model_size(model_name)
+        except Exception as e:
+            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
+        
         def _create_cascade_swin_unetr():
             from models.architecture.cascade.seg_model import build_cascade_swin_unetr
             # 96^3 input -> patch_size (4, 4, 4) gives 24^3 patches
@@ -1229,9 +1237,6 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 n_coord_channels=3,
                 n_classes=n_classes,
                 patch_size=(4, 4, 4),  # 96 / 24 = 4
-                embed_dim=96,
-                depths=(2, 2, 6, 2),
-                num_heads=(3, 6, 12, 24),
                 window_size=7,
                 mlp_ratio=4.0,
                 qkv_bias=True,
@@ -1239,6 +1244,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 attn_drop_rate=0.0,
                 drop_path_rate=0.1,
                 include_coords=True,
+                size=size,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_swin_unetr)
     # 이 코드는 실행되지 않아야 함 (검증 단계에서 이미 처리됨)
