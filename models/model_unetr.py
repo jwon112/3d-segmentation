@@ -36,7 +36,7 @@ class PositionalEncoding3D(nn.Module):
         self.embed_dim = embed_dim
         
         # Create positional encoding
-        # Avoid in-place operations that can cause memory sharing issues in DDP
+        # Use torch.empty and direct assignment to avoid any memory sharing issues in DDP
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, embed_dim, 2).float() * (-torch.log(torch.tensor(10000.0)) / embed_dim))
         
@@ -44,30 +44,26 @@ class PositionalEncoding3D(nn.Module):
         sin_vals = torch.sin(position * div_term)  # (max_len, embed_dim//2)
         cos_vals = torch.cos(position * div_term)  # (max_len, embed_dim//2)
         
-        # Interleave sin and cos without any in-place assignment
-        # Build column by column to avoid memory sharing
-        # Clone each column slice to ensure independent memory
-        pe_columns = []
-        for i in range(embed_dim):
-            if i % 2 == 0:
-                pe_columns.append(sin_vals[:, i // 2].clone())
-            else:
-                if i // 2 < cos_vals.shape[1]:
-                    pe_columns.append(cos_vals[:, i // 2].clone())
-                else:
-                    pe_columns.append(torch.zeros(max_len, dtype=sin_vals.dtype))
-        # Stack columns to create (max_len, embed_dim) tensor
-        pe = torch.stack(pe_columns, dim=1)  # (max_len, embed_dim)
-        # Clone after stack to ensure independent memory
+        # Create empty tensor and fill it directly to avoid memory sharing
+        pe = torch.empty(max_len, embed_dim, dtype=torch.float)
+        pe[:, 0::2] = sin_vals
+        if embed_dim % 2 == 0:
+            pe[:, 1::2] = cos_vals
+        else:
+            pe[:, 1::2] = cos_vals[:, :embed_dim//2]
+        
+        # Clone immediately after assignment to ensure independent memory
         pe = pe.clone()
         
         # Reshape for transformer: (max_len, embed_dim) -> (max_len, 1, embed_dim)
         # Original: unsqueeze(0).transpose(0, 1) = (max_len, embed_dim) -> (1, max_len, embed_dim) -> (max_len, 1, embed_dim)
         pe = pe.unsqueeze(0).transpose(0, 1)  # (max_len, 1, embed_dim)
         
-        # Clone to ensure completely independent memory for DDP
-        # Must clone after transpose as it may create a view
+        # Clone after transpose to ensure independent memory
         pe = pe.contiguous().clone()
+        
+        # Final clone before register_buffer to ensure complete independence
+        pe = pe.clone()
         
         self.register_buffer('pe', pe)
         
