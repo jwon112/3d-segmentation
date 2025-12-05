@@ -36,19 +36,33 @@ class PositionalEncoding3D(nn.Module):
         self.embed_dim = embed_dim
         
         # Create positional encoding
-        pe = torch.zeros(max_len, embed_dim)
+        # Avoid in-place operations that can cause memory sharing issues in DDP
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, embed_dim, 2).float() * (-torch.log(torch.tensor(10000.0)) / embed_dim))
         
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1).contiguous().clone()  # DDP 호환성을 위해 clone() 추가
+        # Create sin and cos separately
+        sin_vals = torch.sin(position * div_term)
+        cos_vals = torch.cos(position * div_term)
+        
+        # Build pe tensor using torch.empty and direct assignment to avoid in-place issues
+        pe = torch.empty(max_len, embed_dim)
+        pe[:, 0::2] = sin_vals
+        if embed_dim % 2 == 0:
+            pe[:, 1::2] = cos_vals
+        else:
+            pe[:, 1::2] = cos_vals[:, :embed_dim//2]
+        
+        # Clone to ensure independent memory before any view operations
+        pe = pe.clone()
+        # Reshape and ensure contiguous with clone to avoid memory sharing
+        pe = pe.unsqueeze(0).transpose(0, 1).contiguous().clone()
         
         self.register_buffer('pe', pe)
         
     def forward(self, x):
         # x: (seq_len, batch_size, embed_dim)
-        return x + self.pe[:x.size(0), :]
+        # Clone the slice to avoid memory sharing issues in DDP
+        return x + self.pe[:x.size(0), :].clone()
 
 class TransformerBlock(nn.Module):
     """Transformer Block"""
