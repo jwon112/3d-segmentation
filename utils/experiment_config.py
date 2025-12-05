@@ -52,6 +52,7 @@ SIZE_SUFFIX_MODELS = {
     'cascade_shufflenet_v2_lka_segnext_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_mvit_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_p3d_mvit_': ['xs', 's', 'm', 'l'],
+    'cascade_unet3d_': ['xs', 's', 'm', 'l'],  # Baseline: Standard 3D U-Net
 }
 
 # Size suffix를 지원하는 dualbranch_14 backbone들
@@ -64,7 +65,8 @@ DUALBRANCH_14_BACKBONES = [
 FIXED_NAME_MODELS = [
     'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d',
     'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s',
-    'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s'
+    'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s',
+    'cascade_unetr', 'cascade_swin_unetr',  # Baseline models for cascade
 ]
 
 # 4개 모달리티를 사용하는 모델들

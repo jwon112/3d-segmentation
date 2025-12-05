@@ -22,6 +22,14 @@ from .shufflenet_v2_segnext import (
     CascadeShuffleNetV2SegNeXt3D_LKA,
     build_cascade_shufflenet_v2_segnext_lka,
 )
+from .baseline_models import (
+    CascadeUNet3D,
+    CascadeUNETR,
+    CascadeSwinUNETR,
+    build_cascade_unet3d,
+    build_cascade_unetr,
+    build_cascade_swin_unetr,
+)
 
 __all__ = [
     "CascadeShuffleNetV2UNet3D",
@@ -40,6 +48,13 @@ __all__ = [
     "build_cascade_shufflenet_v2_unet3d_mvit",
     "CascadeShuffleNetV2UNet3D_P3D_MViT",
     "build_cascade_shufflenet_v2_unet3d_p3d_mvit",
+    # Baseline models
+    "CascadeUNet3D",
+    "CascadeUNETR",
+    "CascadeSwinUNETR",
+    "build_cascade_unet3d",
+    "build_cascade_unetr",
+    "build_cascade_swin_unetr",
 ]
 
 

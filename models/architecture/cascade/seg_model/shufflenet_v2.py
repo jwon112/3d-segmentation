@@ -1112,19 +1112,18 @@ class CascadeShuffleNetV2UNet3D_LKAHybrid(nn.Module):
             activation=activation,
         )
         # Stage 3 extra blocks: Hybrid LKA ShuffleNetV2 units
-        # LKA 블록이 더 많은 레이어를 포함하므로 2개로 감소
         # down3에 이미 2개 블록이 있으므로 extra의 첫 블록부터 drop path 적용
         self.down3_extra = _build_shufflenet_v2_lka_extra_blocks(
             channels["branch3"],
-            2,
+            3,
             self.norm,
             reduction=4,
             activation=activation,
             # Stage3에서만 Stochastic Depth(Linear schedule) 적용
             # down3의 2개 블록 이후이므로 첫 블록부터 drop path 적용
-            drop_path_rates=[0.1, 0.2],
+            drop_path_rates=[0.05, 0.1, 0.15],
             # Spatial dropout (width 앙상블) - Stage 3에 적용
-            drop_channel_rates=[0.05, 0.05],
+            drop_channel_rates=[0.05, 0.05, 0.05],
         )
 
         fused_channels = channels["branch3"]
