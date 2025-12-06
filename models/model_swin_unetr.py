@@ -193,7 +193,7 @@ class SwinTransformerBlock3D(nn.Module):
         else:
             ws_h, ws_w, ws_d = self.window_size
         
-        x_windows = self.window_partition(shifted_x, self.window_size)  # nW*B, window_size*window_size*window_size, C
+        x_windows, (H_pad, W_pad, D_pad) = self.window_partition(shifted_x, self.window_size)  # nW*B, window_size*window_size*window_size, C
         x_windows = x_windows.view(-1, ws_h * ws_w * ws_d, C)  # nW*B, window_size*window_size*window_size, C
 
         # W-MSA/SW-MSA
@@ -201,7 +201,7 @@ class SwinTransformerBlock3D(nn.Module):
 
         # merge windows
         attn_windows = attn_windows.view(-1, ws_h, ws_w, ws_d, C)
-        shifted_x = self.window_reverse(attn_windows, self.window_size, H, W, D)  # B H' W' D' C
+        shifted_x = self.window_reverse(attn_windows, self.window_size, H, W, D, H_pad, W_pad, D_pad)  # B H' W' D' C
 
         # reverse cyclic shift
         if self.shift_size > 0:
@@ -224,6 +224,7 @@ class SwinTransformerBlock3D(nn.Module):
 
         Returns:
             windows: (num_windows*B, window_size, window_size, window_size, C)
+            (H_pad, W_pad, D_pad): padded dimensions
         """
         B, H, W, D, C = x.shape
         # Convert window_size to tuple if it's an int
@@ -231,18 +232,32 @@ class SwinTransformerBlock3D(nn.Module):
             window_size = (window_size, window_size, window_size)
         ws_h, ws_w, ws_d = window_size
         
-        x = x.view(B, H // ws_h, ws_h, W // ws_w, ws_w, D // ws_d, ws_d, C)
+        # Pad to make dimensions divisible by window_size
+        pad_h = (ws_h - H % ws_h) % ws_h
+        pad_w = (ws_w - W % ws_w) % ws_w
+        pad_d = (ws_d - D % ws_d) % ws_d
+        
+        if pad_h > 0 or pad_w > 0 or pad_d > 0:
+            x = F.pad(x, (0, 0, 0, pad_d, 0, pad_w, 0, pad_h))  # (B, H+pad_h, W+pad_w, D+pad_d, C)
+            H_pad, W_pad, D_pad = H + pad_h, W + pad_w, D + pad_d
+        else:
+            H_pad, W_pad, D_pad = H, W, D
+        
+        x = x.view(B, H_pad // ws_h, ws_h, W_pad // ws_w, ws_w, D_pad // ws_d, ws_d, C)
         windows = x.permute(0, 1, 3, 5, 2, 4, 6, 7).contiguous().view(-1, ws_h, ws_w, ws_d, C)
-        return windows
+        return windows, (H_pad, W_pad, D_pad)
 
-    def window_reverse(self, windows, window_size, H, W, D):
+    def window_reverse(self, windows, window_size, H, W, D, H_pad=None, W_pad=None, D_pad=None):
         """
         Args:
             windows: (num_windows*B, window_size, window_size, window_size, C)
             window_size (int or tuple): Window size
-            H (int): Height of image
-            W (int): Width of image
-            D (int): Depth of image
+            H (int): Original height of image (before padding)
+            W (int): Original width of image (before padding)
+            D (int): Original depth of image (before padding)
+            H_pad (int, optional): Padded height
+            W_pad (int, optional): Padded width
+            D_pad (int, optional): Padded depth
 
         Returns:
             x: (B, H, W, D, C)
@@ -252,9 +267,23 @@ class SwinTransformerBlock3D(nn.Module):
             window_size = (window_size, window_size, window_size)
         ws_h, ws_w, ws_d = window_size
         
-        B = int(windows.shape[0] / (H * W * D / ws_h / ws_w / ws_d))
-        x = windows.view(B, H // ws_h, W // ws_w, D // ws_d, ws_h, ws_w, ws_d, -1)
-        x = x.permute(0, 1, 4, 2, 5, 3, 6, 7).contiguous().view(B, H, W, D, -1)
+        # Use padded dimensions if provided, otherwise use original
+        if H_pad is None:
+            H_pad = H
+        if W_pad is None:
+            W_pad = W
+        if D_pad is None:
+            D_pad = D
+        
+        num_windows = (H_pad // ws_h) * (W_pad // ws_w) * (D_pad // ws_d)
+        B = windows.shape[0] // num_windows
+        x = windows.view(B, H_pad // ws_h, W_pad // ws_w, D_pad // ws_d, ws_h, ws_w, ws_d, -1)
+        x = x.permute(0, 1, 4, 2, 5, 3, 6, 7).contiguous().view(B, H_pad, W_pad, D_pad, -1)
+        
+        # Crop to original size if padding was applied
+        if H_pad != H or W_pad != W or D_pad != D:
+            x = x[:, :H, :W, :D, :]
+        
         return x
 
 class PatchMerging3D(nn.Module):

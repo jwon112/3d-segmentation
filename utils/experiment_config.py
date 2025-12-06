@@ -52,6 +52,7 @@ SIZE_SUFFIX_MODELS = {
     'cascade_shufflenet_v2_lka_segnext_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_mvit_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_p3d_mvit_': ['xs', 's', 'm', 'l'],
+    'cascade_patch_conv_transformer_': ['xs', 's', 'm', 'l'],  # New: Patch Conv + Transformer
     'cascade_unet3d_': ['xs', 's', 'm', 'l'],  # Baseline: Standard 3D U-Net
     'cascade_unetr_': ['xs', 's', 'm', 'l'],  # Baseline: UNETR
     'cascade_swin_unetr_': ['xs', 's', 'm', 'l'],  # Baseline: SwinUNETR

@@ -30,6 +30,10 @@ from .baseline_models import (
     build_cascade_unetr,
     build_cascade_swin_unetr,
 )
+from .patch_conv_transformer import (
+    CascadePatchConvTransformerUNet3D,
+    build_cascade_patch_conv_transformer_unet3d,
+)
 
 __all__ = [
     "CascadeShuffleNetV2UNet3D",
@@ -55,6 +59,9 @@ __all__ = [
     "build_cascade_unet3d",
     "build_cascade_unetr",
     "build_cascade_swin_unetr",
+    # Patch Conv Transformer
+    "CascadePatchConvTransformerUNet3D",
+    "build_cascade_patch_conv_transformer_unet3d",
 ]
 
 
