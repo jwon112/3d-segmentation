@@ -40,12 +40,13 @@ class PositionalEncoding3D(nn.Module):
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, embed_dim, 2).float() * (-torch.log(torch.tensor(10000.0)) / embed_dim))
         
-        # Create sin and cos separately
-        sin_vals = torch.sin(position * div_term)  # (max_len, embed_dim//2)
-        cos_vals = torch.cos(position * div_term)  # (max_len, embed_dim//2)
+        # Create sin and cos separately and clone to ensure independence
+        sin_vals = torch.sin(position * div_term).clone()  # (max_len, embed_dim//2)
+        cos_vals = torch.cos(position * div_term).clone()  # (max_len, embed_dim//2)
         
-        # Create empty tensor and fill it directly to avoid memory sharing
+        # Create empty tensor and fill it directly
         pe = torch.empty(max_len, embed_dim, dtype=torch.float)
+        # 슬라이싱 할당 후 즉시 clone()하여 메모리 공유 방지
         pe[:, 0::2] = sin_vals
         if embed_dim % 2 == 0:
             pe[:, 1::2] = cos_vals
@@ -56,10 +57,9 @@ class PositionalEncoding3D(nn.Module):
         pe = pe.clone()
         
         # Reshape for transformer: (max_len, embed_dim) -> (max_len, 1, embed_dim)
-        # Original: unsqueeze(0).transpose(0, 1) = (max_len, embed_dim) -> (1, max_len, embed_dim) -> (max_len, 1, embed_dim)
-        pe = pe.unsqueeze(0).transpose(0, 1)  # (max_len, 1, embed_dim)
+        pe = pe.unsqueeze(1)  # (max_len, 1, embed_dim)
         
-        # Clone after transpose to ensure independent memory
+        # Clone after reshape to ensure independent memory
         pe = pe.contiguous().clone()
         
         # Final clone before register_buffer to ensure complete independence

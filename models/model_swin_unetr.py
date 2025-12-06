@@ -52,16 +52,28 @@ class WindowAttention3D(nn.Module):
         coords_d = torch.arange(self.window_size[0])
         coords_h = torch.arange(self.window_size[1])
         coords_w = torch.arange(self.window_size[2])
-        coords = torch.stack(torch.meshgrid([coords_d, coords_h, coords_w]))  # 3, Wh, Ww
+        # Use indexing='ij' for compatibility, fallback to default if not available
+        try:
+            coords = torch.stack(torch.meshgrid([coords_d, coords_h, coords_w], indexing='ij'))  # 3, Wh, Ww
+        except TypeError:
+            # Fallback for older PyTorch versions
+            coords = torch.stack(torch.meshgrid([coords_d, coords_h, coords_w]))  # 3, Wh, Ww
         coords_flatten = torch.flatten(coords, 1)  # 3, Wh*Ww
         relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 3, Wh*Ww, Wh*Ww
-        relative_coords = relative_coords.permute(1, 2, 0).contiguous().clone()  # Wh*Ww, Wh*Ww, 3 - DDP 호환성을 위해 clone() 추가
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 3
+        
+        # In-place 연산 전에 clone()하여 완전히 독립적인 텐서로 만들기
+        relative_coords = relative_coords.clone()
         relative_coords[:, :, 0] += self.window_size[0] - 1  # shift to start from 0
         relative_coords[:, :, 1] += self.window_size[1] - 1
         relative_coords[:, :, 2] += self.window_size[2] - 1
         relative_coords[:, :, 0] *= (2 * self.window_size[1] - 1) * (2 * self.window_size[2] - 1)
         relative_coords[:, :, 1] *= (2 * self.window_size[2] - 1)
-        relative_position_index = relative_coords.sum(-1).clone()  # Wh*Ww, Wh*Ww - DDP 호환성을 위해 clone() 추가
+        
+        # 최종 계산 전에 다시 clone()하여 완전히 독립적으로 만들기
+        relative_position_index = relative_coords.sum(-1).clone()  # Wh*Ww, Wh*Ww
+        # register_buffer 전에 한 번 더 clone()하여 완전한 독립성 보장
+        relative_position_index = relative_position_index.clone()
         self.register_buffer("relative_position_index", relative_position_index)
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
