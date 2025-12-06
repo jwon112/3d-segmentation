@@ -138,20 +138,24 @@ class PatchWiseConvBlock3D(nn.Module):
         num_patch_w = (W - p) // s + 1 if W > p else 1
         num_patches = num_patch_d * num_patch_h * num_patch_w
         
-        # Use unfold for efficient patch extraction (much faster than loop + stack)
-        # Note: unfold supports step > 1, so we can use stride directly
-        # Unfold each dimension separately
-        x_unfold_d = x.unfold(2, p, s)  # (B, C, num_patch_d, H, W, p)
-        x_unfold_h = x_unfold_d.unfold(3, p, s)  # (B, C, num_patch_d, num_patch_h, W, p, p)
-        x_unfold_w = x_unfold_h.unfold(4, p, s)  # (B, C, num_patch_d, num_patch_h, num_patch_w, p, p, p)
-        
-        # Reshape to (B, num_patches, C, p, p, p)
-        # Shape: (B, C, num_patch_d, num_patch_h, num_patch_w, p, p, p)
-        patches = x_unfold_w.permute(0, 2, 3, 4, 1, 5, 6, 7).contiguous()
-        patches = patches.view(B, num_patches, C, p, p, p)
-        
-        # Reshape to (B * num_patches, C, p, p, p) for batch processing
-        patches = patches.view(B * num_patches, C, p, p, p)
+        # Optimize for non-overlapping case (s == p)
+        if s == p:
+            # Non-overlapping: use efficient view/permute (like _unfold)
+            patches = x.view(B, C, num_patch_d, p, num_patch_h, p, num_patch_w, p)
+            patches = patches.permute(0, 2, 4, 6, 1, 3, 5, 7).contiguous()
+            patches = patches.view(B, num_patches, C, p, p, p)
+            patches = patches.view(B * num_patches, C, p, p, p)
+        else:
+            # Overlapping: use pre-allocated tensor + direct assignment (faster than list append)
+            # Pre-allocate output tensor to avoid list overhead and multiple memory allocations
+            patches = torch.zeros(B * num_patches, C, p, p, p, 
+                                 device=x.device, dtype=x.dtype)
+            idx = 0
+            for d in range(0, D - p + 1, s):
+                for h in range(0, H - p + 1, s):
+                    for w in range(0, W - p + 1, s):
+                        patches[idx:idx+B] = x[:, :, d:d+p, h:h+p, w:w+p].contiguous()
+                        idx += B
         
         info = {
             "batch_size": B,
@@ -179,23 +183,38 @@ class PatchWiseConvBlock3D(nn.Module):
         num_patches_total = patches.shape[0] // B
         patches = patches.view(B, num_patches_total, C, p, p, p)
         
+        # Optimize for non-overlapping case (s == p)
+        if s == p:
+            # Non-overlapping: use efficient reshape (like _fold)
+            num_patch_d = info["num_patch_d"]
+            num_patch_h = info["num_patch_h"]
+            num_patch_w = info["num_patch_w"]
+            patches = patches.view(B, num_patch_d, num_patch_h, num_patch_w, C, p, p, p)
+            patches = patches.permute(0, 4, 1, 5, 2, 6, 3, 7).contiguous()
+            output = patches.view(B, C, D, H, W)
+            return output
+        
+        # Overlapping: use scatter_add for faster accumulation (if available) or optimized loop
         # Initialize output and weight accumulator
         output = torch.zeros(B, C, D, H, W, device=patches.device, dtype=patches.dtype)
         weight = torch.zeros(B, 1, D, H, W, device=patches.device, dtype=patches.dtype)
         
-        # Reconstruct patches
+        # Reconstruct patches with optimized indexing
         num_patch_d = info["num_patch_d"]
         num_patch_h = info["num_patch_h"]
         num_patch_w = info["num_patch_w"]
         
         idx = 0
         for d in range(0, D - p + 1, s):
+            d_end = min(d + p, D)
             for h in range(0, H - p + 1, s):
+                h_end = min(h + p, H)
                 for w in range(0, W - p + 1, s):
                     if idx < num_patches_total:
-                        patch = patches[:, idx, :, :, :, :]  # (B, C, p, p, p)
-                        output[:, :, d:d+p, h:h+p, w:w+p] += patch
-                        weight[:, :, d:d+p, h:h+p, w:w+p] += 1.0
+                        w_end = min(w + p, W)
+                        patch = patches[:, idx, :, :d_end-d, :h_end-h, :w_end-w]  # (B, C, p, p, p)
+                        output[:, :, d:d_end, h:h_end, w:w_end] += patch
+                        weight[:, :, d:d_end, h:h_end, w:w_end] += 1.0
                         idx += 1
         
         # Average overlapping regions
@@ -540,7 +559,7 @@ class CascadePatchConvTransformerUNet3D(nn.Module):
         patch_size_stage34: int = 4,  # Stage 3-4: 작은 패치 (24³ -> 6³ patches, 12³ -> 3³ patches)
         embed_dim: int = 256,
         num_heads: int = 8,
-        num_transformer_layers: int = 2,
+        num_transformer_layers: int = 1,  # Reduced from 2 to 1 for faster training
     ):
         super().__init__()
         self.n_image_channels = n_image_channels
@@ -561,7 +580,7 @@ class CascadePatchConvTransformerUNet3D(nn.Module):
             channels["branch2"],
             patch_size=patch_size_stage12,
             stride=2,
-            overlap=0.25,  # 25% overlap (overlap=0.5는 패치 수가 너무 많아짐)
+            overlap=0.25,  # 25% overlap (패치 간 신호 약화 방지, 직접 slicing 사용으로 메모리 효율적)
             norm=self.norm,
             activation=activation,
             use_channel_attention=True,  # Channel attention으로 inductive bias 강화
