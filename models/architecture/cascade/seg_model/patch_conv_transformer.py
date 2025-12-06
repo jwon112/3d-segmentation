@@ -536,8 +536,8 @@ class CascadePatchConvTransformerUNet3D(nn.Module):
         norm: str = "bn",
         size: str = "s",
         include_coords: bool = True,
-        patch_size_stage12: int = 4,
-        patch_size_stage34: int = 4,
+        patch_size_stage12: int = 12,  # Stage 1-2: 큰 패치 (96³ -> 8³ patches, 48³ -> 4³ patches) - UNETR과 유사
+        patch_size_stage34: int = 4,  # Stage 3-4: 작은 패치 (24³ -> 6³ patches, 12³ -> 3³ patches)
         embed_dim: int = 256,
         num_heads: int = 8,
         num_transformer_layers: int = 2,
@@ -561,7 +561,7 @@ class CascadePatchConvTransformerUNet3D(nn.Module):
             channels["branch2"],
             patch_size=patch_size_stage12,
             stride=2,
-            overlap=0.5,  # 50% overlap for gridding artifact prevention
+            overlap=0.25,  # 25% overlap (overlap=0.5는 패치 수가 너무 많아짐)
             norm=self.norm,
             activation=activation,
             use_channel_attention=True,  # Channel attention으로 inductive bias 강화
@@ -574,7 +574,7 @@ class CascadePatchConvTransformerUNet3D(nn.Module):
             channels["branch3"],
             patch_size=patch_size_stage12,
             stride=2,
-            overlap=0.5,
+            overlap=0.25,  # 25% overlap
             norm=self.norm,
             activation=activation,
             use_channel_attention=True,  # Channel attention으로 inductive bias 강화

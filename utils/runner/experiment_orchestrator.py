@@ -180,8 +180,13 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     if distributed:
                         from torch.nn.parallel import DistributedDataParallel as DDP
                         model = model.to(device)
-                        # GhostNet 모델은 일부 파라미터가 사용되지 않을 수 있으므로 find_unused_parameters=True 설정
-                        use_find_unused = 'ghostnet' in model_name.lower()
+                        # 일부 모델은 조건부 파라미터 사용으로 인해 find_unused_parameters=True 필요
+                        # - GhostNet: 일부 파라미터가 사용되지 않을 수 있음
+                        # - CascadeSwinUNETR: 조건부 skip connection으로 일부 파라미터가 사용되지 않을 수 있음
+                        use_find_unused = (
+                            'ghostnet' in model_name.lower() or 
+                            'cascade_swin_unetr' in model_name.lower()
+                        )
                         model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=use_find_unused)
                     
                     # 모델 정보 출력
