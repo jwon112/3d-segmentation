@@ -293,8 +293,9 @@ class PatchMerging3D(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-        self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
-        self.norm = norm_layer(4 * dim)
+        # 3D: 8 patches (2x2x2) are concatenated, so 8*dim -> 2*dim
+        self.reduction = nn.Linear(8 * dim, 2 * dim, bias=False)
+        self.norm = norm_layer(8 * dim)
 
     def forward(self, x):
         B, L, C = x.shape
