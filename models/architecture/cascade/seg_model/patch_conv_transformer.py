@@ -136,18 +136,22 @@ class PatchWiseConvBlock3D(nn.Module):
         num_patch_d = (D - p) // s + 1 if D > p else 1
         num_patch_h = (H - p) // s + 1 if H > p else 1
         num_patch_w = (W - p) // s + 1 if W > p else 1
+        num_patches = num_patch_d * num_patch_h * num_patch_w
         
-        # Extract patches
-        patches = []
-        for d in range(0, D - p + 1, s):
-            for h in range(0, H - p + 1, s):
-                for w in range(0, W - p + 1, s):
-                    patch = x[:, :, d:d+p, h:h+p, w:w+p]
-                    patches.append(patch)
+        # Use unfold for efficient patch extraction (much faster than loop + stack)
+        # Note: unfold supports step > 1, so we can use stride directly
+        # Unfold each dimension separately
+        x_unfold_d = x.unfold(2, p, s)  # (B, C, num_patch_d, H, W, p)
+        x_unfold_h = x_unfold_d.unfold(3, p, s)  # (B, C, num_patch_d, num_patch_h, W, p, p)
+        x_unfold_w = x_unfold_h.unfold(4, p, s)  # (B, C, num_patch_d, num_patch_h, num_patch_w, p, p, p)
         
-        # Stack patches: (B * num_patches, C, patch_size, patch_size, patch_size)
-        patches = torch.stack(patches, dim=0)  # (num_patches, B, C, p, p, p)
-        patches = patches.view(-1, C, p, p, p)  # (B * num_patches, C, p, p, p)
+        # Reshape to (B, num_patches, C, p, p, p)
+        # Shape: (B, C, num_patch_d, num_patch_h, num_patch_w, p, p, p)
+        patches = x_unfold_w.permute(0, 2, 3, 4, 1, 5, 6, 7).contiguous()
+        patches = patches.view(B, num_patches, C, p, p, p)
+        
+        # Reshape to (B * num_patches, C, p, p, p) for batch processing
+        patches = patches.view(B * num_patches, C, p, p, p)
         
         info = {
             "batch_size": B,
