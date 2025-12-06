@@ -220,9 +220,11 @@ class PatchWiseConvBlock3D(nn.Module):
             # Downsample each patch
             patches_down = F.avg_pool3d(patches_conv, kernel_size=self.stride, stride=self.stride)
             
-            # Update patch size after downsampling
+            # Update patch size and stride after downsampling
             new_patch_size = self.patch_size // self.stride
+            new_patch_stride = self.patch_stride // self.stride
             info["patch_size"] = new_patch_size
+            info["patch_stride"] = max(1, new_patch_stride)  # Ensure stride >= 1
             
             # Fold back
             out = self._fold_overlapping(patches_down, info, (out_D, out_H, out_W))
@@ -384,7 +386,7 @@ class PatchConvTransformerBlock3D(nn.Module):
         
         # Remove padding
         if (D, H, W) != (orig_D, orig_H, orig_W):
-            features = features[:, :, :orig_D, :orig_H, :orig_W]
+            features = features[:, :, :orig_D, :orig_H, :orig_W].contiguous()
         
         return features
 
