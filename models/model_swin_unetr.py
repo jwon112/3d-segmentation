@@ -187,14 +187,20 @@ class SwinTransformerBlock3D(nn.Module):
             shifted_x = x
 
         # partition windows
+        # Handle window_size as tuple or int
+        if isinstance(self.window_size, int):
+            ws_h = ws_w = ws_d = self.window_size
+        else:
+            ws_h, ws_w, ws_d = self.window_size
+        
         x_windows = self.window_partition(shifted_x, self.window_size)  # nW*B, window_size*window_size*window_size, C
-        x_windows = x_windows.view(-1, self.window_size * self.window_size * self.window_size, C)  # nW*B, window_size*window_size*window_size, C
+        x_windows = x_windows.view(-1, ws_h * ws_w * ws_d, C)  # nW*B, window_size*window_size*window_size, C
 
         # W-MSA/SW-MSA
         attn_windows = self.attn(x_windows, mask=None)  # nW*B, window_size*window_size*window_size, C
 
         # merge windows
-        attn_windows = attn_windows.view(-1, self.window_size, self.window_size, self.window_size, C)
+        attn_windows = attn_windows.view(-1, ws_h, ws_w, ws_d, C)
         shifted_x = self.window_reverse(attn_windows, self.window_size, H, W, D)  # B H' W' D' C
 
         # reverse cyclic shift
@@ -214,21 +220,26 @@ class SwinTransformerBlock3D(nn.Module):
         """
         Args:
             x: (B, H, W, D, C)
-            window_size (int): window size
+            window_size (int or tuple): window size
 
         Returns:
             windows: (num_windows*B, window_size, window_size, window_size, C)
         """
         B, H, W, D, C = x.shape
-        x = x.view(B, H // window_size, window_size, W // window_size, window_size, D // window_size, window_size, C)
-        windows = x.permute(0, 1, 3, 5, 2, 4, 6, 7).contiguous().view(-1, window_size, window_size, window_size, C)
+        # Convert window_size to tuple if it's an int
+        if isinstance(window_size, int):
+            window_size = (window_size, window_size, window_size)
+        ws_h, ws_w, ws_d = window_size
+        
+        x = x.view(B, H // ws_h, ws_h, W // ws_w, ws_w, D // ws_d, ws_d, C)
+        windows = x.permute(0, 1, 3, 5, 2, 4, 6, 7).contiguous().view(-1, ws_h, ws_w, ws_d, C)
         return windows
 
     def window_reverse(self, windows, window_size, H, W, D):
         """
         Args:
             windows: (num_windows*B, window_size, window_size, window_size, C)
-            window_size (int): Window size
+            window_size (int or tuple): Window size
             H (int): Height of image
             W (int): Width of image
             D (int): Depth of image
@@ -236,8 +247,13 @@ class SwinTransformerBlock3D(nn.Module):
         Returns:
             x: (B, H, W, D, C)
         """
-        B = int(windows.shape[0] / (H * W * D / window_size / window_size / window_size))
-        x = windows.view(B, H // window_size, W // window_size, D // window_size, window_size, window_size, window_size, -1)
+        # Convert window_size to tuple if it's an int
+        if isinstance(window_size, int):
+            window_size = (window_size, window_size, window_size)
+        ws_h, ws_w, ws_d = window_size
+        
+        B = int(windows.shape[0] / (H * W * D / ws_h / ws_w / ws_d))
+        x = windows.view(B, H // ws_h, W // ws_w, D // ws_d, ws_h, ws_w, ws_d, -1)
         x = x.permute(0, 1, 4, 2, 5, 3, 6, 7).contiguous().view(B, H, W, D, -1)
         return x
 
