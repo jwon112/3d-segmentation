@@ -178,7 +178,7 @@ class SwinTransformerBlock3D(nn.Module):
 
         shortcut = x
         x = self.norm1(x)
-        x = x.view(B, H, W, D, C)
+        x = x.reshape(B, H, W, D, C)
 
         # cyclic shift
         if self.shift_size > 0:
@@ -208,7 +208,8 @@ class SwinTransformerBlock3D(nn.Module):
             x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size, self.shift_size), dims=(1, 2, 3))
         else:
             x = shifted_x
-        x = x.view(B, H * W * D, C)
+        # Use reshape instead of view to handle non-contiguous tensors (after padding/cropping)
+        x = x.reshape(B, H * W * D, C)
 
         # FFN
         x = shortcut + self.drop_path(x)
@@ -282,7 +283,7 @@ class SwinTransformerBlock3D(nn.Module):
         
         # Crop to original size if padding was applied
         if H_pad != H or W_pad != W or D_pad != D:
-            x = x[:, :H, :W, :D, :]
+            x = x[:, :H, :W, :D, :].contiguous()
         
         return x
 
