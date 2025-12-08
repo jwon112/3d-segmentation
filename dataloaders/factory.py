@@ -38,6 +38,7 @@ def get_data_loaders(
     model_name: Optional[str] = None,
     train_crops_per_center: int = 1,
     train_crop_overlap: float = 0.5,
+    anisotropy_augment: bool = False,
 ):
     """공통 get_data_loaders 진입점 (기존 data_loader.get_data_loaders와 동일 인터페이스).
     
@@ -64,6 +65,7 @@ def get_data_loaders(
             world_size=world_size,
             rank=rank,
             use_mri_augmentation=use_mri_augmentation,
+            anisotropy_augment=anisotropy_augment,
             train_crops_per_center=train_crops_per_center,
             train_crop_overlap=train_crop_overlap,
         )
@@ -116,6 +118,7 @@ def get_data_loaders(
             patch_size=(128, 128, 128),
             samples_per_volume=16,
             augment=use_mri_augmentation,
+            anisotropy_augment=anisotropy_augment,
         )
 
     train_sampler = val_sampler = test_sampler = None

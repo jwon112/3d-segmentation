@@ -58,6 +58,8 @@ def parse_args():
                         help='PyTorch sharing strategy for dataloaders')
     parser.add_argument('--use_mri_augmentation', action='store_true', default=False,
                         help='Apply MRI-style intensity augmentations to ROI crops')
+    parser.add_argument('--anisotropy_augmentation', action='store_true', default=False,
+                        help='Apply depth anisotropy resize augmentation (train only)')
     return parser.parse_args()
 
 
@@ -125,6 +127,7 @@ def main():
             world_size=world_size,
             rank=rank,
             use_mri_augmentation=args.use_mri_augmentation,
+            anisotropy_augment=args.anisotropy_augmentation,
         )
 
         roi_model_cfg = get_roi_model_config(args.roi_model_name)

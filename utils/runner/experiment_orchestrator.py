@@ -30,7 +30,7 @@ from utils.runner.evaluation import evaluate_model
 from utils.runner.cascade_evaluation import load_roi_model_from_checkpoint, evaluate_segmentation_with_roi
 
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, cascade_infer_cfg=None, cascade_model_cfg=None, train_crops_per_center=1, train_crop_overlap=0.5):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, cascade_infer_cfg=None, cascade_model_cfg=None, train_crops_per_center=1, train_crop_overlap=0.5, anisotropy_augment: bool = False):
     """3D Segmentation 통합 실험 실행
     
     Args:
@@ -53,6 +53,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     results_dir = f"baseline_results/integrated_experiment_results_{timestamp}"
     os.makedirs(results_dir, exist_ok=True)
     print(f"Train data augmentation: {'MRI augmentations' if use_mri_augmentation else 'None'}")
+    print(f"Anisotropy augmentation: {'On' if anisotropy_augment else 'Off'}")
     
     # 사용 가능한 모델들 검증 및 필터링
     available_models = validate_and_filter_models(models)
@@ -154,6 +155,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             model_name=model_name,  # Cascade 모델 감지를 위해 전달
                             train_crops_per_center=train_crops_per_center,  # 학습 시 multi-crop 샘플링
                             train_crop_overlap=train_crop_overlap,
+                            anisotropy_augment=anisotropy_augment,
                         )
                     except Exception as e:
                         if is_main_process(rank):

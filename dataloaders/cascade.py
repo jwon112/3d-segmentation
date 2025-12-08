@@ -2,6 +2,7 @@
 Cascade / CoordConv 관련 Dataset 및 Loader.
 """
 
+import math
 import random
 from typing import Sequence, Tuple, Optional, Dict
 
@@ -36,6 +37,41 @@ def get_normalized_coord_map(spatial_shape: Sequence[int], device: Optional[torc
     if device is not None:
         coord_map = coord_map.to(device)
     return coord_map
+
+
+def _apply_anisotropy_resize(
+    img: torch.Tensor,
+    mask: torch.Tensor,
+    target_size: Sequence[int],
+    prob: float = 0.4,
+    scale_range: Tuple[float, float] = (0.7, 1.3),
+):
+    """
+    Depth 축만 이방성 스케일 후 다시 target_size로 리샘플해 through-plane 변화를 모사.
+    - img: (C, D, H, W), mask: (D, H, W)
+    """
+    if torch.rand(1).item() >= prob:
+        return img, mask
+
+    C, D, H, W = img.shape
+    tD, tH, tW = _to_3tuple(target_size)
+    log_r = torch.empty(1, device=img.device).uniform_(math.log(scale_range[0]), math.log(scale_range[1])).exp().item()
+    new_D = max(2, int(round(D * log_r)))
+
+    def _interp(tensor, size, mode):
+        vol = tensor.unsqueeze(0)  # (1, C, D, H, W) 또는 (1, 1, D, H, W)
+        kwargs = {"size": size, "mode": mode}
+        if mode != "nearest":
+            kwargs["align_corners"] = False
+        out = F.interpolate(vol, **kwargs)
+        return out.squeeze(0)
+
+    img_scaled = _interp(img, (new_D, H, W), "trilinear")
+    mask_scaled = _interp(mask.unsqueeze(0).float(), (new_D, H, W), "nearest").squeeze(0).long()
+
+    img_resized = _interp(img_scaled, (tD, tH, tW), "trilinear")
+    mask_resized = _interp(mask_scaled.unsqueeze(0).float(), (tD, tH, tW), "nearest").squeeze(0).long()
+    return img_resized, mask_resized
 
 
 def resize_volume(volume: torch.Tensor, target_size: Sequence[int], mode: str = 'trilinear') -> torch.Tensor:
@@ -201,18 +237,28 @@ class BratsCascadeROIDataset(Dataset):
         target_size: Sequence[int] = (64, 64, 64),
         include_coords: bool = True,
         augment: bool = False,
+        anisotropy_augment: bool = False,
     ):
         self.base_dataset = base_dataset
         self.target_size = _to_3tuple(target_size)
         self.include_coords = include_coords
         self.augment = augment
+        self.anisotropy_augment = anisotropy_augment
 
     def __len__(self):
         return len(self.base_dataset)
 
     def _maybe_augment(self, img_vol: torch.Tensor, mask_vol: torch.Tensor):
-        if not self.augment:
+        if not self.augment and not self.anisotropy_augment:
             return img_vol, mask_vol
+        
+        if self.anisotropy_augment:
+            img_vol, mask_vol = _apply_anisotropy_resize(
+                img_vol, mask_vol, target_size=self.target_size, prob=0.4, scale_range=(0.7, 1.3)
+            )
+            # anisotropy만 적용하고 intensity aug는 건너뛸 수 있도록 분리
+            if not self.augment:
+                return img_vol, mask_vol
         
         # 1. Multi-axis flipping (각 축에 대해 독립적으로)
         # img_vol: (C, D, H, W), mask_vol: (D, H, W)
@@ -289,6 +335,7 @@ class BratsCascadeSegmentationDataset(Dataset):
         include_coords: bool = True,
         center_jitter: int = 0,
         augment: bool = False,
+        anisotropy_augment: bool = False,
         return_metadata: bool = False,
         crops_per_center: int = 1,
         crop_overlap: float = 0.5,
@@ -298,6 +345,7 @@ class BratsCascadeSegmentationDataset(Dataset):
         self.include_coords = include_coords
         self.center_jitter = max(0, int(center_jitter))
         self.augment = augment
+        self.anisotropy_augment = anisotropy_augment
         self.return_metadata = return_metadata
         self.crops_per_center = max(1, int(crops_per_center))
         self.crop_overlap = max(0.0, min(1.0, float(crop_overlap)))
@@ -311,8 +359,15 @@ class BratsCascadeSegmentationDataset(Dataset):
         return len(self.base_dataset)
 
     def _maybe_augment(self, img_patch: torch.Tensor, msk_patch: torch.Tensor):
-        if not self.augment:
+        if not self.augment and not self.anisotropy_augment:
             return img_patch, msk_patch
+        
+        if self.anisotropy_augment:
+            img_patch, msk_patch = _apply_anisotropy_resize(
+                img_patch, msk_patch, target_size=self.crop_size, prob=0.4, scale_range=(0.7, 1.3)
+            )
+            if not self.augment:
+                return img_patch, msk_patch
         
         # 1. Multi-axis flipping (각 축에 대해 독립적으로)
         # img_patch: (C, D, H, W), msk_patch: (D, H, W)
@@ -434,6 +489,7 @@ def get_cascade_data_loaders(
     world_size: Optional[int] = None,
     rank: Optional[int] = None,
     use_mri_augmentation: bool = False,
+    anisotropy_augment: bool = False,
     train_crops_per_center: int = 1,
     train_crop_overlap: float = 0.5,
 ):
@@ -453,6 +509,7 @@ def get_cascade_data_loaders(
         target_size=roi_resize,
         include_coords=include_coords,
         augment=use_mri_augmentation,
+        anisotropy_augment=anisotropy_augment,
     )
     roi_val_ds = BratsCascadeROIDataset(val_base, target_size=roi_resize, include_coords=include_coords)
     roi_test_ds = BratsCascadeROIDataset(test_base, target_size=roi_resize, include_coords=include_coords)
@@ -463,6 +520,7 @@ def get_cascade_data_loaders(
         include_coords=include_coords,
         center_jitter=center_jitter,
         augment=use_mri_augmentation,
+        anisotropy_augment=anisotropy_augment,
         return_metadata=False,
         crops_per_center=train_crops_per_center,
         crop_overlap=train_crop_overlap,
@@ -572,6 +630,7 @@ def get_roi_data_loaders(
     world_size: Optional[int] = None,
     rank: Optional[int] = None,
     use_mri_augmentation: bool = False,
+    anisotropy_augment: bool = False,
 ):
     """ROI-only dataloaders for training/evaluation."""
     train_base, val_base, test_base = get_brats_base_datasets(
@@ -589,6 +648,7 @@ def get_roi_data_loaders(
         target_size=roi_resize,
         include_coords=include_coords,
         augment=use_mri_augmentation,
+        anisotropy_augment=anisotropy_augment,
     )
     val_ds = BratsCascadeROIDataset(val_base, target_size=roi_resize, include_coords=include_coords)
     test_ds = BratsCascadeROIDataset(test_base, target_size=roi_resize, include_coords=include_coords)
