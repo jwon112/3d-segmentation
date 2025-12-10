@@ -59,6 +59,8 @@ if __name__ == "__main__":
                        help='Use 5-fold cross-validation instead of simple train/val/test split')
     parser.add_argument('--use_mri_augmentation', action='store_true', default=False,
                        help='Apply MRI-specific data augmentations to training patches (default: False)')
+    parser.add_argument('--anisotropy_augmentation', action='store_true', default=False,
+                       help='Apply depth anisotropy resize augmentation (train only, default: False)')
     parser.add_argument('--use_cascade_pipeline', action='store_true', default=False,
                        help='Enable cascade ROI→Seg evaluation using a pre-trained ROI detector')
     parser.add_argument('--roi_model_name', type=str, default='roi_mobileunetr3d_tiny',
@@ -116,6 +118,7 @@ if __name__ == "__main__":
     print(f"Dimension: {args.dim}")
     print(f"Loss function: {'nnU-Net style (Soft Dice Squared + Dice 70%%/CE 30%%)' if use_nnunet_loss else 'Standard (Dice 50%%/CE 50%%)'}")
     print(f"MRI Augmentation: {'Enabled' if args.use_mri_augmentation else 'Disabled'}")
+    print(f"Anisotropy Augmentation: {'Enabled' if args.anisotropy_augmentation else 'Disabled'}")
     print(f"Results will be saved in: baseline_results/ folder")
     if args.use_5fold:
         print(f"Using 5-fold cross-validation")
@@ -160,6 +163,7 @@ if __name__ == "__main__":
             args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim,
             args.use_pretrained, use_nnunet_loss, args.num_workers, args.dataset_version, args.use_5fold,
             use_mri_augmentation=args.use_mri_augmentation,
+            anisotropy_augment=args.anisotropy_augmentation,
             cascade_infer_cfg=cascade_cfg if args.use_cascade_pipeline else None,
             cascade_model_cfg=cascade_model_cfg,
             train_crops_per_center=args.train_crops_per_center,
