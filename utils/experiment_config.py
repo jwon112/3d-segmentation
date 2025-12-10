@@ -50,6 +50,7 @@ SIZE_SUFFIX_MODELS = {
     'cascade_shufflenet_v2_p3d_lk_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_lka_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_lka_segnext_': ['xs', 's', 'm', 'l'],
+    'cascade_shufflenet_v2_p3d_lka_segnext_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_mvit_': ['xs', 's', 'm', 'l'],
     'cascade_shufflenet_v2_p3d_mvit_': ['xs', 's', 'm', 'l'],
     'cascade_patch_conv_transformer_': ['xs', 's', 'm', 'l'],  # New: Patch Conv + Transformer
