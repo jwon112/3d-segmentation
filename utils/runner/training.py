@@ -136,6 +136,11 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             print("\n[Warmup] Skipped (multi-crop mode to save memory).\n")
     
     for epoch in range(epochs):
+        # 각 epoch 시작 시 seed 재설정하여 재현성 보장 (Stochastic depth 등 랜덤 연산 포함)
+        # base_seed + epoch을 사용하여 각 epoch마다 다른 seed를 가지지만, 같은 seed로 시작하면 같은 순서로 재현 가능
+        epoch_seed = seed + epoch
+        set_seed(epoch_seed)
+        
         # Training
         if train_sampler is not None:
             # ensure different shuffles per epoch
