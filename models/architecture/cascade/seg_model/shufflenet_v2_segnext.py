@@ -27,7 +27,8 @@ import torch.nn.functional as F
 from models.channel_configs import get_singlebranch_channels_2step_decoder, get_activation_type
 from models.model_3d_unet import _make_norm3d, _make_activation
 from models.modules.shufflenet_modules import Down3DShuffleNetV2, ShuffleNetV2Unit3D_LKAHybrid, channel_shuffle_3d
-from models.modules.lka_hybrid_modules import LKAHybridCBAM3D
+from models.modules.lka_hybrid_modules import LKAHybridCBAM3D, drop_path
+from models.modules.cbam_modules import ChannelAttention3D
 from .shufflenet_v2 import (
     Stem3x3,
     Down3DShuffleNetV2_LKAHybrid,
@@ -406,19 +407,244 @@ class P3DSegNeXtDecoderBlock3D(nn.Module):
         return out
 
 
+class P3DLKAKernel3D(nn.Module):
+    """
+    P3D LKA-style kernel (dense + sparse + mixer), attention 없이 순수 커널만 구현.
+
+    - Dense:  P3D 3x3x3 depthwise conv (2D spatial + 1D depth)
+    - Sparse: P3D 3x3x3 depthwise conv with dilation=3 (2D spatial dilated + 1D depth dilated)
+    - Mixer:  1x1x1 pointwise conv (채널 혼합)
+
+    P3D로 분해하여 연산량을 절감하면서도 ERF는 7x7x7을 유지합니다.
+    Depth 방향은 dense하게 커버하여 더 많은 정보를 활용합니다.
+    """
+
+    def __init__(
+        self,
+        channels: int,
+        norm: str = "bn",
+        activation: str = "relu",
+        stride_dense: int = 1,
+    ) -> None:
+        super().__init__()
+        self.channels = channels
+        self.norm = norm or "bn"
+
+        # Dense branch: P3D 3x3x3 depthwise conv
+        # 2D spatial: 3x3 conv
+        self.conv_dense_2d = nn.Conv2d(
+            channels,
+            channels,
+            kernel_size=3,
+            stride=stride_dense,
+            padding=1,
+            groups=channels,  # depthwise
+            bias=False,
+        )
+        # 1D depth: 3 conv
+        self.conv_dense_1d = nn.Conv1d(
+            channels,
+            channels,
+            kernel_size=3,
+            stride=stride_dense,
+            padding=1,
+            groups=channels,  # depthwise
+            bias=False,
+        )
+        self.dense_bn = _make_norm3d(self.norm, channels)
+        self.dense_act = _make_activation(activation, inplace=True)
+
+        # Sparse branch: P3D 3x3x3 depthwise conv with dilation=3
+        # 2D spatial: 3x3 conv with dilation=3
+        self.conv_sparse_2d = nn.Conv2d(
+            channels,
+            channels,
+            kernel_size=3,
+            stride=1,
+            padding=3,
+            dilation=3,
+            groups=channels,  # depthwise
+            bias=False,
+        )
+        # 1D depth: 3 conv with dilation=3
+        self.conv_sparse_1d = nn.Conv1d(
+            channels,
+            channels,
+            kernel_size=3,
+            stride=1,
+            padding=3,
+            dilation=3,
+            groups=channels,  # depthwise
+            bias=False,
+        )
+        self.sparse_bn = _make_norm3d(self.norm, channels)
+        self.sparse_act = _make_activation(activation, inplace=True)
+
+        # Mixer: 1x1x1 pointwise conv (채널 혼합)
+        self.mixer = nn.Sequential(
+            nn.Conv3d(
+                channels,
+                channels,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+                bias=False,
+            ),
+            _make_norm3d(self.norm, channels),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: 입력 텐서 (B, C, D, H, W)
+
+        Returns:
+            P3D LKA-style 커널이 적용된 출력 텐서 (B, C, D, H, W)
+        """
+        B, C, D, H, W = x.shape
+
+        # Dense branch: P3D
+        # 2D spatial conv
+        x_2d = x.permute(0, 2, 1, 3, 4).contiguous().view(B * D, C, H, W)
+        x_2d = self.conv_dense_2d(x_2d)  # (B*D, C, H', W')
+        _, _, H_out, W_out = x_2d.shape
+        x_3d = x_2d.view(B, D, C, H_out, W_out).permute(0, 2, 1, 3, 4).contiguous()
+        # 1D depth conv
+        x_1d = x_3d.permute(0, 3, 4, 1, 2).contiguous().view(B * H_out * W_out, C, D)
+        x_1d = self.conv_dense_1d(x_1d)  # (B*H*W, C, D')
+        _, _, D_out = x_1d.shape
+        out = x_1d.view(B, H_out, W_out, C, D_out).permute(0, 3, 4, 1, 2).contiguous()
+        out = self.dense_bn(out)
+        out = self.dense_act(out)
+
+        # Sparse branch: P3D with dilation
+        # 2D spatial conv with dilation
+        x_2d = out.permute(0, 2, 1, 3, 4).contiguous().view(B * D_out, C, H_out, W_out)
+        x_2d = self.conv_sparse_2d(x_2d)  # (B*D, C, H'', W'')
+        _, _, H_out2, W_out2 = x_2d.shape
+        x_3d = x_2d.view(B, D_out, C, H_out2, W_out2).permute(0, 2, 1, 3, 4).contiguous()
+        # 1D depth conv with dilation
+        x_1d = x_3d.permute(0, 3, 4, 1, 2).contiguous().view(B * H_out2 * W_out2, C, D_out)
+        x_1d = self.conv_sparse_1d(x_1d)  # (B*H*W, C, D'')
+        _, _, D_out2 = x_1d.shape
+        out = x_1d.view(B, H_out2, W_out2, C, D_out2).permute(0, 3, 4, 1, 2).contiguous()
+        out = self.sparse_bn(out)
+        out = self.sparse_act(out)
+
+        # Mixer
+        out = self.mixer(out)
+        return out
+
+
+class P3DLKAHybridCBAM3D(nn.Module):
+    """
+    P3D LKA Hybrid Block with CBAM Channel Attention.
+
+    - P3D LKA 커널 (dense + sparse + mixer)을 통해 7x7x7 ERF를 갖는 특징을 추출
+    - 그 결과에 대해 CBAM의 ChannelAttention3D를 적용하여 채널별 중요도를 재조정
+    - 선택적으로 residual connection(x + F(x))을 적용 가능
+
+    Args:
+        channels: 입력/출력 채널 수
+        reduction: CBAM 채널 축소 비율
+        norm: 정규화 타입 ('bn', 'in', 'gn')
+        activation: 활성화 함수 타입 ('relu', 'hardswish', 'gelu')
+        use_residual: 입력과 출력 사이에 residual connection을 사용할지 여부
+        drop_path_rate: Stochastic depth (depth 앙상블) 비율
+        drop_channel_rate: Spatial dropout (width 앙상블) 비율
+    """
+
+    def __init__(
+        self,
+        channels: int,
+        reduction: int = 16,
+        norm: str = "bn",
+        activation: str = "relu",
+        use_residual: bool = True,
+        stride: int = 1,
+        drop_path_rate: float = 0.0,
+        drop_channel_rate: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.use_residual = use_residual
+        self.stride = stride
+
+        self.lka_kernel = P3DLKAKernel3D(
+            channels=channels,
+            norm=norm,
+            activation=activation,
+            stride_dense=stride,
+        )
+        self.channel_attention = ChannelAttention3D(
+            channels=channels,
+            reduction=reduction,
+        )
+
+        # Stochastic depth 비율 (depth 앙상블, 0이면 사용 안 함)
+        self.drop_path_rate = float(drop_path_rate)
+
+        # Spatial dropout (width 앙상블, CNN에 적합한 채널 단위 dropout)
+        if drop_channel_rate > 0:
+            self.drop_channel = nn.Dropout3d(drop_channel_rate)
+        else:
+            self.drop_channel = nn.Identity()
+
+        # stride > 1인 경우 residual connection을 유지하기 위한 projection 경로
+        if self.use_residual and self.stride > 1:
+            self.proj = nn.Sequential(
+                nn.Conv3d(
+                    channels,
+                    channels,
+                    kernel_size=1,
+                    stride=stride,
+                    padding=0,
+                    bias=False,
+                ),
+                _make_norm3d(norm, channels),
+            )
+        else:
+            self.proj = None
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: 입력 텐서 (B, C, D, H, W)
+
+        Returns:
+            P3D LKA 커널 + CBAM Channel Attention (+ optional residual)이 적용된 출력
+        """
+        out = self.lka_kernel(x)  # P3D 커널 구조로 특징 추출 (7x7x7 ERF + stride에 따른 downsample)
+        out = self.channel_attention(out)  # 채널 어텐션 적용
+
+        # Spatial dropout (width 앙상블) - CBAM 이후 적용
+        out = self.drop_channel(out)
+
+        # Projection 있는 정석 residual:
+        # - stride == 1: out + x
+        # - stride > 1: out + proj(x)  (spatial 크기를 맞춘 identity)
+        if self.use_residual:
+            identity = x
+            if self.proj is not None:
+                identity = self.proj(identity)
+            # Stochastic depth (DropPath)를 residual branch에만 적용 (depth 앙상블)
+            out = identity + drop_path(out, self.drop_path_rate, self.training)
+        return out
+
+
 class P3DShuffleNetV2Unit3D_LKAHybrid(nn.Module):
     """3D ShuffleNetV2 Unit with Hybrid LKA branch (P3D version).
 
+    전체적으로 P3D를 일관되게 적용하여 효율성과 일관성을 확보합니다.
+
     - Stride=1:
         Split -> Branch1 (identity) +
-        Branch2 (1x1 -> LKAHybridCBAM3D -> 출력) -> Concat -> Shuffle
+        Branch2 (1x1 -> P3DLKAHybridCBAM3D -> 출력) -> Concat -> Shuffle
     - Stride=2:
         No split ->
         Branch1 (P3D DWConv stride=2 -> 1x1) +
-        Branch2 (1x1 -> LKAHybridCBAM3D -> 출력 채널) -> Concat -> Shuffle
+        Branch2 (1x1 -> P3DLKAHybridCBAM3D stride=2 -> 출력 채널) -> Concat -> Shuffle
 
-    LKAHybridCBAM3D 내부는 일반 3D Conv 유지 (P3D 적용 안 함).
-    Branch1의 depthwise conv만 P3D로 변경.
+    모든 conv 연산에 P3D를 적용하여 메모리와 연산량을 절감합니다.
     """
 
     def __init__(
@@ -462,9 +688,8 @@ class P3DShuffleNetV2Unit3D_LKAHybrid(nn.Module):
             self.branch2_bn1 = _make_norm3d(norm, mid_channels)
             self.branch2_activation = activation_fn
 
-            # Hybrid LKA block (includes depthwise dense + sparse + CBAM channel attention + residual)
-            # LKA block은 일반 3D Conv 유지
-            self.branch2_lka = LKAHybridCBAM3D(
+            # Hybrid LKA block: P3D 적용
+            self.branch2_lka = P3DLKAHybridCBAM3D(
                 channels=mid_channels,
                 reduction=reduction,
                 norm=norm,
@@ -512,8 +737,8 @@ class P3DShuffleNetV2Unit3D_LKAHybrid(nn.Module):
             self.branch2_bn1 = _make_norm3d(norm, mid_out)
             self.branch2_activation = activation_fn
 
-            # Hybrid LKA block (stride=2) - 일반 3D Conv 유지
-            self.branch2_lka = LKAHybridCBAM3D(
+            # Hybrid LKA block (stride=2): P3D 적용
+            self.branch2_lka = P3DLKAHybridCBAM3D(
                 channels=mid_out,
                 reduction=reduction,
                 norm=norm,
@@ -650,7 +875,7 @@ class CascadeShuffleNetV2SegNeXt3D_P3D_LKA(nn.Module):
       * Stem: P3DStem3x3
       * Stage2: P3DDown3DShuffleNetV2
       * Stage3: P3DDown3DShuffleNetV2_LKAHybrid + extra P3D LKA units
-      * Stage4: LKAHybridCBAM3D (stride=2) + LKAHybridCBAM3D (stride=1) [일반 3D Conv 유지]
+      * Stage4: P3DLKAHybridCBAM3D (stride=2) + P3DLKAHybridCBAM3D (stride=1) [전체 P3D 적용]
 
     - Decoder: hierarchical upsample + add-fusion + P3D DW/PW conv refinement
       * 12^3 -> 24^3 (fuse Stage3)
@@ -714,15 +939,15 @@ class CascadeShuffleNetV2SegNeXt3D_P3D_LKA(nn.Module):
         fused_channels = channels["branch3"]
         expanded_channels = channels["down4"]
 
-        # Stage 4: 24^3 -> 12^3 via LKA stride=2, then one more LKA (stride=1)
-        # LKA block은 일반 3D Conv 유지 (P3D 적용 안 함)
+        # Stage 4: 24^3 -> 12^3 via P3D LKA stride=2, then one more P3D LKA (stride=1)
+        # 전체 P3D 적용으로 일관성 확보
         self.down4_expand = nn.Sequential(
             nn.Conv3d(fused_channels, expanded_channels, kernel_size=1, bias=False),
             _make_norm3d(self.norm, expanded_channels),
             _make_activation(activation, inplace=True),
         )
         # lka1은 항상 실행되어 Stage 4가 완전히 사라지지 않도록 보장
-        self.down4_lka1 = LKAHybridCBAM3D(
+        self.down4_lka1 = P3DLKAHybridCBAM3D(
             channels=expanded_channels,
             reduction=4,
             norm=self.norm,
@@ -733,7 +958,7 @@ class CascadeShuffleNetV2SegNeXt3D_P3D_LKA(nn.Module):
             drop_channel_rate=0.0,  # 첫 번째 블록은 spatial dropout 미적용
         )
         # lka2만 drop path 및 spatial dropout 적용하여 regularization 효과
-        self.down4_lka2 = LKAHybridCBAM3D(
+        self.down4_lka2 = P3DLKAHybridCBAM3D(
             channels=expanded_channels,
             reduction=4,
             norm=self.norm,
