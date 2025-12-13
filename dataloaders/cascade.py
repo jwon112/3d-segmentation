@@ -45,18 +45,35 @@ def _apply_anisotropy_resize(
     target_size: Sequence[int],
     prob: float = 0.4,
     scale_range: Tuple[float, float] = (0.7, 1.3),
+    sample_idx: Optional[int] = None,
+    deterministic: bool = False,
 ):
     """
     Depth 축만 이방성 스케일 후 다시 target_size로 리샘플해 through-plane 변화를 모사.
     - img: (C, D, H, W), mask: (D, H, W)
+    - deterministic=True일 때는 sample_idx 기반으로 재현 가능한 augmentation 적용
     """
-    if torch.rand(1).item() >= prob:
-        return img, mask
+    # Deterministic 모드: sample_idx 기반으로 고정된 랜덤 값 생성
+    if deterministic and sample_idx is not None:
+        # 샘플 인덱스를 seed로 사용하여 재현 가능한 랜덤 값 생성
+        rng = random.Random(sample_idx)
+        should_apply = rng.random() < prob
+        if not should_apply:
+            return img, mask
+        
+        # 고정된 scale factor 생성
+        log_r = rng.uniform(math.log(scale_range[0]), math.log(scale_range[1]))
+        scale_factor = math.exp(log_r)
+    else:
+        # Training 모드: 랜덤하게 적용
+        if torch.rand(1).item() >= prob:
+            return img, mask
+        log_r = torch.empty(1, device=img.device).uniform_(math.log(scale_range[0]), math.log(scale_range[1])).exp().item()
+        scale_factor = log_r
 
     C, D, H, W = img.shape
     tD, tH, tW = _to_3tuple(target_size)
-    log_r = torch.empty(1, device=img.device).uniform_(math.log(scale_range[0]), math.log(scale_range[1])).exp().item()
-    new_D = max(2, int(round(D * log_r)))
+    new_D = max(2, int(round(D * scale_factor)))
 
     def _interp(tensor, size, mode):
         vol = tensor.unsqueeze(0)  # (1, C, D, H, W) 또는 (1, 1, D, H, W)
@@ -238,23 +255,26 @@ class BratsCascadeROIDataset(Dataset):
         include_coords: bool = True,
         augment: bool = False,
         anisotropy_augment: bool = False,
+        deterministic: bool = False,  # Validation/Test에서 재현 가능한 augmentation을 위한 플래그
     ):
         self.base_dataset = base_dataset
         self.target_size = _to_3tuple(target_size)
         self.include_coords = include_coords
         self.augment = augment
         self.anisotropy_augment = anisotropy_augment
+        self.deterministic = deterministic
 
     def __len__(self):
         return len(self.base_dataset)
 
-    def _maybe_augment(self, img_vol: torch.Tensor, mask_vol: torch.Tensor):
+    def _maybe_augment(self, img_vol: torch.Tensor, mask_vol: torch.Tensor, sample_idx: Optional[int] = None):
         if not self.augment and not self.anisotropy_augment:
             return img_vol, mask_vol
         
         if self.anisotropy_augment:
             img_vol, mask_vol = _apply_anisotropy_resize(
-                img_vol, mask_vol, target_size=self.target_size, prob=0.4, scale_range=(0.7, 1.3)
+                img_vol, mask_vol, target_size=self.target_size, prob=0.4, scale_range=(0.7, 1.3),
+                sample_idx=sample_idx, deterministic=self.deterministic
             )
             # anisotropy만 적용하고 intensity aug는 건너뛸 수 있도록 분리
             if not self.augment:
@@ -321,7 +341,7 @@ class BratsCascadeROIDataset(Dataset):
         resized_image = resize_volume(roi_input, self.target_size, mode='trilinear')
         wt_mask = (mask > 0).float().unsqueeze(0)
         resized_mask = resize_volume(wt_mask, self.target_size, mode='nearest').squeeze(0).long()
-        resized_image, resized_mask = self._maybe_augment(resized_image, resized_mask)
+        resized_image, resized_mask = self._maybe_augment(resized_image, resized_mask, sample_idx=idx)
         return resized_image, resized_mask
 
 
@@ -339,6 +359,7 @@ class BratsCascadeSegmentationDataset(Dataset):
         return_metadata: bool = False,
         crops_per_center: int = 1,
         crop_overlap: float = 0.5,
+        deterministic: bool = False,  # Validation/Test에서 재현 가능한 augmentation을 위한 플래그
     ):
         self.base_dataset = base_dataset
         self.crop_size = _to_3tuple(crop_size)
@@ -349,6 +370,7 @@ class BratsCascadeSegmentationDataset(Dataset):
         self.return_metadata = return_metadata
         self.crops_per_center = max(1, int(crops_per_center))
         self.crop_overlap = max(0.0, min(1.0, float(crop_overlap)))
+        self.deterministic = deterministic
 
     def __len__(self):
         # Multi-crop 모드: 각 crop을 별도의 샘플로 취급
@@ -358,13 +380,14 @@ class BratsCascadeSegmentationDataset(Dataset):
             return len(self.base_dataset) * num_crops_per_sample
         return len(self.base_dataset)
 
-    def _maybe_augment(self, img_patch: torch.Tensor, msk_patch: torch.Tensor):
+    def _maybe_augment(self, img_patch: torch.Tensor, msk_patch: torch.Tensor, sample_idx: Optional[int] = None):
         if not self.augment and not self.anisotropy_augment:
             return img_patch, msk_patch
         
         if self.anisotropy_augment:
             img_patch, msk_patch = _apply_anisotropy_resize(
-                img_patch, msk_patch, target_size=self.crop_size, prob=0.4, scale_range=(0.7, 1.3)
+                img_patch, msk_patch, target_size=self.crop_size, prob=0.4, scale_range=(0.7, 1.3),
+                sample_idx=sample_idx, deterministic=self.deterministic
             )
             if not self.augment:
                 return img_patch, msk_patch
@@ -459,7 +482,7 @@ class BratsCascadeSegmentationDataset(Dataset):
             coord_map = get_normalized_coord_map(mask.shape, device=image.device)
             coord_crop = crop_volume_with_center(coord_map, center, self.crop_size, return_origin=False)
             img_crop = torch.cat([img_crop, coord_crop], dim=0)
-        img_crop, mask_crop = self._maybe_augment(img_crop, mask_crop)
+        img_crop, mask_crop = self._maybe_augment(img_crop, mask_crop, sample_idx=idx)
         if self.return_metadata:
             metadata = {
                 'crop_origin': torch.tensor(origin, dtype=torch.long),
@@ -511,8 +534,22 @@ def get_cascade_data_loaders(
         augment=use_mri_augmentation,
         anisotropy_augment=anisotropy_augment,
     )
-    roi_val_ds = BratsCascadeROIDataset(val_base, target_size=roi_resize, include_coords=include_coords)
-    roi_test_ds = BratsCascadeROIDataset(test_base, target_size=roi_resize, include_coords=include_coords)
+    roi_val_ds = BratsCascadeROIDataset(
+        val_base, 
+        target_size=roi_resize, 
+        include_coords=include_coords,
+        augment=False,  # 일반 augmentation은 validation에서 사용 안 함
+        anisotropy_augment=anisotropy_augment,  # Validation에도 이방성 augmentation 적용
+        deterministic=True,  # Validation에서는 재현 가능한 augmentation 적용
+    )
+    roi_test_ds = BratsCascadeROIDataset(
+        test_base, 
+        target_size=roi_resize, 
+        include_coords=include_coords,
+        augment=False,  # 일반 augmentation은 test에서 사용 안 함
+        anisotropy_augment=anisotropy_augment,  # Test에도 이방성 augmentation 적용
+        deterministic=True,  # Test에서는 재현 가능한 augmentation 적용
+    )
 
     seg_train_ds = BratsCascadeSegmentationDataset(
         train_base,
@@ -531,6 +568,7 @@ def get_cascade_data_loaders(
         include_coords=include_coords,
         center_jitter=0,
         augment=False,
+        anisotropy_augment=anisotropy_augment,  # Validation에도 이방성 augmentation 적용
         return_metadata=False,
     )
     seg_test_ds = BratsCascadeSegmentationDataset(
@@ -539,6 +577,7 @@ def get_cascade_data_loaders(
         include_coords=include_coords,
         center_jitter=0,
         augment=False,
+        anisotropy_augment=anisotropy_augment,  # Test에도 이방성 augmentation 적용
         return_metadata=False,  # 일반 평가에서는 metadata 불필요
     )
 
