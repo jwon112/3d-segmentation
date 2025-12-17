@@ -614,7 +614,7 @@ def get_cascade_data_loaders(
             num_workers=num_workers,
             pin_memory=pin_memory,
             persistent_workers=(num_workers > 0),
-            prefetch_factor=(4 if num_workers > 0 else None),
+            prefetch_factor=(6 if num_workers > 0 else None),  # 최적화된 prefetch_factor
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )
@@ -737,7 +737,7 @@ def get_roi_data_loaders(
             num_workers=num_workers,
             pin_memory=pin_memory,
             persistent_workers=(num_workers > 0),
-            prefetch_factor=(4 if num_workers > 0 else None),
+            prefetch_factor=(6 if num_workers > 0 else None),  # 최적화된 prefetch_factor
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )

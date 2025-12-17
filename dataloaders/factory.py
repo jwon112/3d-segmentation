@@ -92,12 +92,14 @@ def get_data_loaders(
         full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples, dataset_version=dataset_version)
     else:
         dataset_class = BratsDataset3D
+        # Training용: max_cache_size=80 (최적화된 캐시 크기)
         full_dataset = dataset_class(
             data_dir,
             split='train',
             max_samples=max_samples,
             dataset_version=dataset_version,
             use_4modalities=use_4modalities,
+            max_cache_size=80,
         )
 
     train_dataset, val_dataset, test_dataset = split_brats_dataset(
@@ -119,6 +121,7 @@ def get_data_loaders(
             samples_per_volume=16,
             augment=use_mri_augmentation,
             anisotropy_augment=anisotropy_augment,
+            max_cache_size=80,  # Training용: 최적화된 캐시 크기
         )
 
     train_sampler = val_sampler = test_sampler = None
@@ -149,7 +152,7 @@ def get_data_loaders(
         pin_memory=True,
         sampler=train_sampler,
         persistent_workers=((num_workers if num_workers is not None else 8) > 0),
-        prefetch_factor=((num_workers if num_workers is not None else 8) // 2 if (num_workers if num_workers is not None else 8) > 0 else None),
+        prefetch_factor=(6 if (num_workers if num_workers is not None else 8) > 0 else None),  # 최적화된 prefetch_factor
         worker_init_fn=_worker_init_fn,
         generator=_generator,
     )
