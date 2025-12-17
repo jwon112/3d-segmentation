@@ -21,7 +21,9 @@ def get_shm_usage() -> Dict[str, float]:
         'available': 'N/A',
         'use_percent': 0.0,
         'ipcs_total_mb': 0.0,
-        'ipcs_count': 0
+        'ipcs_count': 0,
+        'files_total_mb': 0.0,
+        'files_count': 0
     }
     
     try:
@@ -43,6 +45,54 @@ def get_shm_usage() -> Dict[str, float]:
                 shm_info['use_percent'] = float(use_percent)
     except Exception as e:
         pass
+    
+    try:
+        # /dev/shm 디렉토리의 실제 파일 크기 확인
+        result = subprocess.run(
+            ['du', '-sh', '/dev/shm'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        # 출력 형식: "크기 /dev/shm"
+        parts = result.stdout.strip().split()
+        if len(parts) >= 1:
+            size_str = parts[0]
+            # 크기 파싱 (예: "500G", "1.2G", "100M")
+            if size_str.endswith('G'):
+                shm_info['files_total_mb'] = float(size_str[:-1]) * 1024
+            elif size_str.endswith('M'):
+                shm_info['files_total_mb'] = float(size_str[:-1])
+            elif size_str.endswith('K'):
+                shm_info['files_total_mb'] = float(size_str[:-1]) / 1024
+            else:
+                shm_info['files_total_mb'] = float(size_str) / (1024 ** 2)
+    except Exception as e:
+        pass
+    
+    try:
+        # /dev/shm 내 파일 개수 확인
+        result = subprocess.run(
+            ['find', '/dev/shm', '-type', 'f', '2>/dev/null', '|', 'wc', '-l'],
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        shm_info['files_count'] = int(result.stdout.strip())
+    except Exception as e:
+        try:
+            # 대체 방법
+            result = subprocess.run(
+                ['ls', '-1', '/dev/shm', '2>/dev/null', '|', 'wc', '-l'],
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            shm_info['files_count'] = int(result.stdout.strip())
+        except:
+            pass
     
     try:
         # ipcs -m으로 실제 공유 메모리 세그먼트 확인 (프로세스 레벨)
@@ -160,19 +210,35 @@ def print_memory_summary(title: str = "Memory Summary"):
     
     # SHM
     shm = get_shm_usage()
-    print(f"\n[Shared Memory (/dev/shm - Filesystem)]")
+    print(f"\n[Shared Memory (/dev/shm - Filesystem df)]")
     print(f"  Total: {shm['total']}")
     print(f"  Used: {shm['used']} ({shm['use_percent']:.1f}%)")
     print(f"  Available: {shm['available']}")
     
+    if shm['files_total_mb'] > 0:
+        print(f"\n[Shared Memory (/dev/shm - Actual Files)]")
+        print(f"  Files: {shm['files_count']}")
+        print(f"  Total Size: {shm['files_total_mb']:.2f} MB ({shm['files_total_mb']/1024:.2f} GB)")
+    else:
+        print(f"\n[Shared Memory (/dev/shm - Actual Files)]")
+        print(f"  No files found in /dev/shm")
+    
     if shm['ipcs_count'] > 0:
-        print(f"\n[Shared Memory (ipcs -m - Process Level)]")
+        print(f"\n[Shared Memory (ipcs -m - System V IPC)]")
         print(f"  Active Segments: {shm['ipcs_count']}")
         print(f"  Total Size: {shm['ipcs_total_mb']:.2f} MB ({shm['ipcs_total_mb']/1024:.2f} GB)")
     else:
-        print(f"\n[Shared Memory (ipcs -m - Process Level)]")
-        print(f"  No active shared memory segments found")
-        print(f"  Note: PyTorch DataLoader may use file_descriptor sharing strategy")
+        print(f"\n[Shared Memory (ipcs -m - System V IPC)]")
+        print(f"  No System V IPC shared memory segments found")
+    
+    # PyTorch sharing strategy 확인
+    pytorch_strategy = os.environ.get('PYTORCH_SHARING_STRATEGY', 'file_descriptor')
+    print(f"\n[PyTorch Sharing Strategy]")
+    print(f"  PYTORCH_SHARING_STRATEGY: {pytorch_strategy}")
+    if pytorch_strategy == 'file_descriptor':
+        print(f"  Note: file_descriptor strategy uses minimal SHM (mainly for file descriptors)")
+    elif pytorch_strategy == 'file_system':
+        print(f"  Note: file_system strategy uses /dev/shm for tensor storage")
     
     # 메인 프로세스
     main_mem = get_process_memory()
