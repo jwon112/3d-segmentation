@@ -216,6 +216,7 @@ def print_memory_estimation(
     prefetch_factor: int,
     max_cache_size: int,
     batch_size: int = 8,
+    num_gpus: int = 1,
 ):
     """메모리 사용량 추정 출력"""
     est = estimate_memory_usage(num_workers, prefetch_factor, max_cache_size, batch_size)
@@ -224,18 +225,30 @@ def print_memory_estimation(
     print(f"Memory Usage Estimation")
     print(f"{'='*60}")
     print(f"Configuration:")
-    print(f"  num_workers: {num_workers}")
+    print(f"  num_workers (per GPU): {num_workers}")
     print(f"  prefetch_factor: {prefetch_factor}")
     print(f"  max_cache_size: {max_cache_size}")
     print(f"  batch_size: {batch_size}")
+    print(f"  num_gpus: {num_gpus}")
     print(f"\nEstimated Memory Usage (Application RAM):")
     print(f"  Per Worker: {est['per_worker_gb']:.2f} GB")
     print(f"    - Cache: {est['cache_memory_gb'] / num_workers:.2f} GB")
     print(f"    - Prefetch: {est['prefetch_memory_gb'] / num_workers:.2f} GB")
     print(f"    - Overhead: ~0.5 GB")
-    print(f"  Total Workers ({num_workers}): {est['total_workers_gb']:.2f} GB")
-    print(f"  Main Process: {est['main_process_gb']:.2f} GB")
-    print(f"  Total Application RAM: {est['total_app_ram_gb']:.2f} GB")
+    print(f"  Per GPU:")
+    print(f"    - Workers ({num_workers}): {est['total_workers_gb']:.2f} GB")
+    print(f"    - Main Process: {est['main_process_gb']:.2f} GB")
+    print(f"    - Total per GPU: {est['total_app_ram_gb']:.2f} GB")
+    
+    if num_gpus > 1:
+        total_workers_all_gpus = est['total_workers_gb'] * num_gpus
+        total_main_all_gpus = est['main_process_gb'] * num_gpus
+        total_all_gpus = est['total_app_ram_gb'] * num_gpus
+        print(f"\n  All GPUs ({num_gpus}):")
+        print(f"    - Total Workers: {total_workers_all_gpus:.2f} GB")
+        print(f"    - Total Main Processes: {total_main_all_gpus:.2f} GB")
+        print(f"    - Total Application RAM: {total_all_gpus:.2f} GB")
+    
     print(f"{'='*60}\n")
 
 
@@ -248,6 +261,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_cache_size', type=int, default=50, help='최대 캐시 크기 (볼륨 수)')
     parser.add_argument('--batch_size', type=int, default=8, help='배치 크기')
     parser.add_argument('--volume_size_mb', type=float, default=136.0, help='볼륨 크기 (MB, 전처리된 데이터 기준)')
+    parser.add_argument('--num_gpus', type=int, default=1, help='GPU 수 (분산 학습 시)')
     parser.add_argument('--show_actual', action='store_true', help='실제 메모리 사용량도 출력')
     
     args = parser.parse_args()
@@ -257,7 +271,8 @@ if __name__ == "__main__":
         num_workers=args.num_workers,
         prefetch_factor=args.prefetch_factor,
         max_cache_size=args.max_cache_size,
-        batch_size=args.batch_size
+        batch_size=args.batch_size,
+        num_gpus=args.num_gpus
     )
     
     # 실제 메모리 사용량 확인 (옵션)
