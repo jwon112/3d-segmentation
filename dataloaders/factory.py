@@ -149,7 +149,7 @@ def get_data_loaders(
         pin_memory=True,
         sampler=train_sampler,
         persistent_workers=((num_workers if num_workers is not None else 8) > 0),
-        prefetch_factor=(4 if (num_workers if num_workers is not None else 8) > 0 else None),
+        prefetch_factor=(12 if (num_workers if num_workers is not None else 8) > 0 else None),
         worker_init_fn=_worker_init_fn,
         generator=_generator,
     )

@@ -150,7 +150,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         
         # 프로파일링: 첫 10 step만 타이밍 측정
         profile_steps = 10
-        load_times, fwd_times, bwd_times = [], [], []
+        wait_times, load_times, fwd_times, bwd_times = [], [], [], []
         torch.cuda.synchronize()
         
         # 데이터셋/로더 길이 확인 (첫 epoch만)
@@ -164,8 +164,20 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             if train_crops_per_center > 1:
                 print(f"  Multi-crop mode: {train_crops_per_center} crops per center ({train_crops_per_center**3} total crops per sample)")
         
-        for step, (inputs, labels) in enumerate(tqdm(train_loader, desc=f"Train {epoch+1}/{epochs}", leave=False)):
+        # Iterator를 명시적으로 사용하여 배치 대기 시간 측정
+        train_iter = iter(train_loader)
+        for step in tqdm(range(len(train_loader)), desc=f"Train {epoch+1}/{epochs}", leave=False):
+            # 배치를 받기 전 시간 측정 (대기 시간 포함)
             if step < profile_steps:
+                torch.cuda.synchronize()
+                t_wait_start = time.time()
+            
+            inputs, labels = next(train_iter)
+            
+            # 배치를 받은 후 시간 측정
+            if step < profile_steps:
+                t_wait_end = time.time()
+                wait_times.append(t_wait_end - t_wait_start)
                 torch.cuda.synchronize()
                 t_start = time.time()
             
@@ -216,11 +228,17 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         
         # 프로파일링 결과 출력 (첫 epoch만)
         if epoch == 0 and n_tr > 0:
+            avg_wait = np.mean(wait_times) if wait_times else 0.0
             avg_load = np.mean(load_times)
             avg_fwd = np.mean(fwd_times)
             avg_bwd = np.mean(bwd_times)
             if is_main_process(rank):
-                print(f"\n[Profile] Avg load: {avg_load:.3f}s, fwd: {avg_fwd:.3f}s, bwd: {avg_bwd:.3f}s, total: {avg_load+avg_fwd+avg_bwd:.3f}s/step")
+                print(f"\n[Profile] Avg wait: {avg_wait:.3f}s, load: {avg_load:.3f}s, fwd: {avg_fwd:.3f}s, bwd: {avg_bwd:.3f}s")
+                print(f"[Profile] Total per step: {avg_wait+avg_load+avg_fwd+avg_bwd:.3f}s (wait+load+fwd+bwd)")
+                if wait_times:
+                    max_wait = np.max(wait_times)
+                    min_wait = np.min(wait_times)
+                    print(f"[Profile] Wait time range: {min_wait:.3f}s ~ {max_wait:.3f}s")
         
         # Validation (all ranks, simpler/robust)
         model.eval()
