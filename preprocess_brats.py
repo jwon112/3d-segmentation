@@ -110,10 +110,10 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
         mask = seg.astype(np.int64)
         mask = np.where(mask == 4, 3, mask)
         
-        # HDF5로 저장 (메타데이터 포함)
+        # HDF5로 저장 (메타데이터 포함, 압축 없음 - 로딩 속도 최적화)
         with h5py.File(output_path, 'w') as f:
-            f.create_dataset('image', data=image, compression='gzip', compression_opts=4)
-            f.create_dataset('mask', data=mask, compression='gzip', compression_opts=4)
+            f.create_dataset('image', data=image, compression=None)
+            f.create_dataset('mask', data=mask, compression=None)
             # 메타데이터 저장 (모달리티 구성 확인용)
             f.attrs['use_4modalities'] = use_4modalities
             f.attrs['num_channels'] = image.shape[0]
