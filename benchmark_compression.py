@@ -33,7 +33,7 @@ def clear_disk_cache():
 
 
 def benchmark_compression_with_parallel_io(sample_file_path, compression_levels=[None, 1, 2, 3, 4], 
-                                           num_parallel_reads=4, num_files=10):
+                                           num_parallel_reads=4, num_files=1000):
     """
     실제 DataLoader 환경을 시뮬레이션한 벤치마크
     
@@ -87,15 +87,19 @@ def benchmark_compression_with_parallel_io(sample_file_path, compression_levels=
         clear_disk_cache()
         time.sleep(0.5)  # 캐시 비우기 대기
         
+        # 충분히 많은 파일을 읽어서 실제 I/O 병목 재현
         cold_load_times = []
-        for test_file in test_files[:3]:  # 처음 3개만 테스트
+        test_count = min(100, len(test_files))  # 100개 파일 테스트
+        for i, test_file in enumerate(test_files[:test_count]):
             load_start = time.time()
             with h5py.File(test_file, 'r') as f:
                 loaded_image = torch.from_numpy(f['image'][:]).float()
                 loaded_mask = torch.from_numpy(f['mask'][:]).long()
             load_time = time.time() - load_start
             cold_load_times.append(load_time)
-            time.sleep(0.1)  # 디스크 I/O 간격
+            if (i + 1) % 10 == 0:
+                print(f"    Cold cache 테스트 진행 중: {i+1}/{test_count}...", end='\r')
+        print()  # 줄바꿈
         
         avg_cold_load = np.mean(cold_load_times) * 1000
         
@@ -113,6 +117,7 @@ def benchmark_compression_with_parallel_io(sample_file_path, compression_levels=
         avg_warm_load = np.mean(warm_load_times) * 1000
         
         # 3. 병렬 읽기 테스트 (실제 DataLoader 환경)
+        # 충분히 많은 파일을 병렬로 읽어서 실제 I/O 병목 재현
         def load_file(file_path):
             start = time.time()
             with h5py.File(file_path, 'r') as f:
@@ -120,10 +125,19 @@ def benchmark_compression_with_parallel_io(sample_file_path, compression_levels=
                 loaded_mask = torch.from_numpy(f['mask'][:]).long()
             return time.time() - start
         
+        # 병렬로 더 많은 파일 읽기 (실제 환경 시뮬레이션)
+        parallel_files_count = min(200, len(test_files))  # 200개 파일 병렬 읽기
         parallel_start = time.time()
+        parallel_times = []
         with ThreadPoolExecutor(max_workers=num_parallel_reads) as executor:
-            futures = [executor.submit(load_file, f) for f in test_files[:num_parallel_reads]]
-            parallel_times = [f.result() for f in as_completed(futures)]
+            futures = [executor.submit(load_file, f) for f in test_files[:parallel_files_count]]
+            completed = 0
+            for future in as_completed(futures):
+                parallel_times.append(future.result())
+                completed += 1
+                if completed % 20 == 0:
+                    print(f"    병렬 읽기 테스트 진행 중: {completed}/{parallel_files_count}...", end='\r')
+        print()  # 줄바꿈
         parallel_total = (time.time() - parallel_start) * 1000
         avg_parallel = np.mean(parallel_times) * 1000
         
@@ -172,25 +186,48 @@ def find_optimal_compression_realistic(results):
         print(f"  {i}. {r['compression']:<25} - {r['parallel_total_ms']:>6.2f}ms, "
               f"{r['file_size_mb']:>6.2f} MB, {r['compression_ratio']:>5.2f}x")
     
-    # 실제 환경 균형점 (Cold cache 50% + 병렬 50%)
+    # 실제 환경 균형점 계산
+    # 병렬 읽기가 실제 DataLoader 환경이므로 더 중요하게 가중치 설정
+    print(f"\n균형점 분석:")
+    
+    # 1. 병렬 읽기 우선 (실제 DataLoader 환경)
+    best_parallel = None
+    best_parallel_score = float('inf')
+    for r in results:
+        # 병렬 읽기 + 파일 크기 고려 (병렬 80%, 크기 20%)
+        score = r['parallel_total_ms'] * 0.8 + r['file_size_mb'] * 0.2
+        if score < best_parallel_score:
+            best_parallel_score = score
+            best_parallel = r
+    
+    print(f"  병렬 읽기 우선 (병렬 80% + 크기 20%):")
+    print(f"    Compression: {best_parallel['compression']}")
+    print(f"    병렬 로딩: {best_parallel['parallel_total_ms']:.2f}ms")
+    print(f"    파일 크기: {best_parallel['file_size_mb']:.2f} MB")
+    
+    # 2. 균형점 (Cold 30% + 병렬 70%)
     best_balanced = None
     best_score = float('inf')
     
     for r in results:
-        # Cold cache와 병렬 읽기의 가중 평균
-        score = r['cold_load_ms'] * 0.5 + r['parallel_total_ms'] * 0.5
+        # 병렬 읽기가 더 중요 (실제 환경)
+        score = r['cold_load_ms'] * 0.3 + r['parallel_total_ms'] * 0.7
         if score < best_score:
             best_score = score
             best_balanced = r
     
-    print(f"\n실제 환경 균형점 (Cold 50% + 병렬 50%):")
-    print(f"  Compression: {best_balanced['compression']}")
-    print(f"  Cold cache 로딩: {best_balanced['cold_load_ms']:.2f}ms")
-    print(f"  병렬 로딩: {best_balanced['parallel_total_ms']:.2f}ms")
-    print(f"  파일 크기: {best_balanced['file_size_mb']:.2f} MB")
-    print(f"  압축률: {best_balanced['compression_ratio']:.2f}x")
+    print(f"\n  균형점 (Cold 30% + 병렬 70%):")
+    print(f"    Compression: {best_balanced['compression']}")
+    print(f"    Cold cache 로딩: {best_balanced['cold_load_ms']:.2f}ms")
+    print(f"    병렬 로딩: {best_balanced['parallel_total_ms']:.2f}ms")
+    print(f"    파일 크기: {best_balanced['file_size_mb']:.2f} MB")
+    print(f"    압축률: {best_balanced['compression_ratio']:.2f}x")
     
-    return best_balanced
+    # 최종 추천: 병렬 읽기 우선 또는 균형점 중 더 나은 것
+    if best_parallel['parallel_total_ms'] < best_balanced['parallel_total_ms']:
+        return best_parallel
+    else:
+        return best_balanced
 
 
 def main():
@@ -225,8 +262,8 @@ def main():
                         help='테스트할 압축 레벨 (기본: 1-4, 0은 압축 없음을 의미)')
     parser.add_argument('--num_parallel', type=int, default=4,
                         help='병렬 읽기 수 (worker 수 시뮬레이션, 기본: 4)')
-    parser.add_argument('--num_files', type=int, default=10,
-                        help='테스트 파일 수 (기본: 10)')
+    parser.add_argument('--num_files', type=int, default=1000,
+                        help='테스트 파일 수 (기본: 1000, 실제 I/O 병목 재현을 위해 충분히 많은 수 필요)')
     
     args = parser.parse_args()
     
