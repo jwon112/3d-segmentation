@@ -540,8 +540,14 @@ def get_cascade_data_loaders(
         use_5fold=use_5fold,
         fold_idx=fold_idx,
         use_4modalities=True,
-        max_cache_size=50,  # 메모리 최적화: worker당 50개 볼륨 캐시
+        max_cache_size=80,  # Application RAM 여유 있음: worker당 80개 볼륨 캐시
     )
+
+    # Validation/Test dataset은 전체 볼륨을 로드하므로 캐시를 비활성화하여 메모리 사용량 최소화
+    if hasattr(val_base, 'dataset'):
+        val_base.dataset.max_cache_size = 0
+    if hasattr(test_base, 'dataset'):
+        test_base.dataset.max_cache_size = 0
 
     roi_train_ds = BratsCascadeROIDataset(
         train_base,
@@ -712,6 +718,12 @@ def get_roi_data_loaders(
         fold_idx=fold_idx,
         use_4modalities=True,
     )
+
+    # Validation/Test dataset은 전체 볼륨을 로드하므로 캐시를 비활성화하여 메모리 사용량 최소화
+    if hasattr(val_base, 'dataset'):
+        val_base.dataset.max_cache_size = 0
+    if hasattr(test_base, 'dataset'):
+        test_base.dataset.max_cache_size = 0
 
     train_ds = BratsCascadeROIDataset(
         train_base,

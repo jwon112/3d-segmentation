@@ -99,7 +99,7 @@ def get_data_loaders(
             max_samples=max_samples,
             dataset_version=dataset_version,
             use_4modalities=use_4modalities,
-            max_cache_size=50,  # 메모리 최적화: worker당 50개 볼륨 캐시
+            max_cache_size=80,  # Application RAM 여유 있음: worker당 80개 볼륨 캐시
         )
 
     train_dataset, val_dataset, test_dataset = split_brats_dataset(
@@ -114,6 +114,14 @@ def get_data_loaders(
         seed=seed,
     )
 
+    # Validation/Test dataset은 전체 볼륨을 로드하므로 캐시를 비활성화하여 메모리 사용량 최소화
+    if dim == '3d':
+        # Subset의 base dataset에 접근하여 max_cache_size를 0으로 설정
+        if hasattr(val_dataset, 'dataset'):
+            val_dataset.dataset.max_cache_size = 0
+        if hasattr(test_dataset, 'dataset'):
+            test_dataset.dataset.max_cache_size = 0
+
     if dim == '3d':
         train_dataset = BratsPatchDataset3D(
             base_dataset=train_dataset.dataset if hasattr(train_dataset, 'dataset') else train_dataset,
@@ -121,7 +129,7 @@ def get_data_loaders(
             samples_per_volume=16,
             augment=use_mri_augmentation,
             anisotropy_augment=anisotropy_augment,
-            max_cache_size=50,  # 메모리 최적화: worker당 50개 볼륨 캐시
+            max_cache_size=80,  # Application RAM 여유 있음: worker당 80개 볼륨 캐시
         )
 
     train_sampler = val_sampler = test_sampler = None
