@@ -115,27 +115,15 @@ def get_data_loaders(
     )
 
     if dim == '3d':
-        # train_dataset의 base dataset은 캐시를 유지 (max_cache_size=80)
         train_base_dataset = train_dataset.dataset if hasattr(train_dataset, 'dataset') else train_dataset
-        # train_base_dataset의 max_cache_size는 이미 80으로 설정되어 있음
         
         # Validation/Test dataset은 전체 볼륨을 로드하므로 캐시를 비활성화하여 메모리 사용량 최소화
-        # 단, train_base_dataset과는 다른 인스턴스이므로 train에는 영향 없음
         if hasattr(val_dataset, 'dataset'):
-            # val_dataset과 train_dataset이 같은 base dataset을 공유하는지 확인
-            if val_dataset.dataset is train_base_dataset:
-                # 같은 인스턴스를 공유하는 경우, train용으로 별도 복사본 생성
-                # 하지만 Subset은 원본을 참조하므로, train_base_dataset의 max_cache_size는 유지
-                # 대신 validation/test에서만 캐시를 사용하지 않도록 처리
-                # (실제로는 _load_nifti_data에서 max_cache_size > 0 체크를 하므로 문제 없음)
-                pass
             val_dataset.dataset.max_cache_size = 0
         if hasattr(test_dataset, 'dataset'):
-            if test_dataset.dataset is train_base_dataset:
-                pass
             test_dataset.dataset.max_cache_size = 0
         
-        # 캐싱 비활성화: 메모리 효율성 우선, prefetch_factor로 I/O 병목 해결
+        # Train dataset도 캐싱 비활성화: 메모리 효율성 우선, prefetch_factor로 I/O 병목 해결
         train_base_dataset.max_cache_size = 0
         
         train_dataset = BratsPatchDataset3D(
@@ -175,7 +163,7 @@ def get_data_loaders(
         pin_memory=True,
         sampler=train_sampler,
         persistent_workers=((num_workers if num_workers is not None else 8) > 0),
-        prefetch_factor=(12 if (num_workers if num_workers is not None else 8) > 0 else None),  # 캐싱 대신 prefetch_factor 증가로 I/O 병목 해결
+        prefetch_factor=(8 if (num_workers if num_workers is not None else 8) > 0 else None),
         worker_init_fn=_worker_init_fn,
         generator=_generator,
     )

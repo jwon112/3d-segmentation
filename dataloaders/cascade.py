@@ -642,7 +642,7 @@ def get_cascade_data_loaders(
             num_workers=num_workers,
             pin_memory=pin_memory,
             persistent_workers=(num_workers > 0),
-            prefetch_factor=(12 if num_workers > 0 else None),  # 캐싱 대신 prefetch_factor 증가로 I/O 병목 해결
+            prefetch_factor=(8 if num_workers > 0 else None),
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )
@@ -776,7 +776,7 @@ def get_roi_data_loaders(
             num_workers=num_workers,
             pin_memory=pin_memory,
             persistent_workers=(num_workers > 0),
-            prefetch_factor=(12 if num_workers > 0 else None),  # 캐싱 대신 prefetch_factor 증가로 I/O 병목 해결
+            prefetch_factor=(8 if num_workers > 0 else None),  # 캐싱 대신 prefetch_factor 증가로 I/O 병목 해결
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )
