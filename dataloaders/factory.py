@@ -99,7 +99,7 @@ def get_data_loaders(
             max_samples=max_samples,
             dataset_version=dataset_version,
             use_4modalities=use_4modalities,
-            max_cache_size=50,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
+            max_cache_size=80,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
         )
 
     train_dataset, val_dataset, test_dataset = split_brats_dataset(
@@ -132,7 +132,7 @@ def get_data_loaders(
             samples_per_volume=16,
             augment=use_mri_augmentation,
             anisotropy_augment=anisotropy_augment,
-            max_cache_size=50,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
+            max_cache_size=80,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
         )
 
     train_sampler = val_sampler = test_sampler = None

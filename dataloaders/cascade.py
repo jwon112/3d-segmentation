@@ -540,7 +540,7 @@ def get_cascade_data_loaders(
         use_5fold=use_5fold,
         fold_idx=fold_idx,
         use_4modalities=True,
-        max_cache_size=50,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
+        max_cache_size=80,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
     )
 
     train_base_dataset = train_base.dataset if hasattr(train_base, 'dataset') else train_base
@@ -552,7 +552,7 @@ def get_cascade_data_loaders(
         test_base.dataset.max_cache_size = 0
     
     # Train dataset 캐싱 활성화: Cascade 모델은 base_dataset 직접 사용하므로 캐시 유지
-    train_base_dataset.max_cache_size = 50
+    train_base_dataset.max_cache_size = 80
 
     roi_train_ds = BratsCascadeROIDataset(
         train_base,
@@ -734,7 +734,7 @@ def get_roi_data_loaders(
         test_base.dataset.max_cache_size = 0
     
     # Train dataset 캐싱 활성화: Cascade 모델은 base_dataset 직접 사용하므로 캐시 유지
-    train_base_dataset.max_cache_size = 50
+    train_base_dataset.max_cache_size = 80
 
     train_ds = BratsCascadeROIDataset(
         train_base,
