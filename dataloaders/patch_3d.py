@@ -80,9 +80,25 @@ class BratsPatchDataset3D(Dataset):
         
         # LRU 캐시 (worker별로 독립적으로 유지됨)
         self._volume_cache = OrderedDict()
+        # 캐시 통계 (디버깅용)
+        self._cache_hits = 0
+        self._cache_misses = 0
 
     def __len__(self) -> int:
         return len(self.index_map)
+    
+    def get_cache_stats(self):
+        """캐시 통계 반환 (디버깅용)"""
+        total = self._cache_hits + self._cache_misses
+        hit_rate = (self._cache_hits / total * 100) if total > 0 else 0.0
+        return {
+            'hits': self._cache_hits,
+            'misses': self._cache_misses,
+            'total': total,
+            'hit_rate': hit_rate,
+            'cache_size': len(self._volume_cache),
+            'max_cache_size': self.max_cache_size
+        }
 
     def __getitem__(self, idx):
         vidx, _, sampling_type = self.index_map[idx]
@@ -102,6 +118,7 @@ class BratsPatchDataset3D(Dataset):
             # 캐시 히트: 해당 항목을 맨 뒤로 이동 (가장 최근 사용)
             cached_data = self._volume_cache.pop(cache_key)
             self._volume_cache[cache_key] = cached_data
+            self._cache_hits += 1
             if len(cached_data) == 3:
                 image, mask, fg_coords_dict = cached_data
             else:
@@ -109,6 +126,7 @@ class BratsPatchDataset3D(Dataset):
                 fg_coords_dict = None
         else:
             # 캐시 미스: 새로 로드
+            self._cache_misses += 1
             loaded_data = base_dataset[actual_vidx]
             if len(loaded_data) == 3:
                 image, mask, fg_coords_dict = loaded_data

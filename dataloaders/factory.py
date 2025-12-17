@@ -114,23 +114,38 @@ def get_data_loaders(
         seed=seed,
     )
 
-    # Validation/Test dataset은 전체 볼륨을 로드하므로 캐시를 비활성화하여 메모리 사용량 최소화
     if dim == '3d':
-        # Subset의 base dataset에 접근하여 max_cache_size를 0으로 설정
+        # train_dataset의 base dataset은 캐시를 유지 (max_cache_size=80)
+        train_base_dataset = train_dataset.dataset if hasattr(train_dataset, 'dataset') else train_dataset
+        # train_base_dataset의 max_cache_size는 이미 80으로 설정되어 있음
+        
+        # Validation/Test dataset은 전체 볼륨을 로드하므로 캐시를 비활성화하여 메모리 사용량 최소화
+        # 단, train_base_dataset과는 다른 인스턴스이므로 train에는 영향 없음
         if hasattr(val_dataset, 'dataset'):
+            # val_dataset과 train_dataset이 같은 base dataset을 공유하는지 확인
+            if val_dataset.dataset is train_base_dataset:
+                # 같은 인스턴스를 공유하는 경우, train용으로 별도 복사본 생성
+                # 하지만 Subset은 원본을 참조하므로, train_base_dataset의 max_cache_size는 유지
+                # 대신 validation/test에서만 캐시를 사용하지 않도록 처리
+                # (실제로는 _load_nifti_data에서 max_cache_size > 0 체크를 하므로 문제 없음)
+                pass
             val_dataset.dataset.max_cache_size = 0
         if hasattr(test_dataset, 'dataset'):
+            if test_dataset.dataset is train_base_dataset:
+                pass
             test_dataset.dataset.max_cache_size = 0
-
-    if dim == '3d':
+        
         train_dataset = BratsPatchDataset3D(
-            base_dataset=train_dataset.dataset if hasattr(train_dataset, 'dataset') else train_dataset,
+            base_dataset=train_base_dataset,
             patch_size=(128, 128, 128),
             samples_per_volume=16,
             augment=use_mri_augmentation,
             anisotropy_augment=anisotropy_augment,
             max_cache_size=80,  # Application RAM 여유 있음: worker당 80개 볼륨 캐시
         )
+        
+        # train_base_dataset의 max_cache_size를 다시 80으로 복원 (validation/test 설정이 영향을 준 경우)
+        train_base_dataset.max_cache_size = 80
 
     train_sampler = val_sampler = test_sampler = None
     if distributed and world_size is not None and rank is not None:

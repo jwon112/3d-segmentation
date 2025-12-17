@@ -239,6 +239,17 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     max_wait = np.max(wait_times)
                     min_wait = np.min(wait_times)
                     print(f"[Profile] Wait time range: {min_wait:.3f}s ~ {max_wait:.3f}s")
+                
+                # 캐시 통계 출력 (BratsPatchDataset3D인 경우)
+                try:
+                    dataset = train_loader.dataset
+                    if hasattr(dataset, 'get_cache_stats'):
+                        cache_stats = dataset.get_cache_stats()
+                        print(f"[Profile] Cache: hits={cache_stats['hits']}, misses={cache_stats['misses']}, "
+                              f"hit_rate={cache_stats['hit_rate']:.1f}%, "
+                              f"size={cache_stats['cache_size']}/{cache_stats['max_cache_size']}")
+                except Exception:
+                    pass
         
         # Validation (all ranks, simpler/robust)
         model.eval()

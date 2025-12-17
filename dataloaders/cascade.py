@@ -543,11 +543,17 @@ def get_cascade_data_loaders(
         max_cache_size=80,  # Application RAM 여유 있음: worker당 80개 볼륨 캐시
     )
 
+    # train_base의 base dataset은 캐시를 유지 (max_cache_size=80)
+    train_base_dataset = train_base.dataset if hasattr(train_base, 'dataset') else train_base
+    
     # Validation/Test dataset은 전체 볼륨을 로드하므로 캐시를 비활성화하여 메모리 사용량 최소화
     if hasattr(val_base, 'dataset'):
         val_base.dataset.max_cache_size = 0
     if hasattr(test_base, 'dataset'):
         test_base.dataset.max_cache_size = 0
+    
+    # train_base_dataset의 max_cache_size를 다시 80으로 복원 (validation/test 설정이 영향을 준 경우)
+    train_base_dataset.max_cache_size = 80
 
     roi_train_ds = BratsCascadeROIDataset(
         train_base,
@@ -719,11 +725,18 @@ def get_roi_data_loaders(
         use_4modalities=True,
     )
 
+    # train_base의 base dataset은 캐시를 유지
+    train_base_dataset = train_base.dataset if hasattr(train_base, 'dataset') else train_base
+    
     # Validation/Test dataset은 전체 볼륨을 로드하므로 캐시를 비활성화하여 메모리 사용량 최소화
     if hasattr(val_base, 'dataset'):
         val_base.dataset.max_cache_size = 0
     if hasattr(test_base, 'dataset'):
         test_base.dataset.max_cache_size = 0
+    
+    # train_base_dataset의 max_cache_size를 다시 복원 (validation/test 설정이 영향을 준 경우)
+    # get_brats_base_datasets의 기본값이 50이므로, 80으로 설정
+    train_base_dataset.max_cache_size = 80
 
     train_ds = BratsCascadeROIDataset(
         train_base,
