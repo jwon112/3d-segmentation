@@ -136,9 +136,20 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     use_4modalities = model_config['use_4modalities']
                     
                     # 데이터 로더 생성 (모델별로 use_4modalities 설정)
-                    # 주의: 데이터 로더 생성은 모델 생성 전에 수행되지만, 실제 데이터 로딩은 __getitem__에서 발생
-                    # 전처리된 데이터셋의 포그라운드 좌표는 매우 클 수 있으므로, DDP 초기화 전에 데이터 로딩이 발생하지 않도록 주의
                     try:
+                        # 메모리 사용량 모니터링 (디버깅용)
+                        if is_main_process(rank) and num_workers is not None:
+                            try:
+                                from utils.debug.memory_monitor import print_memory_estimation
+                                # 현재 설정으로 메모리 추정
+                                print_memory_estimation(
+                                    num_workers=num_workers,
+                                    prefetch_factor=8,  # factory.py의 기본값
+                                    max_cache_size=50,  # factory.py의 기본값
+                                    batch_size=batch_size
+                                )
+                            except ImportError:
+                                pass
                         train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
                             data_dir=data_path,
                             batch_size=batch_size,
