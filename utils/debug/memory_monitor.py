@@ -240,14 +240,27 @@ def print_memory_estimation(
 
 
 if __name__ == "__main__":
-    # 예제: 현재 설정으로 메모리 추정
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='메모리 사용량 추정 및 모니터링')
+    parser.add_argument('--num_workers', type=int, default=4, help='DataLoader worker 수')
+    parser.add_argument('--prefetch_factor', type=int, default=8, help='Prefetch factor')
+    parser.add_argument('--max_cache_size', type=int, default=50, help='최대 캐시 크기 (볼륨 수)')
+    parser.add_argument('--batch_size', type=int, default=8, help='배치 크기')
+    parser.add_argument('--volume_size_mb', type=float, default=136.0, help='볼륨 크기 (MB, 전처리된 데이터 기준)')
+    parser.add_argument('--show_actual', action='store_true', help='실제 메모리 사용량도 출력')
+    
+    args = parser.parse_args()
+    
+    # 메모리 사용량 추정
     print_memory_estimation(
-        num_workers=4,
-        prefetch_factor=8,
-        max_cache_size=50,
-        batch_size=8
+        num_workers=args.num_workers,
+        prefetch_factor=args.prefetch_factor,
+        max_cache_size=args.max_cache_size,
+        batch_size=args.batch_size
     )
     
-    # 실제 메모리 사용량 확인
-    print_memory_summary("Current Memory Usage")
+    # 실제 메모리 사용량 확인 (옵션)
+    if args.show_actual:
+        print_memory_summary("Current Memory Usage")
 

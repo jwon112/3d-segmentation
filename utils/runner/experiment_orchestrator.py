@@ -137,19 +137,6 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     
                     # 데이터 로더 생성 (모델별로 use_4modalities 설정)
                     try:
-                        # 메모리 사용량 모니터링 (디버깅용)
-                        if is_main_process(rank) and num_workers is not None:
-                            try:
-                                from utils.debug.memory_monitor import print_memory_estimation
-                                # 현재 설정으로 메모리 추정
-                                print_memory_estimation(
-                                    num_workers=num_workers,
-                                    prefetch_factor=8,  # factory.py의 기본값
-                                    max_cache_size=50,  # factory.py의 기본값
-                                    batch_size=batch_size
-                                )
-                            except ImportError:
-                                pass
                         train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
                             data_dir=data_path,
                             batch_size=batch_size,
