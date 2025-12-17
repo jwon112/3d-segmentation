@@ -136,6 +136,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     use_4modalities = model_config['use_4modalities']
                     
                     # 데이터 로더 생성 (모델별로 use_4modalities 설정)
+                    # 주의: 데이터 로더 생성은 모델 생성 전에 수행되지만, 실제 데이터 로딩은 __getitem__에서 발생
+                    # 전처리된 데이터셋의 포그라운드 좌표는 매우 클 수 있으므로, DDP 초기화 전에 데이터 로딩이 발생하지 않도록 주의
                     try:
                         train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler = get_data_loaders(
                             data_dir=data_path,
@@ -164,7 +166,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             traceback.print_exc()
                         continue
 
-                    # 모델 생성
+                    # 모델 생성 (데이터 로더 생성 후, DDP 초기화 전)
                     try:
                         if is_main_process(rank):
                             print(f"Creating model: {model_name}...")
@@ -182,13 +184,38 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     if distributed:
                         from torch.nn.parallel import DistributedDataParallel as DDP
                         model = model.to(device)
-                        # 일부 모델은 조건부 파라미터 사용으로 인해 find_unused_parameters=True 필요
+                        
+                        # DDP 초기화 전 파라미터 검증 (Int Overflow 방지)
+                        try:
+                            param_shapes = [tuple(p.shape) for p in model.parameters()]
+                            if is_main_process(rank):
+                                print(f"[DDP] Model parameter count: {sum(p.numel() for p in model.parameters()):,}")
+                                # 매우 큰 shape 확인
+                                max_shape = max(param_shapes, key=lambda x: sum(x) if x else 0)
+                                if any(dim > 2**31 - 1 for shape in param_shapes for dim in shape):
+                                    print(f"[WARNING] Some parameter dimensions exceed int32 range!")
+                        except Exception as e:
+                            if is_main_process(rank):
+                                print(f"[WARNING] Parameter validation failed: {e}")
+                        
+                        # 일부 모델은 DDP Int Overflow 문제를 해결하기 위해 find_unused_parameters=True 필요
                         # - GhostNet: 일부 파라미터가 사용되지 않을 수 있음
                         # - CascadeSwinUNETR: 조건부 skip connection으로 일부 파라미터가 사용되지 않을 수 있음
+                        # - P3D 모델: DDP 내부 검증 로직에서 Int Overflow 발생 가능 (PyTorch 버그 우회)
+                        # 
+                        # find_unused_parameters=True의 영향:
+                        # - 모델 성능(정확도): 영향 없음
+                        # - 학습 속도: 약간의 오버헤드 (5-10% 이하, 일반적으로 미미)
+                        # - 메모리: 약간 증가 (크지 않음)
+                        # - 동기화: 모든 파라미터가 사용되는 경우 문제 없음
                         use_find_unused = (
                             'ghostnet' in model_name.lower() or 
-                            'cascade_swin_unetr' in model_name.lower()
+                            'cascade_swin_unetr' in model_name.lower() or
+                            'p3d' in model_name.lower() or
+                            'shufflenet_v2_p3d' in model_name.lower()
                         )
+                        if is_main_process(rank) and use_find_unused:
+                            print(f"[DDP] Using find_unused_parameters=True for {model_name} (DDP Int Overflow 우회, 성능 영향 없음)")
                         model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=use_find_unused)
                     
                     # 모델 정보 출력

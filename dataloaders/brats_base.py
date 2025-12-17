@@ -172,7 +172,15 @@ class BratsDataset3D(Dataset):
                         for cls in [1, 2, 3]:
                             coords_key = f'fg_coords_{cls}'
                             if coords_key in f:
-                                fg_coords_dict[cls] = torch.from_numpy(f[coords_key][:]).long()
+                                coords_array = f[coords_key][:]
+                                # 포그라운드 좌표 크기 확인 (디버깅용)
+                                if coords_array.size > 0:
+                                    coords_shape = coords_array.shape
+                                    # 매우 큰 좌표 배열은 int32 범위를 넘을 수 있음
+                                    if coords_shape[0] > 2**31 - 1:
+                                        import warnings
+                                        warnings.warn(f"Foreground coordinates for class {cls} exceed int32 range: {coords_shape[0]}")
+                                fg_coords_dict[cls] = torch.from_numpy(coords_array).long()
                 
                 # 모달리티 수 확인
                 if self.use_4modalities and image.shape[0] != 4:
