@@ -540,7 +540,7 @@ def get_cascade_data_loaders(
         use_5fold=use_5fold,
         fold_idx=fold_idx,
         use_4modalities=True,
-        max_cache_size=80,  # Application RAM 여유 있음: worker당 80개 볼륨 캐시
+        max_cache_size=0,  # 캐싱 비활성화: 메모리 효율성 우선, prefetch_factor로 I/O 병목 해결
     )
 
     # train_base의 base dataset은 캐시를 유지 (max_cache_size=80)
@@ -552,8 +552,8 @@ def get_cascade_data_loaders(
     if hasattr(test_base, 'dataset'):
         test_base.dataset.max_cache_size = 0
     
-    # train_base_dataset의 max_cache_size를 다시 80으로 복원 (validation/test 설정이 영향을 준 경우)
-    train_base_dataset.max_cache_size = 80
+    # 캐싱 비활성화: 메모리 효율성 우선
+    train_base_dataset.max_cache_size = 0
 
     roi_train_ds = BratsCascadeROIDataset(
         train_base,
@@ -642,7 +642,7 @@ def get_cascade_data_loaders(
             num_workers=num_workers,
             pin_memory=pin_memory,
             persistent_workers=(num_workers > 0),
-            prefetch_factor=(8 if num_workers > 0 else None),  # GPU당 num_workers=6 기준 최적화: wait time 감소를 위해 증가
+            prefetch_factor=(12 if num_workers > 0 else None),  # 캐싱 대신 prefetch_factor 증가로 I/O 병목 해결
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )
@@ -734,9 +734,8 @@ def get_roi_data_loaders(
     if hasattr(test_base, 'dataset'):
         test_base.dataset.max_cache_size = 0
     
-    # train_base_dataset의 max_cache_size를 다시 복원 (validation/test 설정이 영향을 준 경우)
-    # get_brats_base_datasets의 기본값이 50이므로, 80으로 설정
-    train_base_dataset.max_cache_size = 80
+    # 캐싱 비활성화: 메모리 효율성 우선
+    train_base_dataset.max_cache_size = 0
 
     train_ds = BratsCascadeROIDataset(
         train_base,
@@ -777,7 +776,7 @@ def get_roi_data_loaders(
             num_workers=num_workers,
             pin_memory=pin_memory,
             persistent_workers=(num_workers > 0),
-            prefetch_factor=(8 if num_workers > 0 else None),  # GPU당 num_workers=6 기준 최적화: wait time 감소를 위해 증가
+            prefetch_factor=(12 if num_workers > 0 else None),  # 캐싱 대신 prefetch_factor 증가로 I/O 병목 해결
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )

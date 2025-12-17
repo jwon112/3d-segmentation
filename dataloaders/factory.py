@@ -92,14 +92,14 @@ def get_data_loaders(
         full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples, dataset_version=dataset_version)
     else:
         dataset_class = BratsDataset3D
-        # Training용: GPU당 num_workers=6 기준 최적화
+        # Training용: 캐싱 비활성화 (메모리 효율성 우선, prefetch_factor로 I/O 병목 해결)
         full_dataset = dataset_class(
             data_dir,
             split='train',
             max_samples=max_samples,
             dataset_version=dataset_version,
             use_4modalities=use_4modalities,
-            max_cache_size=80,  # Application RAM 여유 있음: worker당 80개 볼륨 캐시
+            max_cache_size=0,  # 캐싱 비활성화: 메모리 사용량 최소화, prefetch_factor로 성능 보완
         )
 
     train_dataset, val_dataset, test_dataset = split_brats_dataset(
@@ -135,9 +135,7 @@ def get_data_loaders(
                 pass
             test_dataset.dataset.max_cache_size = 0
         
-        # BratsPatchDataset3D가 자체 _volume_cache를 가지고 있으므로,
-        # base_dataset의 _nifti_cache는 비활성화하여 중복 캐싱 방지
-        # (BratsPatchDataset3D의 캐시만으로도 충분함)
+        # 캐싱 비활성화: 메모리 효율성 우선, prefetch_factor로 I/O 병목 해결
         train_base_dataset.max_cache_size = 0
         
         train_dataset = BratsPatchDataset3D(
@@ -146,7 +144,7 @@ def get_data_loaders(
             samples_per_volume=16,
             augment=use_mri_augmentation,
             anisotropy_augment=anisotropy_augment,
-            max_cache_size=80,  # Application RAM 여유 있음: worker당 80개 볼륨 캐시
+            max_cache_size=0,  # 캐싱 비활성화: 메모리 사용량 최소화
         )
 
     train_sampler = val_sampler = test_sampler = None
@@ -177,7 +175,7 @@ def get_data_loaders(
         pin_memory=True,
         sampler=train_sampler,
         persistent_workers=((num_workers if num_workers is not None else 8) > 0),
-        prefetch_factor=(8 if (num_workers if num_workers is not None else 8) > 0 else None),  # GPU당 num_workers=6 기준 최적화: wait time 감소를 위해 증가
+        prefetch_factor=(12 if (num_workers if num_workers is not None else 8) > 0 else None),  # 캐싱 대신 prefetch_factor 증가로 I/O 병목 해결
         worker_init_fn=_worker_init_fn,
         generator=_generator,
     )
