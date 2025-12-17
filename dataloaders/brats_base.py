@@ -14,6 +14,12 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split, Subset
 
+try:
+    import h5py
+    HAS_H5PY = True
+except ImportError:
+    HAS_H5PY = False
+
 
 def _normalize_volume_np(vol):
     """퍼센타일 클리핑 + Z-score 정규화 (비영점 마스크 기준, 배경은 0 유지)"""
@@ -116,6 +122,35 @@ class BratsDataset3D(Dataset):
             self._nifti_cache[patient_dir] = result
             return result
         
+        # 전처리된 데이터 우선 로드 (HDF5)
+        preprocessed_path = os.path.join(patient_dir, 'preprocessed.h5')
+        if HAS_H5PY and os.path.exists(preprocessed_path):
+            try:
+                with h5py.File(preprocessed_path, 'r') as f:
+                    image = torch.from_numpy(f['image'][:]).float()
+                    mask = torch.from_numpy(f['mask'][:]).long()
+                
+                # 모달리티 수 확인
+                if self.use_4modalities and image.shape[0] != 4:
+                    # 전처리된 데이터가 2모달리티인데 4모달리티가 필요한 경우
+                    raise ValueError("Preprocessed data has wrong number of modalities")
+                elif not self.use_4modalities and image.shape[0] != 2:
+                    # 전처리된 데이터가 4모달리티인데 2모달리티가 필요한 경우
+                    raise ValueError("Preprocessed data has wrong number of modalities")
+                
+                result = (image, mask)
+                
+                # 캐시 크기 제한 확인
+                if len(self._nifti_cache) >= self.max_cache_size:
+                    self._nifti_cache.popitem(last=False)
+                
+                self._nifti_cache[patient_dir] = result
+                return result
+            except Exception as e:
+                # 전처리된 데이터 로드 실패 시 원본 로드로 fallback
+                pass
+        
+        # 원본 NIfTI 파일 로드 (fallback 또는 전처리된 데이터가 없는 경우)
         # 캐시 미스: 파일 이름 캐싱 (lazy caching)
         # 각 worker가 독립적으로 파일 이름을 캐싱하여 os.listdir() 호출 최소화
         if patient_dir not in self._file_names_cache:
@@ -250,6 +285,36 @@ class BratsDataset2D(Dataset):
         return self._load_nifti_slice(patient_dir, slice_idx)
 
     def _load_nifti_slice(self, patient_dir, slice_idx):
+        # 전처리된 데이터 우선 로드 (HDF5)
+        preprocessed_path = os.path.join(patient_dir, 'preprocessed.h5')
+        if HAS_H5PY and os.path.exists(preprocessed_path):
+            try:
+                with h5py.File(preprocessed_path, 'r') as f:
+                    image_vol = torch.from_numpy(f['image'][:]).float()  # (C, H, W, D)
+                    mask_vol = torch.from_numpy(f['mask'][:]).long()      # (H, W, D)
+                
+                # 슬라이스 추출
+                image_slice = image_vol[:, :, :, slice_idx]  # (C, H, W)
+                mask_slice = mask_vol[:, :, slice_idx]        # (H, W)
+                
+                # 라벨 매핑 (이미 전처리에서 처리되었지만 안전을 위해)
+                mask_slice = torch.where(mask_slice == 4, torch.tensor(3).long(), mask_slice)
+                
+                # 리사이즈 (240 -> 256)
+                if image_slice.shape[1] == 240 or image_slice.shape[2] == 240:
+                    image_slice = image_slice.unsqueeze(0)
+                    image_slice = torch.nn.functional.interpolate(image_slice, size=(256, 256), mode='bilinear', align_corners=False)
+                    image_slice = image_slice.squeeze(0)
+                    mask_slice = mask_slice.unsqueeze(0).unsqueeze(0)
+                    mask_slice = torch.nn.functional.interpolate(mask_slice.float(), size=(256, 256), mode='nearest')
+                    mask_slice = mask_slice.squeeze(0).squeeze(0).long()
+                
+                return image_slice, mask_slice
+            except Exception as e:
+                # 전처리된 데이터 로드 실패 시 원본 로드로 fallback
+                pass
+        
+        # 원본 NIfTI 파일 로드 (fallback 또는 전처리된 데이터가 없는 경우)
         # 파일 이름 캐싱 (lazy caching)
         if patient_dir not in self._file_names_cache:
             files = os.listdir(patient_dir)
