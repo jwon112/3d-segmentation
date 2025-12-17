@@ -51,6 +51,9 @@ class BratsDataset3D(Dataset):
         
         # LRU 캐시 (worker별로 독립적으로 유지됨)
         self._nifti_cache = OrderedDict()
+        # 파일 이름 캐시 (lazy caching, worker별로 독립적으로 유지됨)
+        # os.listdir() 호출을 줄이기 위해 파일 이름을 캐싱
+        self._file_names_cache = {}
 
     def _load_samples(self):
         samples = []
@@ -113,11 +116,25 @@ class BratsDataset3D(Dataset):
             self._nifti_cache[patient_dir] = result
             return result
         
-        # 캐시 미스: NIfTI 파일 로딩
-        files = os.listdir(patient_dir)
-        t1ce_file = [f for f in files if 't1ce' in f.lower()][0]
-        flair_file = [f for f in files if 'flair.nii' in f.lower()][0]
-        seg_file = [f for f in files if 'seg' in f.lower()][0]
+        # 캐시 미스: 파일 이름 캐싱 (lazy caching)
+        # 각 worker가 독립적으로 파일 이름을 캐싱하여 os.listdir() 호출 최소화
+        if patient_dir not in self._file_names_cache:
+            files = os.listdir(patient_dir)
+            t1ce_file = [f for f in files if 't1ce' in f.lower()][0]
+            flair_file = [f for f in files if 'flair.nii' in f.lower()][0]
+            seg_file = [f for f in files if 'seg' in f.lower()][0]
+            if self.use_4modalities:
+                t1_file = [f for f in files if 't1.nii' in f.lower() and 't1ce' not in f.lower()][0]
+                t2_file = [f for f in files if 't2.nii' in f.lower()][0]
+                self._file_names_cache[patient_dir] = (t1ce_file, flair_file, seg_file, t1_file, t2_file)
+            else:
+                self._file_names_cache[patient_dir] = (t1ce_file, flair_file, seg_file)
+        
+        # 캐시된 파일 이름 사용
+        if self.use_4modalities:
+            t1ce_file, flair_file, seg_file, t1_file, t2_file = self._file_names_cache[patient_dir]
+        else:
+            t1ce_file, flair_file, seg_file = self._file_names_cache[patient_dir]
 
         t1ce = nib.load(os.path.join(patient_dir, t1ce_file)).get_fdata()
         flair = nib.load(os.path.join(patient_dir, flair_file)).get_fdata()
@@ -127,8 +144,6 @@ class BratsDataset3D(Dataset):
         flair = _normalize_volume_np(flair)
 
         if self.use_4modalities:
-            t1_file = [f for f in files if 't1.nii' in f.lower() and 't1ce' not in f.lower()][0]
-            t2_file = [f for f in files if 't2.nii' in f.lower()][0]
             t1 = nib.load(os.path.join(patient_dir, t1_file)).get_fdata()
             t2 = nib.load(os.path.join(patient_dir, t2_file)).get_fdata()
             t1 = _normalize_volume_np(t1)
@@ -164,9 +179,16 @@ class BratsDataset2D(Dataset):
         self.dataset_version = dataset_version
         self.volumes = self._load_samples()
         self.samples = []
+        # 파일 이름 캐시 (lazy caching을 위해 초기화)
+        self._file_names_cache = {}
         for volume in self.volumes:
             files = os.listdir(volume)
             t1_file = [f for f in files if 't1.nii' in f.lower() and 'seg' not in f and 't1ce' not in f][0]
+            t1ce_file = [f for f in files if 't1ce' in f.lower()][0]
+            flair_file = [f for f in files if 'flair.nii' in f.lower()][0]
+            seg_file = [f for f in files if 'seg' in f.lower()][0]
+            # 파일 이름 캐싱
+            self._file_names_cache[volume] = (t1ce_file, flair_file, seg_file)
             t1 = nib.load(os.path.join(volume, t1_file)).get_fdata()
             depth = t1.shape[2]
             for slice_idx in range(depth):
@@ -228,10 +250,16 @@ class BratsDataset2D(Dataset):
         return self._load_nifti_slice(patient_dir, slice_idx)
 
     def _load_nifti_slice(self, patient_dir, slice_idx):
-        files = os.listdir(patient_dir)
-        t1ce_file = [f for f in files if 't1ce' in f.lower()][0]
-        flair_file = [f for f in files if 'flair.nii' in f.lower()][0]
-        seg_file = [f for f in files if 'seg' in f.lower()][0]
+        # 파일 이름 캐싱 (lazy caching)
+        if patient_dir not in self._file_names_cache:
+            files = os.listdir(patient_dir)
+            t1ce_file = [f for f in files if 't1ce' in f.lower()][0]
+            flair_file = [f for f in files if 'flair.nii' in f.lower()][0]
+            seg_file = [f for f in files if 'seg' in f.lower()][0]
+            self._file_names_cache[patient_dir] = (t1ce_file, flair_file, seg_file)
+        else:
+            t1ce_file, flair_file, seg_file = self._file_names_cache[patient_dir]
+        
         t1ce = nib.load(os.path.join(patient_dir, t1ce_file)).get_fdata()
         flair = nib.load(os.path.join(patient_dir, flair_file)).get_fdata()
         seg = nib.load(os.path.join(patient_dir, seg_file)).get_fdata()
