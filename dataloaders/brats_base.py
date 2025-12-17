@@ -7,6 +7,7 @@ BraTS base datasets and split helpers.
 import os
 import random
 from collections import OrderedDict
+from pathlib import Path
 from typing import Sequence, Tuple, Optional
 
 import nibabel as nib
@@ -19,6 +20,22 @@ try:
     HAS_H5PY = True
 except ImportError:
     HAS_H5PY = False
+
+
+def get_project_root():
+    """프로젝트 루트 디렉토리 찾기 (dataloaders 패키지의 부모 디렉토리)"""
+    return Path(__file__).parent.parent.absolute()
+
+
+def get_default_preprocessed_dir(dataset_version='brats2021'):
+    """기본 전처리 디렉토리 경로 반환"""
+    project_root = get_project_root()
+    data_dir = project_root / 'data'
+    if dataset_version == 'brats2021':
+        return str(data_dir / 'BRATS2021_preprocessed')
+    elif dataset_version == 'brats2018':
+        return str(data_dir / 'BRATS2018_preprocessed')
+    return None
 
 
 def _normalize_volume_np(vol):
@@ -43,12 +60,24 @@ def _normalize_volume_np(vol):
 class BratsDataset3D(Dataset):
     """3D BraTS 데이터셋 (Depth, Height, Width)"""
 
-    def __init__(self, data_dir, split='train', max_samples=None, dataset_version='brats2021', use_4modalities=False, max_cache_size: int = 50):
+    def __init__(self, data_dir, split='train', max_samples=None, dataset_version='brats2021', use_4modalities=False, max_cache_size: int = 50, preprocessed_dir=None):
         self.data_dir = data_dir
         self.split = split
         self.max_samples = max_samples
         self.dataset_version = dataset_version
         self.use_4modalities = use_4modalities
+        # 전처리된 데이터 디렉토리
+        # 1. 파라미터로 지정된 경우
+        # 2. 환경변수로 지정된 경우
+        # 3. 기본값: 프로젝트 루트의 data/ 디렉토리
+        if preprocessed_dir:
+            self.preprocessed_dir = preprocessed_dir
+        elif os.environ.get('BRATS_PREPROCESSED_DIR'):
+            self.preprocessed_dir = os.environ.get('BRATS_PREPROCESSED_DIR')
+        else:
+            # 기본값: 프로젝트 루트의 data/ 디렉토리
+            default_dir = get_default_preprocessed_dir(dataset_version)
+            self.preprocessed_dir = default_dir if default_dir and os.path.exists(default_dir) else None
         self.max_cache_size = max_cache_size
 
         self.samples = self._load_samples()
@@ -123,7 +152,14 @@ class BratsDataset3D(Dataset):
             return result
         
         # 전처리된 데이터 우선 로드 (HDF5)
-        preprocessed_path = os.path.join(patient_dir, 'preprocessed.h5')
+        # 1. 별도 디렉토리 확인 (환경변수 또는 파라미터로 지정)
+        if self.preprocessed_dir:
+            patient_name = os.path.basename(patient_dir)
+            preprocessed_path = os.path.join(self.preprocessed_dir, f"{patient_name}.h5")
+        else:
+            # 2. 각 샘플 폴더 내부 확인 (하위 호환성)
+            preprocessed_path = os.path.join(patient_dir, 'preprocessed.h5')
+        
         if HAS_H5PY and os.path.exists(preprocessed_path):
             try:
                 with h5py.File(preprocessed_path, 'r') as f:
@@ -207,11 +243,23 @@ class BratsDataset3D(Dataset):
 class BratsDataset2D(Dataset):
     """2D BraTS 데이터셋 (Height, Width) - 슬라이스 단위"""
 
-    def __init__(self, data_dir, split='train', max_samples=None, dataset_version='brats2021'):
+    def __init__(self, data_dir, split='train', max_samples=None, dataset_version='brats2021', preprocessed_dir=None):
         self.data_dir = data_dir
         self.split = split
         self.max_samples = max_samples
         self.dataset_version = dataset_version
+        # 전처리된 데이터 디렉토리
+        # 1. 파라미터로 지정된 경우
+        # 2. 환경변수로 지정된 경우
+        # 3. 기본값: 프로젝트 루트의 data/ 디렉토리
+        if preprocessed_dir:
+            self.preprocessed_dir = preprocessed_dir
+        elif os.environ.get('BRATS_PREPROCESSED_DIR'):
+            self.preprocessed_dir = os.environ.get('BRATS_PREPROCESSED_DIR')
+        else:
+            # 기본값: 프로젝트 루트의 data/ 디렉토리
+            default_dir = get_default_preprocessed_dir(dataset_version)
+            self.preprocessed_dir = default_dir if default_dir and os.path.exists(default_dir) else None
         self.volumes = self._load_samples()
         self.samples = []
         # 파일 이름 캐시 (lazy caching을 위해 초기화)
@@ -286,7 +334,14 @@ class BratsDataset2D(Dataset):
 
     def _load_nifti_slice(self, patient_dir, slice_idx):
         # 전처리된 데이터 우선 로드 (HDF5)
-        preprocessed_path = os.path.join(patient_dir, 'preprocessed.h5')
+        # 1. 별도 디렉토리 확인 (환경변수 또는 파라미터로 지정)
+        if self.preprocessed_dir:
+            patient_name = os.path.basename(patient_dir)
+            preprocessed_path = os.path.join(self.preprocessed_dir, f"{patient_name}.h5")
+        else:
+            # 2. 각 샘플 폴더 내부 확인 (하위 호환성)
+            preprocessed_path = os.path.join(patient_dir, 'preprocessed.h5')
+        
         if HAS_H5PY and os.path.exists(preprocessed_path):
             try:
                 with h5py.File(preprocessed_path, 'r') as f:

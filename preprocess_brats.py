@@ -12,10 +12,16 @@ Usage:
 
 import os
 import argparse
+from pathlib import Path
 from tqdm import tqdm
 import h5py
 import nibabel as nib
 import numpy as np
+
+
+def get_project_root():
+    """프로젝트 루트 디렉토리 찾기 (preprocess_brats.py가 있는 디렉토리)"""
+    return Path(__file__).parent.absolute()
 
 
 def _normalize_volume_np(vol):
@@ -37,7 +43,7 @@ def _normalize_volume_np(vol):
     return out
 
 
-def preprocess_volume(patient_dir, use_4modalities=False, output_path=None):
+def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, force_overwrite=False):
     """
     단일 볼륨을 전처리하여 저장
     
@@ -45,6 +51,7 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None):
         patient_dir: 환자 디렉토리 경로
         use_4modalities: 4개 모달리티 사용 여부
         output_path: 저장할 파일 경로 (None이면 patient_dir/preprocessed.h5)
+        force_overwrite: 강제 덮어쓰기 여부
     
     Returns:
         bool: 성공 여부
@@ -52,9 +59,22 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None):
     if output_path is None:
         output_path = os.path.join(patient_dir, 'preprocessed.h5')
     
-    # 이미 전처리되어 있으면 스킵
-    if os.path.exists(output_path):
-        return True
+    # 파일이 존재하는 경우 확인
+    if os.path.exists(output_path) and not force_overwrite:
+        # 모달리티 구성 확인
+        try:
+            with h5py.File(output_path, 'r') as f:
+                if 'image' in f:
+                    existing_channels = f['image'].shape[0]
+                    expected_channels = 4 if use_4modalities else 2
+                    # 모달리티 구성이 같으면 스킵
+                    if existing_channels == expected_channels:
+                        return True
+                    # 모달리티 구성이 다르면 재처리 필요 (파일 삭제)
+                    os.remove(output_path)
+        except Exception:
+            # 파일 읽기 실패 시 재처리
+            os.remove(output_path)
     
     try:
         # 파일 이름 찾기
@@ -90,10 +110,13 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None):
         mask = seg.astype(np.int64)
         mask = np.where(mask == 4, 3, mask)
         
-        # HDF5로 저장
+        # HDF5로 저장 (메타데이터 포함)
         with h5py.File(output_path, 'w') as f:
             f.create_dataset('image', data=image, compression='gzip', compression_opts=4)
             f.create_dataset('mask', data=mask, compression='gzip', compression_opts=4)
+            # 메타데이터 저장 (모달리티 구성 확인용)
+            f.attrs['use_4modalities'] = use_4modalities
+            f.attrs['num_channels'] = image.shape[0]
         
         return True
     except Exception as e:
@@ -110,9 +133,24 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
         data_dir: 데이터 루트 디렉토리
         dataset_version: 'brats2021' 또는 'brats2018'
         use_4modalities: 4개 모달리티 사용 여부
-        output_dir: 저장할 디렉토리 (None이면 원본 디렉토리 내부)
+        output_dir: 저장할 디렉토리 (None이면 기본 전처리 디렉토리 사용)
         skip_existing: 이미 전처리된 파일 스킵 여부
+    
+    Note:
+        output_dir이 None이면 기본적으로 프로젝트 루트의 data/ 디렉토리에 저장합니다.
+        예: /home/work/3D_/jaewon/project/3d-segmentation/data/BRATS2021_preprocessed/
+        이렇게 하면 각 샘플 폴더에 접근할 필요 없이 한 곳에서 모든 파일을 관리할 수 있습니다.
     """
+    # 기본 전처리 디렉토리 설정 (output_dir이 None인 경우)
+    if output_dir is None:
+        project_root = get_project_root()
+        data_dir_path = project_root / 'data'
+        if dataset_version == 'brats2021':
+            output_dir = data_dir_path / 'BRATS2021_preprocessed'
+        elif dataset_version == 'brats2018':
+            output_dir = data_dir_path / 'BRATS2018_preprocessed'
+        output_dir = str(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
     # 데이터셋 경로 설정
     if dataset_version == 'brats2021':
         brats_dir = os.path.join(data_dir, 'BRATS2021', 'BraTS2021_Training_Data')
@@ -169,7 +207,8 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
             skip_count += 1
             continue
         
-        if preprocess_volume(patient_dir, use_4modalities, output_path):
+        force_overwrite = not skip_existing
+        if preprocess_volume(patient_dir, use_4modalities, output_path, force_overwrite):
             success_count += 1
         else:
             error_count += 1
