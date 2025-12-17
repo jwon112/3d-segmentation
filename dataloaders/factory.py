@@ -99,7 +99,7 @@ def get_data_loaders(
             max_samples=max_samples,
             dataset_version=dataset_version,
             use_4modalities=use_4modalities,
-            max_cache_size=80,  # GPU당 num_workers=6 기준 최적화: worker당 80개 볼륨 캐시
+            max_cache_size=50,  # 메모리 최적화: worker당 50개 볼륨 캐시
         )
 
     train_dataset, val_dataset, test_dataset = split_brats_dataset(
@@ -121,7 +121,7 @@ def get_data_loaders(
             samples_per_volume=16,
             augment=use_mri_augmentation,
             anisotropy_augment=anisotropy_augment,
-            max_cache_size=80,  # GPU당 num_workers=6 기준 최적화: worker당 80개 볼륨 캐시
+            max_cache_size=50,  # 메모리 최적화: worker당 50개 볼륨 캐시
         )
 
     train_sampler = val_sampler = test_sampler = None
