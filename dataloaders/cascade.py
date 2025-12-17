@@ -332,7 +332,12 @@ class BratsCascadeROIDataset(Dataset):
         return img_vol, mask_vol
 
     def __getitem__(self, idx):
-        image, mask = self.base_dataset[idx]
+        # base_dataset이 (image, mask) 또는 (image, mask, fg_coords_dict) 반환 가능
+        loaded_data = self.base_dataset[idx]
+        if len(loaded_data) == 3:
+            image, mask, _ = loaded_data  # fg_coords_dict는 cascade에서는 사용 안 함
+        else:
+            image, mask = loaded_data
         coord_map = get_normalized_coord_map(mask.shape, device=image.device)
         if self.include_coords:
             roi_input = torch.cat([image, coord_map], dim=0)
@@ -452,7 +457,12 @@ class BratsCascadeSegmentationDataset(Dataset):
             base_idx = idx // num_crops_per_sample
             crop_idx = idx % num_crops_per_sample
             
-            image, mask = self.base_dataset[base_idx]
+            # base_dataset이 (image, mask) 또는 (image, mask, fg_coords_dict) 반환 가능
+            loaded_data = self.base_dataset[base_idx]
+            if len(loaded_data) == 3:
+                image, mask, _ = loaded_data  # fg_coords_dict는 cascade에서는 사용 안 함
+            else:
+                image, mask = loaded_data
             center = compute_tumor_center(mask)
             if self.center_jitter > 0:
                 jitter = torch.randint(-self.center_jitter, self.center_jitter + 1, (3,))
@@ -470,7 +480,12 @@ class BratsCascadeSegmentationDataset(Dataset):
             center = crop_centers[crop_idx]
         else:
             # 단일 crop 모드 (기존 방식)
-            image, mask = self.base_dataset[idx]
+            # base_dataset이 (image, mask) 또는 (image, mask, fg_coords_dict) 반환 가능
+            loaded_data = self.base_dataset[idx]
+            if len(loaded_data) == 3:
+                image, mask, _ = loaded_data  # fg_coords_dict는 cascade에서는 사용 안 함
+            else:
+                image, mask = loaded_data
             center = compute_tumor_center(mask)
             if self.center_jitter > 0:
                 jitter = torch.randint(-self.center_jitter, self.center_jitter + 1, (3,))

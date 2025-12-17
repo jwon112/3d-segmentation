@@ -34,7 +34,12 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
     all_attention_weights = [] if collect_attention else None
     
     for idx in range(len(base_dataset)):
-        image, target = base_dataset[idx]
+        # base_dataset이 (image, mask) 또는 (image, mask, fg_coords_dict) 반환 가능
+        loaded_data = base_dataset[idx]
+        if len(loaded_data) == 3:
+            image, target, _ = loaded_data  # fg_coords_dict는 evaluation에서는 사용 안 함
+        else:
+            image, target = loaded_data
         image = image.to(device)
         target = target.to(device)
         result = run_cascade_inference(

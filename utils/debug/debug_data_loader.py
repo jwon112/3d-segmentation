@@ -161,7 +161,12 @@ def check_dataset_samples(dataset, dataset_name, num_samples=5):
     for i in range(min(num_samples, len(dataset))):
         print(f"\n--- 샘플 {i+1} ---")
         try:
-            image, mask = dataset[i]
+            # dataset이 (image, mask) 또는 (image, mask, fg_coords_dict) 반환 가능
+            loaded_data = dataset[i]
+            if len(loaded_data) == 3:
+                image, mask, _ = loaded_data  # fg_coords_dict는 debug에서는 사용 안 함
+            else:
+                image, mask = loaded_data
             
             print(f"Image shape: {image.shape}, dtype: {image.dtype}")
             print(f"Mask shape: {mask.shape}, dtype: {mask.dtype}")
