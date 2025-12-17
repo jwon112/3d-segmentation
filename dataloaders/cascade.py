@@ -618,16 +618,32 @@ def get_cascade_data_loaders(
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )
+    
+    def _build_val_test_loader(dataset, batch_size, sampler=None):
+        """Validation/Test loader: 메모리 사용량을 줄이기 위해 num_workers와 prefetch_factor를 줄임"""
+        val_test_workers = min(2, num_workers) if num_workers > 0 else 0
+        return DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            sampler=sampler,
+            num_workers=val_test_workers,
+            pin_memory=False,
+            persistent_workers=False,
+            prefetch_factor=(2 if val_test_workers > 0 else None),
+            worker_init_fn=_worker_init_fn,
+            generator=_generator,
+        )
 
     roi_train_loader = _build_loader(roi_train_ds, roi_batch_size, shuffle=True, sampler=roi_train_sampler)
-    roi_val_loader = _build_loader(roi_val_ds, roi_batch_size, shuffle=False, sampler=roi_val_sampler, pin_memory=False)
-    roi_test_loader = _build_loader(roi_test_ds, roi_batch_size, shuffle=False, sampler=roi_test_sampler, pin_memory=False)
+    roi_val_loader = _build_val_test_loader(roi_val_ds, roi_batch_size, sampler=roi_val_sampler)
+    roi_test_loader = _build_val_test_loader(roi_test_ds, roi_batch_size, sampler=roi_test_sampler)
 
     # Multi-crop 사용 시: 배치 크기는 그대로 유지 (VRAM 여유에 맞게 조정 가능)
     # 각 배치 내에서 모든 샘플의 crop들을 순차 처리 (Gradient Accumulation)
     seg_train_loader = _build_loader(seg_train_ds, seg_batch_size, shuffle=True, sampler=seg_train_sampler)
-    seg_val_loader = _build_loader(seg_val_ds, seg_batch_size, shuffle=False, sampler=seg_val_sampler, pin_memory=False)
-    seg_test_loader = _build_loader(seg_test_ds, seg_batch_size, shuffle=False, sampler=seg_test_sampler, pin_memory=False)
+    seg_val_loader = _build_val_test_loader(seg_val_ds, seg_batch_size, sampler=seg_val_sampler)
+    seg_test_loader = _build_val_test_loader(seg_test_ds, seg_batch_size, sampler=seg_test_sampler)
 
     return {
         'roi': {
@@ -725,11 +741,27 @@ def get_roi_data_loaders(
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )
+    
+    def _build_val_test_loader(dataset, sampler=None):
+        """Validation/Test loader: 메모리 사용량을 줄이기 위해 num_workers와 prefetch_factor를 줄임"""
+        val_test_workers = min(2, num_workers) if num_workers > 0 else 0
+        return DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            sampler=sampler,
+            num_workers=val_test_workers,
+            pin_memory=False,
+            persistent_workers=False,
+            prefetch_factor=(2 if val_test_workers > 0 else None),
+            worker_init_fn=_worker_init_fn,
+            generator=_generator,
+        )
 
     return {
         'train': _build_loader(train_ds, sampler=train_sampler, shuffle=True),
-        'val': _build_loader(val_ds, sampler=val_sampler, shuffle=False, pin_memory=False),
-        'test': _build_loader(test_ds, sampler=test_sampler, shuffle=False, pin_memory=False),
+        'val': _build_val_test_loader(val_ds, sampler=val_sampler),
+        'test': _build_val_test_loader(test_ds, sampler=test_sampler),
         'train_sampler': train_sampler,
         'val_sampler': val_sampler,
         'test_sampler': test_sampler,

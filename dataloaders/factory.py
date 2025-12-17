@@ -154,8 +154,10 @@ def get_data_loaders(
         generator=_generator,
     )
 
-    v_workers = 4
-    t_workers = 4
+    # Validation/Test는 전체 볼륨을 로드하므로 메모리 사용량이 큼
+    # num_workers와 prefetch_factor를 줄여서 OOM 방지
+    v_workers = 2
+    t_workers = 2
     val_bs = 1 if dim == '3d' else batch_size
     test_bs = 1 if dim == '3d' else batch_size
 
@@ -167,7 +169,7 @@ def get_data_loaders(
         pin_memory=False,
         sampler=val_sampler,
         persistent_workers=False,
-        prefetch_factor=(4 if v_workers > 0 else None),
+        prefetch_factor=(2 if v_workers > 0 else None),
         worker_init_fn=_worker_init_fn,
         generator=_generator,
     )
@@ -179,7 +181,7 @@ def get_data_loaders(
         pin_memory=False,
         sampler=test_sampler,
         persistent_workers=False,
-        prefetch_factor=(4 if t_workers > 0 else None),
+        prefetch_factor=(2 if t_workers > 0 else None),
         worker_init_fn=_worker_init_fn,
         generator=_generator,
     )
