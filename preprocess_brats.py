@@ -110,11 +110,11 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
         mask = seg.astype(np.int64)
         mask = np.where(mask == 4, 3, mask)
         
-        # HDF5로 저장 (메타데이터 포함, gzip level 1 - 벤치마크 결과 최적값)
-        # 벤치마크 결과: level 1이 로딩 시간(265ms)과 파일 크기(7.37MB)의 최적 균형점
+        # HDF5로 저장 (메타데이터 포함, gzip level 4 - 벤치마크 결과 최적값)
+        # 벤치마크 결과: level 4가 Cold cache 로딩(270ms)에서 가장 빠름, 파일 크기(6.89MB)도 최소
         with h5py.File(output_path, 'w') as f:
-            f.create_dataset('image', data=image, compression='gzip', compression_opts=1)
-            f.create_dataset('mask', data=mask, compression='gzip', compression_opts=1)
+            f.create_dataset('image', data=image, compression='gzip', compression_opts=4)
+            f.create_dataset('mask', data=mask, compression='gzip', compression_opts=4)
             # 메타데이터 저장 (모달리티 구성 확인용)
             f.attrs['use_4modalities'] = use_4modalities
             f.attrs['num_channels'] = image.shape[0]
