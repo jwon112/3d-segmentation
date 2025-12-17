@@ -92,14 +92,14 @@ def get_data_loaders(
         full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples, dataset_version=dataset_version)
     else:
         dataset_class = BratsDataset3D
-        # Training용: 고정 캐시 크기 (worker당 독립적으로 관리)
+        # Training용: GPU당 num_workers=6 기준 최적화
         full_dataset = dataset_class(
             data_dir,
             split='train',
             max_samples=max_samples,
             dataset_version=dataset_version,
             use_4modalities=use_4modalities,
-            max_cache_size=30,  # 고정값: worker당 30개 볼륨 캐시
+            max_cache_size=80,  # GPU당 num_workers=6 기준 최적화: worker당 80개 볼륨 캐시
         )
 
     train_dataset, val_dataset, test_dataset = split_brats_dataset(
@@ -121,7 +121,7 @@ def get_data_loaders(
             samples_per_volume=16,
             augment=use_mri_augmentation,
             anisotropy_augment=anisotropy_augment,
-            max_cache_size=30,  # 고정값: worker당 30개 볼륨 캐시
+            max_cache_size=80,  # GPU당 num_workers=6 기준 최적화: worker당 80개 볼륨 캐시
         )
 
     train_sampler = val_sampler = test_sampler = None
@@ -152,7 +152,7 @@ def get_data_loaders(
         pin_memory=True,
         sampler=train_sampler,
         persistent_workers=((num_workers if num_workers is not None else 8) > 0),
-        prefetch_factor=(6 if (num_workers if num_workers is not None else 8) > 0 else None),  # 최적화된 prefetch_factor
+        prefetch_factor=(8 if (num_workers if num_workers is not None else 8) > 0 else None),  # GPU당 num_workers=6 기준 최적화: wait time 감소를 위해 증가
         worker_init_fn=_worker_init_fn,
         generator=_generator,
     )

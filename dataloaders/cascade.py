@@ -525,7 +525,7 @@ def get_cascade_data_loaders(
         use_5fold=use_5fold,
         fold_idx=fold_idx,
         use_4modalities=True,
-        max_cache_size=30,  # 고정값: worker당 30개 볼륨 캐시
+        max_cache_size=80,  # GPU당 num_workers=6 기준 최적화: worker당 80개 볼륨 캐시
     )
 
     roi_train_ds = BratsCascadeROIDataset(
@@ -615,7 +615,7 @@ def get_cascade_data_loaders(
             num_workers=num_workers,
             pin_memory=pin_memory,
             persistent_workers=(num_workers > 0),
-            prefetch_factor=(6 if num_workers > 0 else None),  # 최적화된 prefetch_factor
+            prefetch_factor=(8 if num_workers > 0 else None),  # GPU당 num_workers=6 기준 최적화: wait time 감소를 위해 증가
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )
@@ -738,7 +738,7 @@ def get_roi_data_loaders(
             num_workers=num_workers,
             pin_memory=pin_memory,
             persistent_workers=(num_workers > 0),
-            prefetch_factor=(6 if num_workers > 0 else None),  # 최적화된 prefetch_factor
+            prefetch_factor=(8 if num_workers > 0 else None),  # GPU당 num_workers=6 기준 최적화: wait time 감소를 위해 증가
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )
