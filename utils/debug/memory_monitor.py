@@ -15,8 +15,17 @@ import torch
 
 def get_shm_usage() -> Dict[str, float]:
     """SHM (Shared Memory) 사용량 확인"""
+    shm_info = {
+        'total': 'N/A',
+        'used': 'N/A',
+        'available': 'N/A',
+        'use_percent': 0.0,
+        'ipcs_total_mb': 0.0,
+        'ipcs_count': 0
+    }
+    
     try:
-        # /dev/shm 디렉토리 크기 확인
+        # /dev/shm 디렉토리 크기 확인 (파일시스템 레벨)
         result = subprocess.run(
             ['df', '-h', '/dev/shm'],
             capture_output=True,
@@ -27,21 +36,47 @@ def get_shm_usage() -> Dict[str, float]:
         if len(lines) >= 2:
             parts = lines[1].split()
             if len(parts) >= 4:
-                total = parts[1]  # 총 크기
-                used = parts[2]   # 사용 중
-                available = parts[3]  # 사용 가능
+                shm_info['total'] = parts[1]  # 총 크기
+                shm_info['used'] = parts[2]   # 사용 중
+                shm_info['available'] = parts[3]  # 사용 가능
                 use_percent = parts[4].rstrip('%') if len(parts) > 4 else '0'
-                
-                return {
-                    'total': total,
-                    'used': used,
-                    'available': available,
-                    'use_percent': float(use_percent)
-                }
+                shm_info['use_percent'] = float(use_percent)
     except Exception as e:
         pass
     
-    return {'total': 'N/A', 'used': 'N/A', 'available': 'N/A', 'use_percent': 0.0}
+    try:
+        # ipcs -m으로 실제 공유 메모리 세그먼트 확인 (프로세스 레벨)
+        result = subprocess.run(
+            ['ipcs', '-m'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        lines = result.stdout.strip().split('\n')
+        total_bytes = 0
+        count = 0
+        
+        # 헤더 라인 건너뛰기 (보통 2줄)
+        for line in lines[2:]:
+            parts = line.split()
+            if len(parts) >= 5:
+                try:
+                    # bytes 컬럼 (보통 5번째 또는 6번째)
+                    # ipcs 출력 형식: key shmid owner perms bytes nattch status
+                    bytes_idx = 4 if len(parts) > 4 else -1
+                    if bytes_idx >= 0:
+                        bytes_val = int(parts[bytes_idx])
+                        total_bytes += bytes_val
+                        count += 1
+                except (ValueError, IndexError):
+                    continue
+        
+        shm_info['ipcs_total_mb'] = total_bytes / (1024 ** 2)
+        shm_info['ipcs_count'] = count
+    except Exception as e:
+        pass
+    
+    return shm_info
 
 
 def get_process_memory(pid: Optional[int] = None) -> Dict[str, float]:
@@ -125,10 +160,19 @@ def print_memory_summary(title: str = "Memory Summary"):
     
     # SHM
     shm = get_shm_usage()
-    print(f"\n[Shared Memory (/dev/shm)]")
+    print(f"\n[Shared Memory (/dev/shm - Filesystem)]")
     print(f"  Total: {shm['total']}")
     print(f"  Used: {shm['used']} ({shm['use_percent']:.1f}%)")
     print(f"  Available: {shm['available']}")
+    
+    if shm['ipcs_count'] > 0:
+        print(f"\n[Shared Memory (ipcs -m - Process Level)]")
+        print(f"  Active Segments: {shm['ipcs_count']}")
+        print(f"  Total Size: {shm['ipcs_total_mb']:.2f} MB ({shm['ipcs_total_mb']/1024:.2f} GB)")
+    else:
+        print(f"\n[Shared Memory (ipcs -m - Process Level)]")
+        print(f"  No active shared memory segments found")
+        print(f"  Note: PyTorch DataLoader may use file_descriptor sharing strategy")
     
     # 메인 프로세스
     main_mem = get_process_memory()
