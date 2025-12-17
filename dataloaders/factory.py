@@ -39,6 +39,7 @@ def get_data_loaders(
     train_crops_per_center: int = 1,
     train_crop_overlap: float = 0.5,
     anisotropy_augment: bool = False,
+    samples_per_volume: int = 16,
 ):
     """공통 get_data_loaders 진입점 (기존 data_loader.get_data_loaders와 동일 인터페이스).
     
@@ -92,14 +93,14 @@ def get_data_loaders(
         full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples, dataset_version=dataset_version)
     else:
         dataset_class = BratsDataset3D
-        # Training용: 캐싱 활성화 (에포크 내 효과 + persistent_workers로 에포크 간 효과)
+        # Training용: 캐싱 비활성화 (순수 I/O 성능 측정)
         full_dataset = dataset_class(
             data_dir,
             split='train',
             max_samples=max_samples,
             dataset_version=dataset_version,
             use_4modalities=use_4modalities,
-            max_cache_size=80,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
+            max_cache_size=0,  # 캐싱 비활성화: 순수 I/O 성능 측정
         )
 
     train_dataset, val_dataset, test_dataset = split_brats_dataset(
@@ -129,10 +130,10 @@ def get_data_loaders(
         train_dataset = BratsPatchDataset3D(
             base_dataset=train_base_dataset,
             patch_size=(128, 128, 128),
-            samples_per_volume=16,
+            samples_per_volume=samples_per_volume,
             augment=use_mri_augmentation,
             anisotropy_augment=anisotropy_augment,
-            max_cache_size=80,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
+            max_cache_size=0,  # 캐싱 비활성화: 순수 I/O 성능 측정
         )
 
     train_sampler = val_sampler = test_sampler = None
