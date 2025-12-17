@@ -3,6 +3,7 @@
 """
 
 import math
+from collections import OrderedDict
 from typing import Tuple
 
 import torch
@@ -62,25 +63,56 @@ class BratsPatchDataset3D(Dataset):
         samples_per_volume: int = 16,
         augment: bool = False,
         anisotropy_augment: bool = False,
+        max_cache_size: int = 50,
     ):
         self.base_dataset = base_dataset
         self.patch_size = patch_size
         self.samples_per_volume = samples_per_volume
         self.augment = augment
         self.anisotropy_augment = anisotropy_augment
+        self.max_cache_size = max_cache_size
 
         self.index_map = []
         for vidx in range(len(self.base_dataset)):
             for s in range(self.samples_per_volume):
                 sampling_type = 0 if (s % 3 == 0) else 1
                 self.index_map.append((vidx, s, sampling_type))
+        
+        # LRU 캐시 (worker별로 독립적으로 유지됨)
+        self._volume_cache = OrderedDict()
 
     def __len__(self) -> int:
         return len(self.index_map)
 
     def __getitem__(self, idx):
         vidx, _, sampling_type = self.index_map[idx]
-        image, mask = self.base_dataset[vidx]
+        
+        # Subset 인덱스 처리: Subset인 경우 실제 인덱스로 변환
+        if hasattr(self.base_dataset, 'indices'):
+            # Subset인 경우: 원본 데이터셋의 실제 인덱스 사용
+            actual_vidx = self.base_dataset.indices[vidx]
+            base_dataset = self.base_dataset.dataset
+        else:
+            actual_vidx = vidx
+            base_dataset = self.base_dataset
+        
+        # LRU 캐시 확인 및 업데이트
+        cache_key = (id(base_dataset), actual_vidx)  # 데이터셋 인스턴스와 인덱스 조합
+        if cache_key in self._volume_cache:
+            # 캐시 히트: 해당 항목을 맨 뒤로 이동 (가장 최근 사용)
+            image, mask = self._volume_cache.pop(cache_key)
+            self._volume_cache[cache_key] = (image, mask)
+        else:
+            # 캐시 미스: 새로 로드
+            image, mask = base_dataset[actual_vidx]
+            
+            # 캐시 크기 제한 확인
+            if len(self._volume_cache) >= self.max_cache_size:
+                # 가장 오래된 항목 제거 (LRU)
+                self._volume_cache.popitem(last=False)
+            
+            # 새 항목 추가
+            self._volume_cache[cache_key] = (image, mask)
 
         C, H, W, D = image.shape
         ph, pw, pd = self.patch_size

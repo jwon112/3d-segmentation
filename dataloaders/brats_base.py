@@ -6,6 +6,7 @@ BraTS base datasets and split helpers.
 
 import os
 import random
+from collections import OrderedDict
 from typing import Sequence, Tuple, Optional
 
 import nibabel as nib
@@ -36,16 +37,20 @@ def _normalize_volume_np(vol):
 class BratsDataset3D(Dataset):
     """3D BraTS 데이터셋 (Depth, Height, Width)"""
 
-    def __init__(self, data_dir, split='train', max_samples=None, dataset_version='brats2021', use_4modalities=False):
+    def __init__(self, data_dir, split='train', max_samples=None, dataset_version='brats2021', use_4modalities=False, max_cache_size: int = 50):
         self.data_dir = data_dir
         self.split = split
         self.max_samples = max_samples
         self.dataset_version = dataset_version
         self.use_4modalities = use_4modalities
+        self.max_cache_size = max_cache_size
 
         self.samples = self._load_samples()
         if max_samples and len(self.samples) > max_samples:
             self.samples = self.samples[:max_samples]
+        
+        # LRU 캐시 (worker별로 독립적으로 유지됨)
+        self._nifti_cache = OrderedDict()
 
     def _load_samples(self):
         samples = []
@@ -101,6 +106,14 @@ class BratsDataset3D(Dataset):
         return self._load_nifti_data(sample_path)
 
     def _load_nifti_data(self, patient_dir):
+        # LRU 캐시 확인 및 업데이트
+        if patient_dir in self._nifti_cache:
+            # 캐시 히트: 해당 항목을 맨 뒤로 이동 (가장 최근 사용)
+            result = self._nifti_cache.pop(patient_dir)
+            self._nifti_cache[patient_dir] = result
+            return result
+        
+        # 캐시 미스: NIfTI 파일 로딩
         files = os.listdir(patient_dir)
         t1ce_file = [f for f in files if 't1ce' in f.lower()][0]
         flair_file = [f for f in files if 'flair.nii' in f.lower()][0]
@@ -128,7 +141,17 @@ class BratsDataset3D(Dataset):
 
         mask = torch.from_numpy(seg).long()
         mask = torch.where(mask == 4, torch.tensor(3).long(), mask)
-        return image, mask
+        
+        result = (image, mask)
+        
+        # 캐시 크기 제한 확인
+        if len(self._nifti_cache) >= self.max_cache_size:
+            # 가장 오래된 항목 제거 (LRU)
+            self._nifti_cache.popitem(last=False)
+        
+        # 새 항목 추가
+        self._nifti_cache[patient_dir] = result
+        return result
 
 
 class BratsDataset2D(Dataset):
