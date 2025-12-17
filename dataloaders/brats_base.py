@@ -144,8 +144,8 @@ class BratsDataset3D(Dataset):
         return self._load_nifti_data(sample_path)
 
     def _load_nifti_data(self, patient_dir):
-        # LRU 캐시 확인 및 업데이트
-        if patient_dir in self._nifti_cache:
+        # LRU 캐시 확인 및 업데이트 (max_cache_size > 0일 때만)
+        if self.max_cache_size > 0 and patient_dir in self._nifti_cache:
             # 캐시 히트: 해당 항목을 맨 뒤로 이동 (가장 최근 사용)
             result = self._nifti_cache.pop(patient_dir)
             self._nifti_cache[patient_dir] = result
@@ -196,11 +196,12 @@ class BratsDataset3D(Dataset):
                 else:
                     result = (image, mask)
                 
-                # 캐시 크기 제한 확인
-                if len(self._nifti_cache) >= self.max_cache_size:
-                    self._nifti_cache.popitem(last=False)
+                # 캐시 크기 제한 확인 (max_cache_size > 0일 때만 캐시 사용)
+                if self.max_cache_size > 0:
+                    if len(self._nifti_cache) >= self.max_cache_size:
+                        self._nifti_cache.popitem(last=False)
+                    self._nifti_cache[patient_dir] = result
                 
-                self._nifti_cache[patient_dir] = result
                 return result
             except Exception as e:
                 # 전처리된 데이터 로드 실패 시 원본 로드로 fallback
@@ -250,13 +251,14 @@ class BratsDataset3D(Dataset):
         
         result = (image, mask)
         
-        # 캐시 크기 제한 확인
-        if len(self._nifti_cache) >= self.max_cache_size:
-            # 가장 오래된 항목 제거 (LRU)
-            self._nifti_cache.popitem(last=False)
+        # 캐시 크기 제한 확인 (max_cache_size > 0일 때만 캐시 사용)
+        if self.max_cache_size > 0:
+            if len(self._nifti_cache) >= self.max_cache_size:
+                # 가장 오래된 항목 제거 (LRU)
+                self._nifti_cache.popitem(last=False)
+            # 새 항목 추가
+            self._nifti_cache[patient_dir] = result
         
-        # 새 항목 추가
-        self._nifti_cache[patient_dir] = result
         return result
 
 
