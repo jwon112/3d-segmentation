@@ -92,14 +92,14 @@ def get_data_loaders(
         full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples, dataset_version=dataset_version)
     else:
         dataset_class = BratsDataset3D
-        # Training용: 캐싱 비활성화 (메모리 효율성 우선, prefetch_factor로 I/O 병목 해결)
+        # Training용: 캐싱 활성화 (에포크 내 효과 + persistent_workers로 에포크 간 효과)
         full_dataset = dataset_class(
             data_dir,
             split='train',
             max_samples=max_samples,
             dataset_version=dataset_version,
             use_4modalities=use_4modalities,
-            max_cache_size=0,  # 캐싱 비활성화: 메모리 사용량 최소화, prefetch_factor로 성능 보완
+            max_cache_size=50,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
         )
 
     train_dataset, val_dataset, test_dataset = split_brats_dataset(
@@ -123,8 +123,8 @@ def get_data_loaders(
         if hasattr(test_dataset, 'dataset'):
             test_dataset.dataset.max_cache_size = 0
         
-        # Train dataset도 캐싱 비활성화: 메모리 효율성 우선, prefetch_factor로 I/O 병목 해결
-        train_base_dataset.max_cache_size = 0
+        # Train dataset 캐싱 활성화: BratsPatchDataset3D의 _volume_cache만 사용 (중복 방지)
+        train_base_dataset.max_cache_size = 0  # base_dataset 캐시 비활성화 (중복 방지)
         
         train_dataset = BratsPatchDataset3D(
             base_dataset=train_base_dataset,
@@ -132,7 +132,7 @@ def get_data_loaders(
             samples_per_volume=16,
             augment=use_mri_augmentation,
             anisotropy_augment=anisotropy_augment,
-            max_cache_size=0,  # 캐싱 비활성화: 메모리 사용량 최소화
+            max_cache_size=50,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
         )
 
     train_sampler = val_sampler = test_sampler = None

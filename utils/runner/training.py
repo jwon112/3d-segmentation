@@ -148,8 +148,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         model.train()
         tr_loss = tr_dice_sum = n_tr = 0.0
         
-        # 프로파일링: 첫 10 step만 타이밍 측정
-        profile_steps = 10
+        # 프로파일링: 전체 에포크 타이밍 측정
+        profile_steps = len(train_loader)  # 전체 step 측정
         wait_times, load_times, fwd_times, bwd_times = [], [], [], []
         torch.cuda.synchronize()
         
@@ -168,18 +168,16 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         train_iter = iter(train_loader)
         for step in tqdm(range(len(train_loader)), desc=f"Train {epoch+1}/{epochs}", leave=False):
             # 배치를 받기 전 시간 측정 (대기 시간 포함)
-            if step < profile_steps:
-                torch.cuda.synchronize()
-                t_wait_start = time.time()
+            torch.cuda.synchronize()
+            t_wait_start = time.time()
             
             inputs, labels = next(train_iter)
             
             # 배치를 받은 후 시간 측정
-            if step < profile_steps:
-                t_wait_end = time.time()
-                wait_times.append(t_wait_end - t_wait_start)
-                torch.cuda.synchronize()
-                t_start = time.time()
+            t_wait_end = time.time()
+            wait_times.append(t_wait_end - t_wait_start)
+            torch.cuda.synchronize()
+            t_start = time.time()
             
             # 각 crop이 별도의 샘플로 취급되므로 일반적인 단일 crop 처리
             inputs, labels = inputs.to(device), labels.to(device)
@@ -191,27 +189,24 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 inputs = inputs.unsqueeze(2)  # Add depth dimension (B, C, H, W) -> (B, C, 1, H, W)
                 labels = labels.unsqueeze(2)
             
-            if step < profile_steps:
-                t_load = time.time()
-                load_times.append(t_load - t_start)
+            t_load = time.time()
+            load_times.append(t_load - t_start)
             
             optimizer.zero_grad()
             # 학습 단계에서는 슬라이딩 윈도우를 사용하지 않음 (단일 패치 forward)
             logits = model(inputs)
             
-            if step < profile_steps:
-                torch.cuda.synchronize()
-                t_fwd = time.time()
-                fwd_times.append(t_fwd - t_load)
+            torch.cuda.synchronize()
+            t_fwd = time.time()
+            fwd_times.append(t_fwd - t_load)
             
             loss = criterion(logits, labels)
             loss.backward()
             optimizer.step()
             
-            if step < profile_steps:
-                torch.cuda.synchronize()
-                t_bwd = time.time()
-                bwd_times.append(t_bwd - t_fwd)
+            torch.cuda.synchronize()
+            t_bwd = time.time()
+            bwd_times.append(t_bwd - t_fwd)
             
             # BraTS composite Dice (WT, TC, ET)
             dice_scores = calculate_wt_tc_et_dice(logits.detach(), labels)

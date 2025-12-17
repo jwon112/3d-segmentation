@@ -540,10 +540,9 @@ def get_cascade_data_loaders(
         use_5fold=use_5fold,
         fold_idx=fold_idx,
         use_4modalities=True,
-        max_cache_size=0,  # 캐싱 비활성화: 메모리 효율성 우선, prefetch_factor로 I/O 병목 해결
+        max_cache_size=50,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
     )
 
-    # train_base의 base dataset은 캐시를 유지 (max_cache_size=80)
     train_base_dataset = train_base.dataset if hasattr(train_base, 'dataset') else train_base
     
     # Validation/Test dataset은 전체 볼륨을 로드하므로 캐시를 비활성화하여 메모리 사용량 최소화
@@ -552,8 +551,8 @@ def get_cascade_data_loaders(
     if hasattr(test_base, 'dataset'):
         test_base.dataset.max_cache_size = 0
     
-    # 캐싱 비활성화: 메모리 효율성 우선
-    train_base_dataset.max_cache_size = 0
+    # Train dataset 캐싱 활성화: Cascade 모델은 base_dataset 직접 사용하므로 캐시 유지
+    train_base_dataset.max_cache_size = 50
 
     roi_train_ds = BratsCascadeROIDataset(
         train_base,
@@ -734,8 +733,8 @@ def get_roi_data_loaders(
     if hasattr(test_base, 'dataset'):
         test_base.dataset.max_cache_size = 0
     
-    # 캐싱 비활성화: 메모리 효율성 우선
-    train_base_dataset.max_cache_size = 0
+    # Train dataset 캐싱 활성화: Cascade 모델은 base_dataset 직접 사용하므로 캐시 유지
+    train_base_dataset.max_cache_size = 50
 
     train_ds = BratsCascadeROIDataset(
         train_base,
