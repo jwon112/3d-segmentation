@@ -135,6 +135,11 @@ def get_data_loaders(
                 pass
             test_dataset.dataset.max_cache_size = 0
         
+        # BratsPatchDataset3D가 자체 _volume_cache를 가지고 있으므로,
+        # base_dataset의 _nifti_cache는 비활성화하여 중복 캐싱 방지
+        # (BratsPatchDataset3D의 캐시만으로도 충분함)
+        train_base_dataset.max_cache_size = 0
+        
         train_dataset = BratsPatchDataset3D(
             base_dataset=train_base_dataset,
             patch_size=(128, 128, 128),
@@ -143,9 +148,6 @@ def get_data_loaders(
             anisotropy_augment=anisotropy_augment,
             max_cache_size=80,  # Application RAM 여유 있음: worker당 80개 볼륨 캐시
         )
-        
-        # train_base_dataset의 max_cache_size를 다시 80으로 복원 (validation/test 설정이 영향을 준 경우)
-        train_base_dataset.max_cache_size = 80
 
     train_sampler = val_sampler = test_sampler = None
     if distributed and world_size is not None and rank is not None:
