@@ -100,11 +100,21 @@ class BratsPatchDataset3D(Dataset):
         cache_key = (id(base_dataset), actual_vidx)  # 데이터셋 인스턴스와 인덱스 조합
         if cache_key in self._volume_cache:
             # 캐시 히트: 해당 항목을 맨 뒤로 이동 (가장 최근 사용)
-            image, mask = self._volume_cache.pop(cache_key)
-            self._volume_cache[cache_key] = (image, mask)
+            cached_data = self._volume_cache.pop(cache_key)
+            self._volume_cache[cache_key] = cached_data
+            if len(cached_data) == 3:
+                image, mask, fg_coords_dict = cached_data
+            else:
+                image, mask = cached_data
+                fg_coords_dict = None
         else:
             # 캐시 미스: 새로 로드
-            image, mask = base_dataset[actual_vidx]
+            loaded_data = base_dataset[actual_vidx]
+            if len(loaded_data) == 3:
+                image, mask, fg_coords_dict = loaded_data
+            else:
+                image, mask = loaded_data
+                fg_coords_dict = None
             
             # 캐시 크기 제한 확인
             if len(self._volume_cache) >= self.max_cache_size:
@@ -112,7 +122,10 @@ class BratsPatchDataset3D(Dataset):
                 self._volume_cache.popitem(last=False)
             
             # 새 항목 추가
-            self._volume_cache[cache_key] = (image, mask)
+            if fg_coords_dict:
+                self._volume_cache[cache_key] = (image, mask, fg_coords_dict)
+            else:
+                self._volume_cache[cache_key] = (image, mask)
 
         C, H, W, D = image.shape
         ph, pw, pd = self.patch_size
@@ -126,24 +139,39 @@ class BratsPatchDataset3D(Dataset):
             C, H, W, D = image.shape
 
         if sampling_type == 0:
-            fg_classes = []
-            for cls in [1, 2, 3]:
-                if (mask == cls).any():
-                    fg_classes.append(cls)
-            if len(fg_classes) > 0:
-                selected_class = fg_classes[torch.randint(0, len(fg_classes), (1,)).item()]
-                fg_coords = (mask == selected_class).nonzero(as_tuple=False)
-                if fg_coords.numel() > 0:
-                    ci = fg_coords[torch.randint(0, fg_coords.shape[0], (1,)).item()]
+            # 포그라운드 오버샘플링: 저장된 좌표 사용 (있으면), 없으면 기존 방식
+            if fg_coords_dict is not None:
+                # 저장된 포그라운드 좌표 사용 (매우 빠름)
+                fg_classes = [cls for cls in [1, 2, 3] if cls in fg_coords_dict and len(fg_coords_dict[cls]) > 0]
+                if len(fg_classes) > 0:
+                    selected_class = fg_classes[torch.randint(0, len(fg_classes), (1,)).item()]
+                    coords = fg_coords_dict[selected_class]
+                    ci = coords[torch.randint(0, len(coords), (1,)).item()]
                     cy, cx, cz = ci.tolist()
                 else:
                     cy = torch.randint(0, H, (1,)).item()
                     cx = torch.randint(0, W, (1,)).item()
                     cz = torch.randint(0, D, (1,)).item()
             else:
-                cy = torch.randint(0, H, (1,)).item()
-                cx = torch.randint(0, W, (1,)).item()
-                cz = torch.randint(0, D, (1,)).item()
+                # 기존 방식: 매번 전체 마스크 스캔 (느림, 하위 호환성)
+                fg_classes = []
+                for cls in [1, 2, 3]:
+                    if (mask == cls).any():
+                        fg_classes.append(cls)
+                if len(fg_classes) > 0:
+                    selected_class = fg_classes[torch.randint(0, len(fg_classes), (1,)).item()]
+                    fg_coords = (mask == selected_class).nonzero(as_tuple=False)
+                    if fg_coords.numel() > 0:
+                        ci = fg_coords[torch.randint(0, fg_coords.shape[0], (1,)).item()]
+                        cy, cx, cz = ci.tolist()
+                    else:
+                        cy = torch.randint(0, H, (1,)).item()
+                        cx = torch.randint(0, W, (1,)).item()
+                        cz = torch.randint(0, D, (1,)).item()
+                else:
+                    cy = torch.randint(0, H, (1,)).item()
+                    cx = torch.randint(0, W, (1,)).item()
+                    cz = torch.randint(0, D, (1,)).item()
         else:
             cy = torch.randint(0, H, (1,)).item()
             cx = torch.randint(0, W, (1,)).item()

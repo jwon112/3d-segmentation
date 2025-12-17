@@ -110,14 +110,26 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
         mask = seg.astype(np.int64)
         mask = np.where(mask == 4, 3, mask)
         
+        # 포그라운드 좌표 사전 계산 (패치 샘플링 최적화)
+        # 클래스별 포그라운드 좌표를 미리 계산하여 저장
+        fg_coords_dict = {}
+        for cls in [1, 2, 3]:
+            coords = np.argwhere(mask == cls)
+            if len(coords) > 0:
+                fg_coords_dict[f'fg_coords_{cls}'] = coords
+        
         # HDF5로 저장 (메타데이터 포함, gzip level 4 - 벤치마크 결과 최적값)
         # 벤치마크 결과: level 4가 Cold cache 로딩(270ms)에서 가장 빠름, 파일 크기(6.89MB)도 최소
         with h5py.File(output_path, 'w') as f:
             f.create_dataset('image', data=image, compression='gzip', compression_opts=4)
             f.create_dataset('mask', data=mask, compression='gzip', compression_opts=4)
+            # 포그라운드 좌표 저장 (패치 샘플링 최적화)
+            for cls_key, coords in fg_coords_dict.items():
+                f.create_dataset(cls_key, data=coords, compression='gzip', compression_opts=1)
             # 메타데이터 저장 (모달리티 구성 확인용)
             f.attrs['use_4modalities'] = use_4modalities
             f.attrs['num_channels'] = image.shape[0]
+            f.attrs['has_fg_coords'] = len(fg_coords_dict) > 0
         
         return True
     except Exception as e:

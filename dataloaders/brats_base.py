@@ -165,6 +165,14 @@ class BratsDataset3D(Dataset):
                 with h5py.File(preprocessed_path, 'r') as f:
                     image = torch.from_numpy(f['image'][:]).float()
                     mask = torch.from_numpy(f['mask'][:]).long()
+                    
+                    # 포그라운드 좌표 로드 (있으면 사용, 없으면 None)
+                    fg_coords_dict = {}
+                    if f.attrs.get('has_fg_coords', False):
+                        for cls in [1, 2, 3]:
+                            coords_key = f'fg_coords_{cls}'
+                            if coords_key in f:
+                                fg_coords_dict[cls] = torch.from_numpy(f[coords_key][:]).long()
                 
                 # 모달리티 수 확인
                 if self.use_4modalities and image.shape[0] != 4:
@@ -174,7 +182,11 @@ class BratsDataset3D(Dataset):
                     # 전처리된 데이터가 4모달리티인데 2모달리티가 필요한 경우
                     raise ValueError("Preprocessed data has wrong number of modalities")
                 
-                result = (image, mask)
+                # 포그라운드 좌표가 있으면 함께 반환
+                if fg_coords_dict:
+                    result = (image, mask, fg_coords_dict)
+                else:
+                    result = (image, mask)
                 
                 # 캐시 크기 제한 확인
                 if len(self._nifti_cache) >= self.max_cache_size:
