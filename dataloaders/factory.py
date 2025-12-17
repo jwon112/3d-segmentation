@@ -92,14 +92,14 @@ def get_data_loaders(
         full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples, dataset_version=dataset_version)
     else:
         dataset_class = BratsDataset3D
-        # Training용: max_cache_size=80 (최적화된 캐시 크기)
+        # Training용: 고정 캐시 크기 (worker당 독립적으로 관리)
         full_dataset = dataset_class(
             data_dir,
             split='train',
             max_samples=max_samples,
             dataset_version=dataset_version,
             use_4modalities=use_4modalities,
-            max_cache_size=80,
+            max_cache_size=30,  # 고정값: worker당 30개 볼륨 캐시
         )
 
     train_dataset, val_dataset, test_dataset = split_brats_dataset(
@@ -121,7 +121,7 @@ def get_data_loaders(
             samples_per_volume=16,
             augment=use_mri_augmentation,
             anisotropy_augment=anisotropy_augment,
-            max_cache_size=80,  # Training용: 최적화된 캐시 크기
+            max_cache_size=30,  # 고정값: worker당 30개 볼륨 캐시
         )
 
     train_sampler = val_sampler = test_sampler = None

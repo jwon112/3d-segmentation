@@ -525,6 +525,7 @@ def get_cascade_data_loaders(
         use_5fold=use_5fold,
         fold_idx=fold_idx,
         use_4modalities=True,
+        max_cache_size=30,  # 고정값: worker당 30개 볼륨 캐시
     )
 
     roi_train_ds = BratsCascadeROIDataset(

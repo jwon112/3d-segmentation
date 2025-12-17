@@ -350,6 +350,7 @@ def get_brats_base_datasets(
     use_5fold: bool = False,
     fold_idx: Optional[int] = None,
     use_4modalities: bool = True,
+    max_cache_size: Optional[int] = None,
 ):
     """Create base BratsDataset3D and return train/val/test splits."""
     base_dataset = BratsDataset3D(
@@ -358,6 +359,7 @@ def get_brats_base_datasets(
         max_samples=max_samples,
         dataset_version=dataset_version,
         use_4modalities=use_4modalities,
+        max_cache_size=max_cache_size if max_cache_size is not None else 50,
     )
     return split_brats_dataset(
         full_dataset=base_dataset,
