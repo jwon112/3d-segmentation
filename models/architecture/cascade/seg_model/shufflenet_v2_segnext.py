@@ -36,6 +36,7 @@ from .shufflenet_v2 import (
     P3DStem3x3,
     P3DDown3DShuffleNetV2,
     P3DConv3d,
+    P3DShuffleNetV2Unit3D,
 )
 
 
@@ -315,7 +316,6 @@ def _build_p3d_stage2_extra_blocks(
     if num_extra_blocks <= 0:
         return nn.Identity()
     
-    from models.modules.shufflenet_modules import P3DShuffleNetV2Unit3D
     from models.modules.lka_hybrid_modules import drop_path as drop_path_fn
     
     # Only apply drop path for m/l models (extra blocks beyond xs/s)
