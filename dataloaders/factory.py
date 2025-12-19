@@ -39,6 +39,7 @@ def get_data_loaders(
     train_crops_per_center: int = 1,
     train_crop_overlap: float = 0.5,
     anisotropy_augment: bool = False,
+    include_coords: bool = True,
 ):
     """공통 get_data_loaders 진입점 (기존 data_loader.get_data_loaders와 동일 인터페이스).
     
@@ -59,7 +60,7 @@ def get_data_loaders(
             fold_idx=fold_idx,
             roi_resize=(64, 64, 64),  # ROI 모델 기본 크기
             seg_crop_size=(96, 96, 96),  # Segmentation 모델 기본 크기
-            include_coords=True,
+            include_coords=include_coords,
             center_jitter=0,  # 학습 시에는 jitter 없음 (또는 옵션으로 추가 가능)
             distributed=distributed,
             world_size=world_size,

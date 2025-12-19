@@ -30,7 +30,7 @@ from utils.runner.evaluation import evaluate_model
 from utils.runner.cascade_evaluation import load_roi_model_from_checkpoint, evaluate_segmentation_with_roi
 
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, cascade_infer_cfg=None, cascade_model_cfg=None, train_crops_per_center=1, train_crop_overlap=0.5, anisotropy_augment: bool = False):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, cascade_infer_cfg=None, cascade_model_cfg=None, train_crops_per_center=1, train_crop_overlap=0.5, anisotropy_augment: bool = False, include_coords: bool = True, use_4modalities: bool = False):
     """3D Segmentation 통합 실험 실행
     
     Args:
@@ -131,9 +131,18 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             print(f"Cascade model detected. ROI model: {roi_model_name_for_result}")
                     
                     # 모델에 따라 use_4modalities 및 n_channels 결정
+                    # 사용자가 명시적으로 지정한 경우 그 값을 사용, 아니면 모델 기본값 사용
                     model_config = get_model_config(model_name)
-                    n_channels = model_config['n_channels']
-                    use_4modalities = model_config['use_4modalities']
+                    # use_4modalities가 명시적으로 전달된 경우 사용, 아니면 모델 기본값 사용
+                    # (함수 파라미터 기본값이 False이므로, 명시적으로 True로 전달된 경우만 사용)
+                    if use_4modalities or model_config['use_4modalities']:
+                        # 사용자가 명시적으로 4개 모달리티를 요청했거나, 모델이 기본적으로 4개를 사용하는 경우
+                        n_channels = 4
+                        use_4modalities = True
+                    else:
+                        # 2개 모달리티 사용
+                        n_channels = 2
+                        use_4modalities = False
                     
                     # 데이터 로더 생성 (모델별로 use_4modalities 설정)
                     try:
@@ -156,6 +165,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             train_crops_per_center=train_crops_per_center,  # 학습 시 multi-crop 샘플링
                             train_crop_overlap=train_crop_overlap,
                             anisotropy_augment=anisotropy_augment,
+                            include_coords=include_coords,
                         )
                     except Exception as e:
                         if is_main_process(rank):
@@ -168,7 +178,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     try:
                         if is_main_process(rank):
                             print(f"Creating model: {model_name}...")
-                        model = get_model(model_name, n_channels=n_channels, n_classes=4, dim=dim, use_pretrained=use_pretrained)
+                        model = get_model(model_name, n_channels=n_channels, n_classes=4, dim=dim, use_pretrained=use_pretrained, include_coords=include_coords)
                         if is_main_process(rank):
                             print(f"Model {model_name} created successfully.")
                     except Exception as e:
@@ -212,10 +222,10 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         print("=" * 50)
                     
                     # 입력 크기 설정 (PAM, Latency 공용)
-                    # Cascade 모델은 7채널 입력 (4 MRI + 3 CoordConv)
+                    # Cascade 모델은 n_channels(모달리티 수) + (3 if include_coords else 0)
                     actual_n_channels = n_channels
                     if model_name.startswith('cascade_'):
-                        actual_n_channels = 7  # 4 MRI + 3 CoordConv
+                        actual_n_channels = n_channels + (3 if include_coords else 0)  # 모달리티 수 + (3 CoordConv if enabled)
                     
                     if dim == '2d':
                         input_size = (1, actual_n_channels, *INPUT_SIZE_2D)

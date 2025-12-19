@@ -50,6 +50,8 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
     Args:
         patient_dir: 환자 디렉토리 경로
         use_4modalities: 4개 모달리티 사용 여부
+            - False (기본값): T1CE, FLAIR 2개 모달리티만 사용
+            - True: T1, T1CE, T2, FLAIR 4개 모달리티 사용
         output_path: 저장할 파일 경로 (None이면 patient_dir/preprocessed.h5)
         force_overwrite: 강제 덮어쓰기 여부
     
@@ -93,15 +95,17 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
         flair = _normalize_volume_np(flair)
         
         if use_4modalities:
+            # 4개 모달리티: T1, T1CE, T2, FLAIR
             t1_file = [f for f in files if 't1.nii' in f.lower() and 't1ce' not in f.lower()][0]
             t2_file = [f for f in files if 't2.nii' in f.lower()][0]
             t1 = nib.load(os.path.join(patient_dir, t1_file)).get_fdata()
             t2 = nib.load(os.path.join(patient_dir, t2_file)).get_fdata()
             t1 = _normalize_volume_np(t1)
             t2 = _normalize_volume_np(t2)
-            image = np.stack([t1, t1ce, t2, flair], axis=-1)
+            image = np.stack([t1, t1ce, t2, flair], axis=-1)  # (H, W, D, 4)
         else:
-            image = np.stack([t1ce, flair], axis=-1)
+            # 2개 모달리티: T1CE, FLAIR만 사용
+            image = np.stack([t1ce, flair], axis=-1)  # (H, W, D, 2)
         
         # (H, W, D, C) -> (C, H, W, D)로 변환
         image = np.transpose(image, (3, 0, 1, 2)).astype(np.float32)
@@ -241,7 +245,7 @@ def main():
                         choices=['brats2021', 'brats2018'],
                         help='Dataset version')
     parser.add_argument('--use_4modalities', action='store_true',
-                        help='Use 4 modalities (T1, T1ce, T2, FLAIR)')
+                        help='Use 4 modalities (T1, T1ce, T2, FLAIR). Default: False (uses only T1CE and FLAIR)')
     parser.add_argument('--output_dir', type=str, default=None,
                         help='Output directory for preprocessed files (None: save in original directory)')
     parser.add_argument('--no_skip_existing', action='store_true',

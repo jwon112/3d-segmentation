@@ -498,7 +498,7 @@ def calculate_inference_latency(model, input_size=(1, 4, 64, 64, 64), device='cu
         traceback.print_exc()
         return [], {}
 
-def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, use_pretrained=False, norm: str = 'bn'):
+def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, use_pretrained=False, norm: str = 'bn', include_coords: bool = True):
     """모델 생성 함수
     
     Args:
@@ -1004,12 +1004,12 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
             # include_coords는 기본적으로 True (CoordConv 사용)
             return build_cascade_shufflenet_v2_unet3d_mvit(
-                n_image_channels=4,
+                n_image_channels=n_channels,
                 n_coord_channels=3,
                 n_classes=n_classes,
                 norm=norm,
                 size=size,
-                include_coords=True,
+                include_coords=include_coords,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_mvit)
     elif model_name.startswith('cascade_shufflenet_v2_p3d_mvit_'):
@@ -1028,12 +1028,12 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
             # include_coords는 기본적으로 True (CoordConv 사용)
             return build_cascade_shufflenet_v2_unet3d_p3d_mvit(
-                n_image_channels=4,
+                n_image_channels=n_channels,
                 n_coord_channels=3,
                 n_classes=n_classes,
                 norm=norm,
                 size=size,
-                include_coords=True,
+                include_coords=include_coords,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_p3d_mvit)
     elif model_name.startswith('cascade_shufflenet_v2_p3d_lk_'):
@@ -1052,12 +1052,12 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
             # include_coords는 기본적으로 True (CoordConv 사용)
             return build_cascade_shufflenet_v2_unet3d_p3d_lk(
-                n_image_channels=4,
+                n_image_channels=n_channels,
                 n_coord_channels=3,
                 n_classes=n_classes,
                 norm=norm,
                 size=size,
-                include_coords=True,
+                include_coords=include_coords,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_p3d_lk)
     elif model_name.startswith('cascade_shufflenet_v2_lk_'):
@@ -1076,12 +1076,12 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
             # include_coords는 기본적으로 True (CoordConv 사용)
             return build_cascade_shufflenet_v2_unet3d_lk(
-                n_image_channels=4,
+                n_image_channels=n_channels,
                 n_coord_channels=3,
                 n_classes=n_classes,
                 norm=norm,
                 size=size,
-                include_coords=True,
+                include_coords=include_coords,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_lk)
     elif model_name.startswith('cascade_shufflenet_v2_lka_'):
@@ -1100,12 +1100,12 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
             # include_coords는 기본적으로 True (CoordConv 사용)
             return build_cascade_shufflenet_v2_unet3d_lka_hybrid(
-                n_image_channels=4,
+                n_image_channels=n_channels,
                 n_coord_channels=3,
                 n_classes=n_classes,
                 norm=norm,
                 size=size,
-                include_coords=True,
+                include_coords=include_coords,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_lka)
     elif model_name.startswith('cascade_shufflenet_v2_lka_segnext_'):
@@ -1124,12 +1124,12 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
             # include_coords는 기본적으로 True (CoordConv 사용)
             return build_cascade_shufflenet_v2_segnext_lka(
-                n_image_channels=4,
+                n_image_channels=n_channels,
                 n_coord_channels=3,
                 n_classes=n_classes,
                 norm=norm,
                 size=size,
-                include_coords=True,
+                include_coords=include_coords,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_lka_segnext)
     elif model_name.startswith('cascade_shufflenet_v2_p3d_lka_segnext_'):
@@ -1148,12 +1148,12 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
             # include_coords는 기본적으로 True (CoordConv 사용)
             return build_cascade_shufflenet_v2_segnext_p3d_lka(
-                n_image_channels=4,
+                n_image_channels=n_channels,
                 n_coord_channels=3,
                 n_classes=n_classes,
                 norm=norm,
                 size=size,
-                include_coords=True,
+                include_coords=include_coords,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_p3d_lka_segnext)
     elif model_name.startswith('cascade_patch_conv_transformer_'):
@@ -1170,12 +1170,12 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
             # include_coords는 기본적으로 True (CoordConv 사용)
             return build_cascade_patch_conv_transformer_unet3d(
-                n_image_channels=4,
+                n_image_channels=n_channels,
                 n_coord_channels=3,
                 n_classes=n_classes,
                 norm=norm,
                 size=size,
-                include_coords=True,
+                include_coords=include_coords,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_patch_conv_transformer)
     elif model_name.startswith('cascade_shufflenet_v2_p3d_'):
@@ -1194,12 +1194,12 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
             # include_coords는 기본적으로 True (CoordConv 사용)
             return build_cascade_shufflenet_v2_unet3d_p3d(
-                n_image_channels=4,
+                n_image_channels=n_channels,
                 n_coord_channels=3,
                 n_classes=n_classes,
                 norm=norm,
                 size=size,
-                include_coords=True,
+                include_coords=include_coords,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2_p3d)
     elif model_name.startswith('cascade_shufflenet_v2_'):
@@ -1216,12 +1216,12 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             # Cascade 모델은 항상 7채널 입력 (4 MRI + 3 CoordConv)
             # include_coords는 기본적으로 True (CoordConv 사용)
             return build_cascade_shufflenet_v2_unet3d(
-                n_image_channels=4,
+                n_image_channels=n_channels,
                 n_coord_channels=3,
                 n_classes=n_classes,
                 norm=norm,
                 size=size,
-                include_coords=True,
+                include_coords=include_coords,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_shufflenet_v2)
     elif model_name.startswith('cascade_unet3d_'):
@@ -1236,12 +1236,12 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         def _create_cascade_unet3d():
             from models.architecture.cascade.seg_model import build_cascade_unet3d
             return build_cascade_unet3d(
-                n_image_channels=4,
+                n_image_channels=n_channels,
                 n_coord_channels=3,
                 n_classes=n_classes,
                 norm=norm,
                 size=size,
-                include_coords=True,
+                include_coords=include_coords,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_unet3d)
     elif model_name.startswith('cascade_unetr_'):
@@ -1257,13 +1257,13 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             from models.architecture.cascade.seg_model import build_cascade_unetr
             # 96^3 input -> patch_size (12, 12, 12) gives 8^3 patches
             return build_cascade_unetr(
-                n_image_channels=4,
+                n_image_channels=n_channels,
                 n_coord_channels=3,
                 n_classes=n_classes,
                 patch_size=(12, 12, 12),  # 96 / 8 = 12
                 mlp_ratio=4.0,
                 dropout=0.1,
-                include_coords=True,
+                include_coords=include_coords,
                 size=size,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_unetr)
@@ -1280,7 +1280,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             from models.architecture.cascade.seg_model import build_cascade_swin_unetr
             # 96^3 input -> patch_size (4, 4, 4) gives 24^3 patches
             return build_cascade_swin_unetr(
-                n_image_channels=4,
+                n_image_channels=n_channels,
                 n_coord_channels=3,
                 n_classes=n_classes,
                 patch_size=(4, 4, 4),  # 96 / 24 = 4
@@ -1290,7 +1290,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 drop_rate=0.0,
                 attn_drop_rate=0.0,
                 drop_path_rate=0.1,
-                include_coords=True,
+                include_coords=include_coords,
                 size=size,
             )
         return _create_model_with_error_handling(model_name, _create_cascade_swin_unetr)
