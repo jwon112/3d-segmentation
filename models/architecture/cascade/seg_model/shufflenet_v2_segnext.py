@@ -39,6 +39,366 @@ from .shufflenet_v2 import (
 )
 
 
+def _get_depth_config(size: str) -> dict:
+    """Get depth configuration (number of blocks per stage) based on model size.
+    
+    Args:
+        size: Model size ('xs', 's', 'm', 'l')
+    
+    Returns:
+        Dictionary with depth config:
+        - stage1_blocks: Number of blocks in Stage 1 (Stem)
+        - stage2_blocks: Number of blocks in Stage 2
+        - stage3_blocks: Total number of blocks in Stage 3 (including base 2 blocks)
+        - stage4_blocks: Number of blocks in Stage 4
+    """
+    if size in ['xs', 's']:
+        return {
+            'stage1_blocks': 2,  # Stem: 2 blocks (base)
+            'stage2_blocks': 2,  # Down3DShuffleNetV2: 2 blocks (base)
+            'stage3_blocks': 4,  # Down3DShuffleNetV2_LKAHybrid (2) + extra (2)
+            'stage4_blocks': 2,  # down4_lka1 (1) + down4_lka2 (1)
+        }
+    elif size in ['m', 'l']:
+        return {
+            'stage1_blocks': 3,  # Stem: 2 blocks (base) + 1 extra
+            'stage2_blocks': 3,  # Down3DShuffleNetV2: 2 blocks (base) + 1 extra
+            'stage3_blocks': 6,  # Down3DShuffleNetV2_LKAHybrid (2) + extra (4)
+            'stage4_blocks': 3,  # down4_lka1 (1) + down4_lka2 (1) + 1 extra
+        }
+    else:
+        raise ValueError(f"Unknown size: {size}. Must be one of ['xs', 's', 'm', 'l']")
+
+
+def _build_stem_extra_blocks(
+    channels: int,
+    num_extra_blocks: int,
+    norm: str,
+    activation: str,
+    size: str = "s",
+) -> nn.Module:
+    """Build extra blocks for Stem (Stage 1).
+    
+    Args:
+        channels: Number of channels
+        num_extra_blocks: Number of extra blocks to add (beyond base 2 blocks)
+        norm: Normalization type
+        activation: Activation type
+        size: Model size ('xs', 's', 'm', 'l') - used to determine if drop path should be applied
+    """
+    if num_extra_blocks <= 0:
+        return nn.Identity()
+    
+    # Only apply drop path for m/l models (extra blocks beyond xs/s)
+    use_drop_path = size in ['m', 'l']
+    
+    layers = []
+    for idx in range(num_extra_blocks):
+        # For m/l models, apply drop path only to extra blocks (beyond xs/s baseline)
+        # xs/s has 2 blocks, m/l has 3 blocks, so only the extra 1 block gets drop path
+        if use_drop_path:
+            # Wrap with drop path wrapper (Stem blocks don't have built-in drop path)
+            # Since Stem blocks are simple conv blocks, we'll add drop path wrapper
+            from models.modules.lka_hybrid_modules import drop_path as drop_path_fn
+            
+            class StemBlockWithDropPath(nn.Module):
+                def __init__(self, block, drop_rate):
+                    super().__init__()
+                    self.block = block
+                    self.drop_rate = drop_rate
+                
+                def forward(self, x):
+                    if self.training and self.drop_rate > 0:
+                        x = drop_path_fn(x, self.drop_rate, self.training)
+                    return self.block(x)
+            
+            block = nn.Sequential(
+                nn.Conv3d(channels, channels, kernel_size=3, padding=1, bias=False),
+                _make_norm3d(norm, channels),
+                _make_activation(activation, inplace=True),
+            )
+            # Apply drop path: 0.1 for the extra block
+            drop_rate = 0.1
+            layers.append(StemBlockWithDropPath(block, drop_rate))
+        else:
+            layers.append(
+                nn.Sequential(
+                    nn.Conv3d(channels, channels, kernel_size=3, padding=1, bias=False),
+                    _make_norm3d(norm, channels),
+                    _make_activation(activation, inplace=True),
+                )
+            )
+    return nn.Sequential(*layers)
+
+
+def _build_stage2_extra_blocks(
+    channels: int,
+    num_extra_blocks: int,
+    norm: str,
+    reduction: int,
+    activation: str,
+    size: str = "s",
+) -> nn.Module:
+    """Build extra blocks for Stage 2.
+    
+    Args:
+        channels: Number of channels
+        num_extra_blocks: Number of extra blocks to add (beyond base 2 blocks)
+        norm: Normalization type
+        reduction: Channel attention reduction ratio
+        activation: Activation type
+        size: Model size ('xs', 's', 'm', 'l') - used to determine if drop path should be applied
+    """
+    if num_extra_blocks <= 0:
+        return nn.Identity()
+    
+    from models.modules.shufflenet_modules import ShuffleNetV2Unit3D
+    from models.modules.lka_hybrid_modules import drop_path as drop_path_fn
+    
+    # Only apply drop path for m/l models (extra blocks beyond xs/s)
+    use_drop_path = size in ['m', 'l']
+    
+    layers = []
+    for idx in range(num_extra_blocks):
+        # For m/l models, apply drop path only to extra blocks (beyond xs/s baseline)
+        # xs/s has 2 blocks, m/l has 3 blocks, so only the extra 1 block gets drop path
+        # ShuffleNetV2Unit3D doesn't support drop_path, so we wrap it
+        block = ShuffleNetV2Unit3D(
+            channels,
+            channels,
+            stride=1,
+            norm=norm,
+            use_channel_attention=True,
+            reduction=reduction,
+            activation=activation,
+        )
+        
+        if use_drop_path:
+            # Wrap with drop path
+            class BlockWithDropPath(nn.Module):
+                def __init__(self, block, drop_rate):
+                    super().__init__()
+                    self.block = block
+                    self.drop_rate = drop_rate
+                
+                def forward(self, x):
+                    if self.training and self.drop_rate > 0:
+                        x = drop_path_fn(x, self.drop_rate, self.training)
+                    return self.block(x)
+            
+            drop_rate = 0.1
+            layers.append(BlockWithDropPath(block, drop_rate))
+        else:
+            layers.append(block)
+    return nn.Sequential(*layers)
+
+
+def _build_stage4_extra_blocks(
+    channels: int,
+    num_extra_blocks: int,
+    norm: str,
+    activation: str,
+    size: str = "s",
+) -> nn.Module:
+    """Build extra blocks for Stage 4.
+    
+    Args:
+        channels: Number of channels
+        num_extra_blocks: Number of extra blocks to add (beyond base 2 blocks)
+        norm: Normalization type
+        activation: Activation type
+        size: Model size ('xs', 's', 'm', 'l') - used to determine if drop path should be applied
+    """
+    if num_extra_blocks <= 0:
+        return nn.Identity()
+    
+    # Only apply drop path for m/l models (extra blocks beyond xs/s)
+    use_drop_path = size in ['m', 'l']
+    
+    layers = []
+    for idx in range(num_extra_blocks):
+        # For m/l models, apply drop path only to extra blocks (beyond xs/s baseline)
+        # xs/s has 2 blocks, m/l has 3 blocks, so only the extra 1 block gets drop path
+        drop_path_rate = 0.15 if use_drop_path else 0.0
+        layers.append(
+            LKAHybridCBAM3D(
+                channels=channels,
+                reduction=4,
+                norm=norm,
+                activation=activation,
+                use_residual=True,
+                stride=1,
+                drop_path_rate=drop_path_rate,
+                drop_channel_rate=0.05 if use_drop_path else 0.0,
+            )
+        )
+    return nn.Sequential(*layers)
+
+
+def _build_p3d_stem_extra_blocks(
+    channels: int,
+    num_extra_blocks: int,
+    norm: str,
+    activation: str,
+    size: str = "s",
+) -> nn.Module:
+    """Build extra blocks for P3D Stem (Stage 1).
+    
+    Args:
+        channels: Number of channels
+        num_extra_blocks: Number of extra blocks to add (beyond base 2 blocks)
+        norm: Normalization type
+        activation: Activation type
+        size: Model size ('xs', 's', 'm', 'l') - used to determine if drop path should be applied
+    """
+    if num_extra_blocks <= 0:
+        return nn.Identity()
+    
+    # Only apply drop path for m/l models (extra blocks beyond xs/s)
+    use_drop_path = size in ['m', 'l']
+    
+    layers = []
+    for idx in range(num_extra_blocks):
+        block_layers = [
+            P3DConv3d(
+                channels,
+                channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            ),
+            _make_norm3d(norm, channels),
+            _make_activation(activation, inplace=True),
+        ]
+        
+        if use_drop_path:
+            from models.modules.lka_hybrid_modules import drop_path as drop_path_fn
+            
+            class P3DStemBlockWithDropPath(nn.Module):
+                def __init__(self, block, drop_rate):
+                    super().__init__()
+                    self.block = nn.Sequential(*block)
+                    self.drop_rate = drop_rate
+                
+                def forward(self, x):
+                    if self.training and self.drop_rate > 0:
+                        x = drop_path_fn(x, self.drop_rate, self.training)
+                    return self.block(x)
+            
+            # Apply drop path: 0.1 for the extra block
+            drop_rate = 0.1
+            layers.append(P3DStemBlockWithDropPath(block_layers, drop_rate))
+        else:
+            layers.append(nn.Sequential(*block_layers))
+    return nn.Sequential(*layers)
+
+
+def _build_p3d_stage2_extra_blocks(
+    channels: int,
+    num_extra_blocks: int,
+    norm: str,
+    reduction: int,
+    activation: str,
+    size: str = "s",
+) -> nn.Module:
+    """Build extra blocks for P3D Stage 2.
+    
+    Args:
+        channels: Number of channels
+        num_extra_blocks: Number of extra blocks to add (beyond base 2 blocks)
+        norm: Normalization type
+        reduction: Channel attention reduction ratio
+        activation: Activation type
+        size: Model size ('xs', 's', 'm', 'l') - used to determine if drop path should be applied
+    """
+    if num_extra_blocks <= 0:
+        return nn.Identity()
+    
+    from models.modules.shufflenet_modules import P3DShuffleNetV2Unit3D
+    from models.modules.lka_hybrid_modules import drop_path as drop_path_fn
+    
+    # Only apply drop path for m/l models (extra blocks beyond xs/s)
+    use_drop_path = size in ['m', 'l']
+    
+    layers = []
+    for idx in range(num_extra_blocks):
+        # For m/l models, apply drop path only to extra blocks (beyond xs/s baseline)
+        # xs/s has 2 blocks, m/l has 3 blocks, so only the extra 1 block gets drop path
+        # P3DShuffleNetV2Unit3D doesn't support drop_path, so we wrap it
+        block = P3DShuffleNetV2Unit3D(
+            channels,
+            channels,
+            stride=1,
+            norm=norm,
+            use_channel_attention=True,
+            reduction=reduction,
+            activation=activation,
+        )
+        
+        if use_drop_path:
+            # Wrap with drop path
+            class P3DBlockWithDropPath(nn.Module):
+                def __init__(self, block, drop_rate):
+                    super().__init__()
+                    self.block = block
+                    self.drop_rate = drop_rate
+                
+                def forward(self, x):
+                    if self.training and self.drop_rate > 0:
+                        x = drop_path_fn(x, self.drop_rate, self.training)
+                    return self.block(x)
+            
+            drop_rate = 0.1
+            layers.append(P3DBlockWithDropPath(block, drop_rate))
+        else:
+            layers.append(block)
+    return nn.Sequential(*layers)
+
+
+def _build_p3d_stage4_extra_blocks(
+    channels: int,
+    num_extra_blocks: int,
+    norm: str,
+    activation: str,
+    size: str = "s",
+) -> nn.Module:
+    """Build extra blocks for P3D Stage 4.
+    
+    Args:
+        channels: Number of channels
+        num_extra_blocks: Number of extra blocks to add (beyond base 2 blocks)
+        norm: Normalization type
+        activation: Activation type
+        size: Model size ('xs', 's', 'm', 'l') - used to determine if drop path should be applied
+    """
+    if num_extra_blocks <= 0:
+        return nn.Identity()
+    
+    # Only apply drop path for m/l models (extra blocks beyond xs/s)
+    use_drop_path = size in ['m', 'l']
+    
+    # P3DLKAHybridCBAM3D is defined in this file, no need to import
+    layers = []
+    for idx in range(num_extra_blocks):
+        # For m/l models, apply drop path only to extra blocks (beyond xs/s baseline)
+        # xs/s has 2 blocks, m/l has 3 blocks, so only the extra 1 block gets drop path
+        drop_path_rate = 0.15 if use_drop_path else 0.0
+        layers.append(
+            P3DLKAHybridCBAM3D(
+                channels=channels,
+                reduction=4,
+                norm=norm,
+                activation=activation,
+                use_residual=True,
+                stride=1,
+                drop_path_rate=drop_path_rate,
+                drop_channel_rate=0.05 if use_drop_path else 0.0,
+            )
+        )
+    return nn.Sequential(*layers)
+
+
 class SegNeXtDecoderBlock3D(nn.Module):
     """
     3D SegNeXt-style decoder block:
@@ -166,9 +526,21 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
 
         activation = get_activation_type(size)
         channels = get_singlebranch_channels_2step_decoder(size)
+        
+        # Get depth configuration based on model size
+        depth_config = _get_depth_config(size)
 
         stem_in = n_image_channels + (n_coord_channels if self.include_coords else 0)
         self.stem = Stem3x3(stem_in, channels["stem"], norm=self.norm, activation=activation)
+        # Stage 1 extra blocks (if needed)
+        stage1_extra = depth_config['stage1_blocks'] - 2  # Base stem has 2 blocks
+        self.stem_extra = _build_stem_extra_blocks(
+            channels["stem"],
+            stage1_extra,
+            self.norm,
+            activation,
+            size=size,  # Pass size for drop path control
+        )
 
         # Stage 2: ShuffleNetV2 Down block (48^3)
         self.down2 = Down3DShuffleNetV2(
@@ -178,6 +550,16 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
             use_channel_attention=True,
             reduction=8,
             activation=activation,
+        )
+        # Stage 2 extra blocks (if needed)
+        stage2_extra = depth_config['stage2_blocks'] - 2  # Base down2 has 2 blocks
+        self.down2_extra = _build_stage2_extra_blocks(
+            channels["branch2"],
+            stage2_extra,
+            self.norm,
+            reduction=8,
+            activation=activation,
+            size=size,  # Pass size for drop path control
         )
 
         # Stage 3: Hybrid LKA Down block (24^3) + extra LKA units
@@ -189,16 +571,30 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
             activation=activation,
         )
         # down3에 이미 2개 블록이 있으므로 extra의 첫 블록부터 drop path 적용
+        stage3_extra = depth_config['stage3_blocks'] - 2  # Base down3 has 2 blocks
+        # Generate drop path rates for extra blocks
+        # xs/s: 2 extra blocks (total 4), m/l: 4 extra blocks (total 6)
+        # Only apply drop path to blocks beyond xs/s baseline (m/l의 마지막 2개만)
+        if size in ['xs', 's']:
+            # xs/s: no drop path for extra blocks
+            drop_path_rates = [0.0] * stage3_extra if stage3_extra > 0 else []
+            drop_channel_rates = [0.0] * stage3_extra if stage3_extra > 0 else []
+        else:  # m/l
+            # m/l: only last 2 extra blocks get drop path (beyond xs/s baseline of 4 total blocks)
+            # xs/s has 4 total (2 base + 2 extra), m/l has 6 total (2 base + 4 extra)
+            # So only the last 2 extra blocks in m/l get drop path
+            drop_path_rates = [0.0] * (stage3_extra - 2) + [0.1, 0.15] if stage3_extra >= 2 else [0.0] * stage3_extra
+            drop_channel_rates = [0.0] * (stage3_extra - 2) + [0.05, 0.05] if stage3_extra >= 2 else [0.0] * stage3_extra
         self.down3_extra = _build_shufflenet_v2_lka_extra_blocks(
             channels["branch3"],
-            3,
+            stage3_extra,
             self.norm,
             reduction=4,
             activation=activation,
             # down3의 2개 블록 이후이므로 첫 블록부터 drop path 적용
-            drop_path_rates=[0.05, 0.1, 0.15],
+            drop_path_rates=drop_path_rates,
             # Spatial dropout (width 앙상블) - Stage 3에 적용
-            drop_channel_rates=[0.05, 0.05, 0.05],
+            drop_channel_rates=drop_channel_rates,
         )
 
         fused_channels = channels["branch3"]
@@ -231,6 +627,15 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
             stride=1,
             drop_path_rate=0.15,  # 두 번째 블록에만 drop path 적용
             drop_channel_rate=0.05,  # Bottleneck이므로 낮은 spatial dropout
+        )
+        # Stage 4 extra blocks (if needed)
+        stage4_extra = depth_config['stage4_blocks'] - 2  # Base stage4 has 2 blocks (lka1 + lka2)
+        self.down4_extra = _build_stage4_extra_blocks(
+            expanded_channels,
+            stage4_extra,
+            self.norm,
+            activation,
+            size=size,  # Pass size for drop path control
         )
 
         # SegNeXt-style decoder
@@ -273,13 +678,16 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
 
         # Encoder
         x1 = self.stem(x_in)        # 96^3
+        x1 = self.stem_extra(x1)    # 96^3 (extra blocks if any)
         x2 = self.down2(x1)         # 48^3
+        x2 = self.down2_extra(x2)   # 48^3 (extra blocks if any)
         x3 = self.down3(x2)         # 24^3
         x3 = self.down3_extra(x3)   # 24^3 (refined)
 
         x4 = self.down4_expand(x3)  # 24^3
         x4 = self.down4_lka1(x4)    # 12^3
         x4 = self.down4_lka2(x4)    # 12^3
+        x4 = self.down4_extra(x4)   # 12^3 (extra blocks if any)
 
         # SegNeXt-style decoder
         d3 = self.dec3(x4, x3)      # 12^3 -> 24^3
@@ -901,9 +1309,21 @@ class CascadeShuffleNetV2SegNeXt3D_P3D_LKA(nn.Module):
 
         activation = get_activation_type(size)
         channels = get_singlebranch_channels_2step_decoder(size)
+        
+        # Get depth configuration based on model size
+        depth_config = _get_depth_config(size)
 
         stem_in = n_image_channels + (n_coord_channels if self.include_coords else 0)
         self.stem = P3DStem3x3(stem_in, channels["stem"], norm=self.norm, activation=activation)
+        # Stage 1 extra blocks (if needed)
+        stage1_extra = depth_config['stage1_blocks'] - 2  # Base stem has 2 blocks
+        self.stem_extra = _build_p3d_stem_extra_blocks(
+            channels["stem"],
+            stage1_extra,
+            self.norm,
+            activation,
+            size=size,  # Pass size for drop path control
+        )
 
         # Stage 2: P3D ShuffleNetV2 Down block (48^3)
         self.down2 = P3DDown3DShuffleNetV2(
@@ -913,6 +1333,16 @@ class CascadeShuffleNetV2SegNeXt3D_P3D_LKA(nn.Module):
             use_channel_attention=True,
             reduction=8,
             activation=activation,
+        )
+        # Stage 2 extra blocks (if needed)
+        stage2_extra = depth_config['stage2_blocks'] - 2  # Base down2 has 2 blocks
+        self.down2_extra = _build_p3d_stage2_extra_blocks(
+            channels["branch2"],
+            stage2_extra,
+            self.norm,
+            reduction=8,
+            activation=activation,
+            size=size,  # Pass size for drop path control
         )
 
         # Stage 3: P3D Hybrid LKA Down block (24^3) + extra P3D LKA units
@@ -924,16 +1354,30 @@ class CascadeShuffleNetV2SegNeXt3D_P3D_LKA(nn.Module):
             activation=activation,
         )
         # down3에 이미 2개 블록이 있으므로 extra의 첫 블록부터 drop path 적용
+        stage3_extra = depth_config['stage3_blocks'] - 2  # Base down3 has 2 blocks
+        # Generate drop path rates for extra blocks
+        # xs/s: 2 extra blocks (total 4), m/l: 4 extra blocks (total 6)
+        # Only apply drop path to blocks beyond xs/s baseline (m/l의 마지막 2개만)
+        if size in ['xs', 's']:
+            # xs/s: no drop path for extra blocks
+            drop_path_rates = [0.0] * stage3_extra if stage3_extra > 0 else []
+            drop_channel_rates = [0.0] * stage3_extra if stage3_extra > 0 else []
+        else:  # m/l
+            # m/l: only last 2 extra blocks get drop path (beyond xs/s baseline of 4 total blocks)
+            # xs/s has 4 total (2 base + 2 extra), m/l has 6 total (2 base + 4 extra)
+            # So only the last 2 extra blocks in m/l get drop path
+            drop_path_rates = [0.0] * (stage3_extra - 2) + [0.1, 0.15] if stage3_extra >= 2 else [0.0] * stage3_extra
+            drop_channel_rates = [0.0] * (stage3_extra - 2) + [0.05, 0.05] if stage3_extra >= 2 else [0.0] * stage3_extra
         self.down3_extra = _build_p3d_shufflenet_v2_lka_extra_blocks(
             channels["branch3"],
-            3,
+            stage3_extra,
             self.norm,
             reduction=4,
             activation=activation,
             # down3의 2개 블록 이후이므로 첫 블록부터 drop path 적용
-            drop_path_rates=[0.05, 0.1, 0.15],
+            drop_path_rates=drop_path_rates,
             # Spatial dropout (width 앙상블) - Stage 3에 적용
-            drop_channel_rates=[0.05, 0.05, 0.05],
+            drop_channel_rates=drop_channel_rates,
         )
 
         fused_channels = channels["branch3"]
@@ -967,6 +1411,15 @@ class CascadeShuffleNetV2SegNeXt3D_P3D_LKA(nn.Module):
             stride=1,
             drop_path_rate=0.15,  # 두 번째 블록에만 drop path 적용
             drop_channel_rate=0.05,  # Bottleneck이므로 낮은 spatial dropout
+        )
+        # Stage 4 extra blocks (if needed)
+        stage4_extra = depth_config['stage4_blocks'] - 2  # Base stage4 has 2 blocks (lka1 + lka2)
+        self.down4_extra = _build_p3d_stage4_extra_blocks(
+            expanded_channels,
+            stage4_extra,
+            self.norm,
+            activation,
+            size=size,  # Pass size for drop path control
         )
 
         # P3D SegNeXt-style decoder
@@ -1009,13 +1462,16 @@ class CascadeShuffleNetV2SegNeXt3D_P3D_LKA(nn.Module):
 
         # Encoder
         x1 = self.stem(x_in)        # 96^3
+        x1 = self.stem_extra(x1)    # 96^3 (extra blocks if any)
         x2 = self.down2(x1)         # 48^3
+        x2 = self.down2_extra(x2)   # 48^3 (extra blocks if any)
         x3 = self.down3(x2)         # 24^3
         x3 = self.down3_extra(x3)   # 24^3 (refined)
 
         x4 = self.down4_expand(x3)  # 24^3
         x4 = self.down4_lka1(x4)    # 12^3
         x4 = self.down4_lka2(x4)    # 12^3
+        x4 = self.down4_extra(x4)   # 12^3 (extra blocks if any)
 
         # SegNeXt-style decoder
         d3 = self.dec3(x4, x3)      # 12^3 -> 24^3

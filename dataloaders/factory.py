@@ -39,7 +39,6 @@ def get_data_loaders(
     train_crops_per_center: int = 1,
     train_crop_overlap: float = 0.5,
     anisotropy_augment: bool = False,
-    samples_per_volume: int = 16,
 ):
     """공통 get_data_loaders 진입점 (기존 data_loader.get_data_loaders와 동일 인터페이스).
     
@@ -133,7 +132,7 @@ def get_data_loaders(
             samples_per_volume=samples_per_volume,
             augment=use_mri_augmentation,
             anisotropy_augment=anisotropy_augment,
-            max_cache_size=0,  # 캐싱 비활성화: 순수 I/O 성능 측정
+            max_cache_size=50,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
         )
 
     train_sampler = val_sampler = test_sampler = None
