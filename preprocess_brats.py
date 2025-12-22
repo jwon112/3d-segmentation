@@ -197,8 +197,21 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
     else:
         raise ValueError(f"Unknown dataset_version: {dataset_version}")
     
-    if not os.path.exists(brats_dir):
-        raise FileNotFoundError(f"Dataset not found at {brats_dir}")
+    # 데이터셋 존재 여부 확인
+    if dataset_version in ('brats2021', 'brats2018'):
+        if not os.path.exists(brats_dir):
+            raise FileNotFoundError(f"Dataset not found at {brats_dir}")
+    elif dataset_version == 'brats2024':
+        # BRATS2024는 두 개의 학습 디렉토리를 사용하므로 각각 존재 여부 확인
+        missing_dirs = []
+        for d in [train_dir1, train_dir2]:
+            if not os.path.exists(d):
+                missing_dirs.append(d)
+        if missing_dirs:
+            raise FileNotFoundError(
+                "BRATS2024 dataset directories not found:\n" +
+                "\n".join(f"  - {p}" for p in missing_dirs)
+            )
     
     # 환자 디렉토리 수집
     patient_dirs = []
