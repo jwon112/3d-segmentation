@@ -71,6 +71,7 @@ def get_data_loaders(
             anisotropy_augment=anisotropy_augment,
             train_crops_per_center=train_crops_per_center,
             train_crop_overlap=train_crop_overlap,
+            use_4modalities=use_4modalities,  # 모달리티 선택 가능
         )
         # Segmentation 데이터로더만 반환 (일반 get_data_loaders와 동일한 형식)
         seg_loaders = cascade_loaders['seg']

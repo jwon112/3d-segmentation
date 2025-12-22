@@ -47,11 +47,14 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
     """
     단일 볼륨을 전처리하여 저장
     
+    Note:
+        use_4modalities 파라미터는 무시됩니다 (하위 호환성을 위해 유지).
+        H5 파일은 항상 4개 모달리티 (T1, T1CE, T2, FLAIR)로 저장됩니다.
+        실험 시 필요한 모달리티만 선택적으로 로드할 수 있습니다.
+    
     Args:
         patient_dir: 환자 디렉토리 경로
-        use_4modalities: 4개 모달리티 사용 여부
-            - False (기본값): T1CE, FLAIR 2개 모달리티만 사용
-            - True: T1, T1CE, T2, FLAIR 4개 모달리티 사용
+        use_4modalities: 무시됨 (하위 호환성을 위해 유지). H5 파일은 항상 4개 모달리티로 저장됩니다.
         output_path: 저장할 파일 경로 (None이면 patient_dir/preprocessed.h5)
         force_overwrite: 강제 덮어쓰기 여부
     
@@ -63,14 +66,13 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
     
     # 파일이 존재하는 경우 확인
     if os.path.exists(output_path) and not force_overwrite:
-        # 모달리티 구성 확인
+        # 모달리티 구성 확인 (항상 4개 모달리티로 저장되므로 4개인지 확인)
         try:
             with h5py.File(output_path, 'r') as f:
                 if 'image' in f:
                     existing_channels = f['image'].shape[0]
-                    expected_channels = 4 if use_4modalities else 2
-                    # 모달리티 구성이 같으면 스킵
-                    if existing_channels == expected_channels:
+                    # H5 파일은 항상 4개 모달리티로 저장됨
+                    if existing_channels == 4:
                         return True
                     # 모달리티 구성이 다르면 재처리 필요 (파일 삭제)
                     os.remove(output_path)
@@ -94,18 +96,15 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
         t1ce = _normalize_volume_np(t1ce)
         flair = _normalize_volume_np(flair)
         
-        if use_4modalities:
-            # 4개 모달리티: T1, T1CE, T2, FLAIR
-            t1_file = [f for f in files if 't1.nii' in f.lower() and 't1ce' not in f.lower()][0]
-            t2_file = [f for f in files if 't2.nii' in f.lower()][0]
-            t1 = nib.load(os.path.join(patient_dir, t1_file)).get_fdata()
-            t2 = nib.load(os.path.join(patient_dir, t2_file)).get_fdata()
-            t1 = _normalize_volume_np(t1)
-            t2 = _normalize_volume_np(t2)
-            image = np.stack([t1, t1ce, t2, flair], axis=-1)  # (H, W, D, 4)
-        else:
-            # 2개 모달리티: T1CE, FLAIR만 사용
-            image = np.stack([t1ce, flair], axis=-1)  # (H, W, D, 2)
+        # H5 파일은 항상 4개 모달리티로 저장 (T1, T1CE, T2, FLAIR)
+        # 실험 시 필요한 모달리티만 선택적으로 로드 가능
+        t1_file = [f for f in files if 't1.nii' in f.lower() and 't1ce' not in f.lower()][0]
+        t2_file = [f for f in files if 't2.nii' in f.lower()][0]
+        t1 = nib.load(os.path.join(patient_dir, t1_file)).get_fdata()
+        t2 = nib.load(os.path.join(patient_dir, t2_file)).get_fdata()
+        t1 = _normalize_volume_np(t1)
+        t2 = _normalize_volume_np(t2)
+        image = np.stack([t1, t1ce, t2, flair], axis=-1)  # (H, W, D, 4)
         
         # (H, W, D, C) -> (C, H, W, D)로 변환
         image = np.transpose(image, (3, 0, 1, 2)).astype(np.float32)
@@ -131,8 +130,9 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
             for cls_key, coords in fg_coords_dict.items():
                 f.create_dataset(cls_key, data=coords, compression='gzip', compression_opts=1)
             # 메타데이터 저장 (모달리티 구성 확인용)
-            f.attrs['use_4modalities'] = use_4modalities
-            f.attrs['num_channels'] = image.shape[0]
+            # H5 파일은 항상 4개 모달리티로 저장되므로 use_4modalities는 항상 True
+            f.attrs['use_4modalities'] = True
+            f.attrs['num_channels'] = image.shape[0]  # 항상 4
             f.attrs['has_fg_coords'] = len(fg_coords_dict) > 0
         
         return True
@@ -149,14 +149,15 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
     Args:
         data_dir: 데이터 루트 디렉토리
         dataset_version: 'brats2021' 또는 'brats2018'
-        use_4modalities: 4개 모달리티 사용 여부
+        use_4modalities: 무시됨 (하위 호환성을 위해 유지). H5 파일은 항상 4개 모달리티로 저장됩니다.
         output_dir: 저장할 디렉토리 (None이면 기본 전처리 디렉토리 사용)
         skip_existing: 이미 전처리된 파일 스킵 여부
     
     Note:
-        output_dir이 None이면 기본적으로 프로젝트 루트의 data/ 디렉토리에 저장합니다.
-        예: /home/work/3D_/jaewon/project/3d-segmentation/data/BRATS2021_preprocessed/
-        이렇게 하면 각 샘플 폴더에 접근할 필요 없이 한 곳에서 모든 파일을 관리할 수 있습니다.
+        - H5 파일은 항상 4개 모달리티 (T1, T1CE, T2, FLAIR)로 저장됩니다.
+        - 실험 시 필요한 모달리티만 선택적으로 로드할 수 있습니다 (use_4modalities 파라미터 사용).
+        - output_dir이 None이면 기본적으로 프로젝트 루트의 data/ 디렉토리에 저장합니다.
+        - 예: /home/work/3D_/jaewon/project/3d-segmentation/data/BRATS2021_preprocessed/
     """
     # 기본 전처리 디렉토리 설정 (output_dir이 None인 경우)
     if output_dir is None:
@@ -202,7 +203,7 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
     
     print(f"Found {len(patient_dirs)} patient directories")
     print(f"Dataset version: {dataset_version}")
-    print(f"Use 4 modalities: {use_4modalities}")
+    print(f"Modalities: 4 (T1, T1CE, T2, FLAIR) - always saved as 4 modalities")
     print(f"Output directory: {output_dir if output_dir else 'Original directory (preprocessed.h5)'}")
     print()
     
@@ -245,7 +246,7 @@ def main():
                         choices=['brats2021', 'brats2018'],
                         help='Dataset version')
     parser.add_argument('--use_4modalities', action='store_true',
-                        help='Use 4 modalities (T1, T1ce, T2, FLAIR). Default: False (uses only T1CE and FLAIR)')
+                        help='(Deprecated) H5 files are always saved with 4 modalities (T1, T1CE, T2, FLAIR). This flag is ignored but kept for backward compatibility.')
     parser.add_argument('--output_dir', type=str, default=None,
                         help='Output directory for preprocessed files (None: save in original directory)')
     parser.add_argument('--no_skip_existing', action='store_true',

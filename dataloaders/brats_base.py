@@ -210,7 +210,43 @@ class BratsDataset3D(Dataset):
         if HAS_H5PY and os.path.exists(preprocessed_path):
             try:
                 with h5py.File(preprocessed_path, 'r') as f:
-                    image = torch.from_numpy(f['image'][:]).float()
+                    # H5 파일의 모달리티 수 확인 (메타데이터에서 먼저 확인)
+                    h5_num_channels = f['image'].shape[0]
+                    h5_use_4modalities = f.attrs.get('use_4modalities', h5_num_channels == 4)
+                    
+                    # 필요한 모달리티만 선택적으로 로드 (I/O 및 메모리 최적화)
+                    if self.use_4modalities:
+                        if h5_num_channels == 4:
+                            # 4개 모달리티 모두 필요: 전체 로드
+                            image = torch.from_numpy(f['image'][:]).float()  # (4, H, W, D)
+                        elif h5_num_channels == 2:
+                            # 2개 모달리티만 있는 경우: T1CE, FLAIR를 사용하고 T1, T2는 0으로 채움
+                            # H5 파일 구조: [T1CE, FLAIR] (구버전)
+                            image_full = torch.from_numpy(f['image'][:]).float()  # (2, H, W, D)
+                            t1ce = image_full[0:1]  # (1, H, W, D)
+                            flair = image_full[1:2]  # (1, H, W, D)
+                            # T1, T2는 0으로 채움
+                            t1 = torch.zeros_like(t1ce)
+                            t2 = torch.zeros_like(t1ce)
+                            image = torch.cat([t1, t1ce, t2, flair], dim=0)  # (4, H, W, D)
+                        else:
+                            raise ValueError(f"Unsupported number of channels in H5 file: {h5_num_channels}")
+                    else:
+                        # 2개 모달리티만 필요한 경우: 필요한 모달리티만 선택적으로 로드
+                        if h5_num_channels == 4:
+                            # H5 파일 구조: [T1, T1CE, T2, FLAIR]
+                            # T1CE (인덱스 1)와 FLAIR (인덱스 3)만 로드
+                            # h5py 슬라이싱을 사용하여 필요한 부분만 디스크에서 읽음
+                            t1ce = torch.from_numpy(f['image'][1:2, :, :, :]).float()  # (1, H, W, D)
+                            flair = torch.from_numpy(f['image'][3:4, :, :, :]).float()  # (1, H, W, D)
+                            image = torch.cat([t1ce, flair], dim=0)  # (2, H, W, D)
+                        elif h5_num_channels == 2:
+                            # 2개 모달리티 모두 사용: 전체 로드
+                            image = torch.from_numpy(f['image'][:]).float()  # (2, H, W, D)
+                        else:
+                            raise ValueError(f"Unsupported number of channels in H5 file: {h5_num_channels}")
+                    
+                    # Mask는 항상 전체 로드
                     mask = torch.from_numpy(f['mask'][:]).long()
                     
                     # 포그라운드 좌표 로드 (있으면 사용, 없으면 None)
@@ -228,14 +264,6 @@ class BratsDataset3D(Dataset):
                                         import warnings
                                         warnings.warn(f"Foreground coordinates for class {cls} exceed int32 range: {coords_shape[0]}")
                                 fg_coords_dict[cls] = torch.from_numpy(coords_array).long()
-                
-                # 모달리티 수 확인
-                if self.use_4modalities and image.shape[0] != 4:
-                    # 전처리된 데이터가 2모달리티인데 4모달리티가 필요한 경우
-                    raise ValueError("Preprocessed data has wrong number of modalities")
-                elif not self.use_4modalities and image.shape[0] != 2:
-                    # 전처리된 데이터가 4모달리티인데 2모달리티가 필요한 경우
-                    raise ValueError("Preprocessed data has wrong number of modalities")
                 
                 # 포그라운드 좌표가 있으면 함께 반환
                 if fg_coords_dict:
