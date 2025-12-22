@@ -60,12 +60,14 @@ def _normalize_volume_np(vol):
 class BratsDataset3D(Dataset):
     """3D BraTS 데이터셋 (Depth, Height, Width)"""
 
-    def __init__(self, data_dir, split='train', max_samples=None, dataset_version='brats2021', use_4modalities=False, max_cache_size: int = 50, preprocessed_dir=None):
+    def __init__(self, data_dir, split='train', max_samples=None, dataset_version='brats2021', use_4modalities=False, max_cache_size: int = 50, preprocessed_dir=None, fold_split_dir=None, fold_idx=None):
         self.data_dir = data_dir
         self.split = split
         self.max_samples = max_samples
         self.dataset_version = dataset_version
         self.use_4modalities = use_4modalities
+        self.fold_split_dir = fold_split_dir
+        self.fold_idx = fold_idx
         # 전처리된 데이터 디렉토리
         # 1. 파라미터로 지정된 경우
         # 2. 환경변수로 지정된 경우
@@ -91,6 +93,10 @@ class BratsDataset3D(Dataset):
         self._file_names_cache = {}
 
     def _load_samples(self):
+        # Fold별 디렉토리에서 직접 로드하는 경우
+        if self.fold_split_dir and self.fold_idx is not None:
+            return self._load_samples_from_fold()
+        
         samples = []
         if self.dataset_version == 'brats2021':
             brats2021_dir = os.path.join(self.data_dir, 'BRATS2021', 'BraTS2021_Training_Data')
@@ -136,6 +142,37 @@ class BratsDataset3D(Dataset):
             raise ValueError(f"Unknown dataset_version: {self.dataset_version}. Must be 'brats2021' or 'brats2018'")
         return samples
 
+    def _load_samples_from_fold(self):
+        """Fold별 디렉토리에서 샘플 로드"""
+        if not self.fold_split_dir or self.fold_idx is None:
+            raise ValueError("fold_split_dir and fold_idx must be specified to load from fold directory")
+        
+        fold_dir = Path(self.fold_split_dir) / f'fold_{self.fold_idx}'
+        split_dir = fold_dir / self.split
+        
+        if not split_dir.exists():
+            raise FileNotFoundError(
+                f"Fold split directory not found: {split_dir}\n"
+                f"Please run prepare_5fold_splits.py first to create fold directories."
+            )
+        
+        samples = []
+        for h5_file in sorted(split_dir.glob('*.h5')):
+            # 심볼릭 링크의 실제 경로를 사용 (또는 직접 경로)
+            if h5_file.is_symlink():
+                real_path = h5_file.resolve()
+            else:
+                real_path = h5_file
+            
+            # H5 파일 경로를 샘플로 저장 (__getitem__에서 사용)
+            samples.append(str(real_path))
+        
+        if not samples:
+            raise ValueError(f"No samples found in {split_dir}")
+        
+        print(f"Loading {self.split} samples from fold {self.fold_idx}: {len(samples)} samples from {split_dir}")
+        return samples
+
     def __len__(self):
         return len(self.samples)
 
@@ -151,9 +188,12 @@ class BratsDataset3D(Dataset):
             self._nifti_cache[patient_dir] = result
             return result
         
+        # Fold별 디렉토리에서 로드하는 경우: patient_dir이 이미 H5 파일 경로
+        if self.fold_split_dir and self.fold_idx is not None:
+            preprocessed_path = patient_dir
         # 전처리된 데이터 우선 로드 (HDF5)
         # 1. 별도 디렉토리 확인 (환경변수 또는 파라미터로 지정)
-        if self.preprocessed_dir:
+        elif self.preprocessed_dir:
             patient_name = os.path.basename(patient_dir)
             preprocessed_path = os.path.join(self.preprocessed_dir, f"{patient_name}.h5")
         else:
@@ -519,10 +559,46 @@ def get_brats_base_datasets(
     seed: Optional[int] = None,
     use_5fold: bool = False,
     fold_idx: Optional[int] = None,
+    fold_split_dir: Optional[str] = None,
     use_4modalities: bool = True,
     max_cache_size: Optional[int] = None,
 ):
     """Create base BratsDataset3D and return train/val/test splits."""
+    # 5-fold 모드이고 fold_split_dir이 지정된 경우: fold별 디렉토리에서 직접 로드
+    if use_5fold and fold_split_dir:
+        train_dataset = BratsDataset3D(
+            data_dir,
+            split='train',
+            max_samples=max_samples,
+            dataset_version=dataset_version,
+            use_4modalities=use_4modalities,
+            max_cache_size=max_cache_size if max_cache_size is not None else 0,
+            fold_split_dir=fold_split_dir,
+            fold_idx=fold_idx,
+        )
+        val_dataset = BratsDataset3D(
+            data_dir,
+            split='val',
+            max_samples=max_samples,
+            dataset_version=dataset_version,
+            use_4modalities=use_4modalities,
+            max_cache_size=max_cache_size if max_cache_size is not None else 0,
+            fold_split_dir=fold_split_dir,
+            fold_idx=fold_idx,
+        )
+        test_dataset = BratsDataset3D(
+            data_dir,
+            split='test',
+            max_samples=max_samples,
+            dataset_version=dataset_version,
+            use_4modalities=use_4modalities,
+            max_cache_size=max_cache_size if max_cache_size is not None else 0,
+            fold_split_dir=fold_split_dir,
+            fold_idx=fold_idx,
+        )
+        return train_dataset, val_dataset, test_dataset
+    
+    # 일반 모드: 기존 방식대로 분할
     base_dataset = BratsDataset3D(
         data_dir,
         split='train',

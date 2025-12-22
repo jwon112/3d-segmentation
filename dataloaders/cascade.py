@@ -519,6 +519,7 @@ def get_cascade_data_loaders(
     seed: Optional[int] = None,
     use_5fold: bool = False,
     fold_idx: Optional[int] = None,
+    fold_split_dir: Optional[str] = None,
     roi_resize: Sequence[int] = (64, 64, 64),
     seg_crop_size: Sequence[int] = (96, 96, 96),
     include_coords: bool = True,
@@ -539,6 +540,7 @@ def get_cascade_data_loaders(
         seed=seed,
         use_5fold=use_5fold,
         fold_idx=fold_idx,
+        fold_split_dir=fold_split_dir,
         use_4modalities=True,
         max_cache_size=0,  # 캐싱 비활성화: 순수 I/O 성능 측정
     )

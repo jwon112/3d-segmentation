@@ -34,6 +34,7 @@ def get_data_loaders(
     use_4modalities: bool = False,
     use_5fold: bool = False,
     fold_idx: Optional[int] = None,
+    fold_split_dir: Optional[str] = None,
     use_mri_augmentation: bool = False,
     model_name: Optional[str] = None,
     train_crops_per_center: int = 1,
@@ -58,6 +59,7 @@ def get_data_loaders(
             seed=seed,
             use_5fold=use_5fold,
             fold_idx=fold_idx,
+            fold_split_dir=fold_split_dir,
             roi_resize=(64, 64, 64),  # ROI 모델 기본 크기
             seg_crop_size=(96, 96, 96),  # Segmentation 모델 기본 크기
             include_coords=include_coords,
@@ -88,32 +90,70 @@ def get_data_loaders(
             torch.cuda.manual_seed(seed)
             torch.cuda.manual_seed_all(seed)
 
-    if dim == '2d':
-        dataset_class = BratsDataset2D
-        full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples, dataset_version=dataset_version)
+    # 5-fold 모드이고 fold_split_dir이 지정된 경우: fold별 디렉토리에서 직접 로드
+    if use_5fold and fold_split_dir:
+        if dim == '2d':
+            raise NotImplementedError("2D dataset with 5-fold splits is not yet supported")
+        else:
+            # Fold별 디렉토리에서 직접 로드
+            train_dataset = BratsDataset3D(
+                data_dir,
+                split='train',
+                max_samples=max_samples,
+                dataset_version=dataset_version,
+                use_4modalities=use_4modalities,
+                max_cache_size=0,
+                fold_split_dir=fold_split_dir,
+                fold_idx=fold_idx,
+            )
+            val_dataset = BratsDataset3D(
+                data_dir,
+                split='val',
+                max_samples=max_samples,
+                dataset_version=dataset_version,
+                use_4modalities=use_4modalities,
+                max_cache_size=0,
+                fold_split_dir=fold_split_dir,
+                fold_idx=fold_idx,
+            )
+            test_dataset = BratsDataset3D(
+                data_dir,
+                split='test',
+                max_samples=max_samples,
+                dataset_version=dataset_version,
+                use_4modalities=use_4modalities,
+                max_cache_size=0,
+                fold_split_dir=fold_split_dir,
+                fold_idx=fold_idx,
+            )
     else:
-        dataset_class = BratsDataset3D
-        # Training용: 캐싱 비활성화 (순수 I/O 성능 측정)
-        full_dataset = dataset_class(
-            data_dir,
-            split='train',
-            max_samples=max_samples,
-            dataset_version=dataset_version,
-            use_4modalities=use_4modalities,
-            max_cache_size=0,  # 캐싱 비활성화: 순수 I/O 성능 측정
-        )
+        # 일반 모드: 기존 방식대로 분할
+        if dim == '2d':
+            dataset_class = BratsDataset2D
+            full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples, dataset_version=dataset_version)
+        else:
+            dataset_class = BratsDataset3D
+            # Training용: 캐싱 비활성화 (순수 I/O 성능 측정)
+            full_dataset = dataset_class(
+                data_dir,
+                split='train',
+                max_samples=max_samples,
+                dataset_version=dataset_version,
+                use_4modalities=use_4modalities,
+                max_cache_size=0,  # 캐싱 비활성화: 순수 I/O 성능 측정
+            )
 
-    train_dataset, val_dataset, test_dataset = split_brats_dataset(
-        full_dataset=full_dataset,
-        data_dir=data_dir,
-        dataset_version=dataset_version,
-        train_ratio=train_ratio,
-        val_ratio=val_ratio,
-        test_ratio=test_ratio,
-        use_5fold=use_5fold,
-        fold_idx=fold_idx,
-        seed=seed,
-    )
+        train_dataset, val_dataset, test_dataset = split_brats_dataset(
+            full_dataset=full_dataset,
+            data_dir=data_dir,
+            dataset_version=dataset_version,
+            train_ratio=train_ratio,
+            val_ratio=val_ratio,
+            test_ratio=test_ratio,
+            use_5fold=use_5fold,
+            fold_idx=fold_idx,
+            seed=seed,
+        )
 
     if dim == '3d':
         train_base_dataset = train_dataset.dataset if hasattr(train_dataset, 'dataset') else train_dataset
@@ -130,7 +170,7 @@ def get_data_loaders(
         train_dataset = BratsPatchDataset3D(
             base_dataset=train_base_dataset,
             patch_size=(128, 128, 128),
-            samples_per_volume=samples_per_volume,
+            samples_per_volume=16,  # 기본값: 볼륨당 16개 패치 샘플링
             augment=use_mri_augmentation,
             anisotropy_augment=anisotropy_augment,
             max_cache_size=50,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소

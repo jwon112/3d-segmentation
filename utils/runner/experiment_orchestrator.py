@@ -95,8 +95,21 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         print(f"\n{'='*60}")
         print(f"5-Fold Cross-Validation Mode")
         print(f"{'='*60}")
+        # Fold별 디렉토리 경로 설정
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent.parent.absolute()
+        fold_split_dir = str(project_root / 'data' / f'{dataset_version.upper()}_5fold_splits')
+        if not os.path.exists(fold_split_dir):
+            if is_main_process(rank):
+                print(f"Warning: Fold split directory not found: {fold_split_dir}")
+                print(f"Please run prepare_5fold_splits.py first to create fold directories.")
+            fold_split_dir = None
+        else:
+            if is_main_process(rank):
+                print(f"Using fold split directory: {fold_split_dir}")
     else:
         fold_list = [None]  # 일반 모드에서는 fold 없음
+        fold_split_dir = None
     
     # 각 시드별로 실험
     for seed in seeds:
@@ -160,6 +173,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             use_4modalities=use_4modalities,  # 모델에 따라 설정
                             use_5fold=use_5fold,  # 5-fold CV 사용 여부
                             fold_idx=fold_idx,  # fold 인덱스 (None이면 일반 분할)
+                            fold_split_dir=fold_split_dir,  # Fold별 디렉토리 경로
                             use_mri_augmentation=use_mri_augmentation,
                             model_name=model_name,  # Cascade 모델 감지를 위해 전달
                             train_crops_per_center=train_crops_per_center,  # 학습 시 multi-crop 샘플링
