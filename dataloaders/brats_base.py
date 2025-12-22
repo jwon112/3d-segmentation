@@ -189,8 +189,15 @@ class BratsDataset3D(Dataset):
             return result
         
         # Fold별 디렉토리에서 로드하는 경우: patient_dir이 이미 H5 파일 경로
-        if self.fold_split_dir and self.fold_idx is not None:
+        is_fold_split_mode = (self.fold_split_dir and self.fold_idx is not None)
+        if is_fold_split_mode:
             preprocessed_path = patient_dir
+            # fold별 디렉토리 모드에서는 H5 파일이 필수이므로, 없으면 에러 발생
+            if not os.path.exists(preprocessed_path):
+                raise FileNotFoundError(
+                    f"Preprocessed H5 file not found: {preprocessed_path}\n"
+                    f"This is required when using fold_split_dir mode."
+                )
         # 전처리된 데이터 우선 로드 (HDF5)
         # 1. 별도 디렉토리 확인 (환경변수 또는 파라미터로 지정)
         elif self.preprocessed_dir:
@@ -244,8 +251,21 @@ class BratsDataset3D(Dataset):
                 
                 return result
             except Exception as e:
-                # 전처리된 데이터 로드 실패 시 원본 로드로 fallback
+                # fold별 디렉토리 모드에서는 H5 파일 로드 실패 시 에러 발생
+                if is_fold_split_mode:
+                    raise RuntimeError(
+                        f"Failed to load preprocessed H5 file: {preprocessed_path}\n"
+                        f"Error: {e}"
+                    )
+                # 일반 모드에서는 원본 로드로 fallback
                 pass
+        
+        # fold별 디렉토리 모드에서는 원본 NIfTI 로드 불가 (H5 파일이 필수)
+        if is_fold_split_mode:
+            raise FileNotFoundError(
+                f"Preprocessed H5 file not found or failed to load: {preprocessed_path}\n"
+                f"Fold split mode requires preprocessed H5 files."
+            )
         
         # 원본 NIfTI 파일 로드 (fallback 또는 전처리된 데이터가 없는 경우)
         # 캐시 미스: 파일 이름 캐싱 (lazy caching)
