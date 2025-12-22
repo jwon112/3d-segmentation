@@ -8,6 +8,10 @@ BraTS 데이터 전처리 스크립트
 Usage:
     python preprocess_brats.py --data_dir /path/to/data --dataset_version brats2021
     python preprocess_brats.py --data_dir /path/to/data --dataset_version brats2018 --use_4modalities
+    python preprocess_brats.py --data_dir /path/to/data --dataset_version brats2017
+    python preprocess_brats.py --data_dir /path/to/data --dataset_version brats2019
+    python preprocess_brats.py --data_dir /path/to/data --dataset_version brats2020
+    python preprocess_brats.py --data_dir /path/to/data --dataset_version brats2023
 """
 
 import os
@@ -85,7 +89,7 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
         files = os.listdir(patient_dir)
         files_lower = [f.lower() for f in files]
 
-        # 1) BRATS2024 전용 패턴 먼저 시도
+        # 1) BRATS2023/2024 전용 패턴 먼저 시도
         # 예) BraTS-GLI-00005-100-t1n.nii.gz, -t1c.nii.gz, -t2f.nii.gz, -t2w.nii.gz, -seg.nii.gz
         def _find_exact_suffix(suffix: str):
             for f in files:
@@ -100,7 +104,7 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
         seg_file = _find_exact_suffix("-seg.nii.gz")
 
         if any(f is not None for f in [t1_file, t1ce_file, flair_file, t2_file, seg_file]):
-            # BRATS2024 패턴으로 인식된 경우: 이 매핑을 우선 사용
+            # BRATS2023/2024 패턴으로 인식된 경우: 이 매핑을 우선 사용
             missing = []
             if t1_file is None:
                 missing.append("T1(-t1n.nii.gz)")
@@ -115,7 +119,7 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
 
             if missing:
                 print(
-                    f"[WARN] Skipping {patient_dir}: missing BRATS2024-style modalities {missing}. "
+                    f"[WARN] Skipping {patient_dir}: missing BRATS2023/2024-style modalities {missing}. "
                     f"Files in dir: {files}"
                 )
                 return False
@@ -225,7 +229,7 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
     
     Args:
         data_dir: 데이터 루트 디렉토리
-        dataset_version: 'brats2021', 'brats2018' 또는 'brats2024'
+        dataset_version: 'brats2017', 'brats2018', 'brats2019', 'brats2020', 'brats2021', 'brats2023', 'brats2024'
         use_4modalities: 무시됨 (하위 호환성을 위해 유지). H5 파일은 항상 4개 모달리티로 저장됩니다.
         output_dir: 저장할 디렉토리 (None이면 기본 전처리 디렉토리 사용)
         skip_existing: 이미 전처리된 파일 스킵 여부
@@ -234,35 +238,61 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
         - H5 파일은 항상 4개 모달리티 (T1, T1CE, T2, FLAIR)로 저장됩니다.
         - 실험 시 필요한 모달리티만 선택적으로 로드할 수 있습니다 (use_4modalities 파라미터 사용).
         - dataset_version에 따라 기본 output_dir이 달라집니다.
-          * brats2021, brats2018: 프로젝트 루트의 data/ 디렉토리 하위에 저장
-          * brats2024: /home/work/3D_/processed_data/BRATS2024 하위에 단일 폴더로 저장 (요청에 따른 고정 경로)
+          * brats2017-2021: 프로젝트 루트의 data/ 디렉토리 하위에 저장
+          * brats2023, brats2024: /home/work/3D_/processed_data/ 하위에 저장
     """
     # 기본 전처리 디렉토리 설정 (output_dir이 None인 경우)
     if output_dir is None:
-        if dataset_version in ('brats2021', 'brats2018'):
+        if dataset_version in ('brats2017', 'brats2018', 'brats2019', 'brats2020', 'brats2021'):
             # 기존 브라츠 버전: 프로젝트 루트의 data/ 디렉토리 하위에 저장
             project_root = get_project_root()
             data_dir_path = project_root / 'data'
-            if dataset_version == 'brats2021':
-                output_dir = data_dir_path / 'BRATS2021_preprocessed'
-            elif dataset_version == 'brats2018':
-                output_dir = data_dir_path / 'BRATS2018_preprocessed'
+            version_map = {
+                'brats2017': 'BRATS2017_preprocessed',
+                'brats2018': 'BRATS2018_preprocessed',
+                'brats2019': 'BRATS2019_preprocessed',
+                'brats2020': 'BRATS2020_preprocessed',
+                'brats2021': 'BRATS2021_preprocessed',
+            }
+            output_dir = data_dir_path / version_map[dataset_version]
             output_dir = str(output_dir)
-        elif dataset_version == 'brats2024':
-            # 요청: BRATS2024는 /home/work/3D_/processed_data/BRATS2024/ 하위에 단일 폴더로 저장
+        elif dataset_version in ('brats2023', 'brats2024'):
+            # BRATS2023, BRATS2024: /home/work/3D_/processed_data/ 하위에 저장
             processed_root = Path("/home/work/3D_/processed_data")
-            output_dir = processed_root / "BRATS2024"
+            if dataset_version == 'brats2023':
+                output_dir = processed_root / "BRATS2023"
+            elif dataset_version == 'brats2024':
+                output_dir = processed_root / "BRATS2024"
             output_dir = str(output_dir)
         else:
             raise ValueError(f"Unknown dataset_version: {dataset_version}")
         os.makedirs(output_dir, exist_ok=True)
     # 데이터셋 경로 설정
-    if dataset_version == 'brats2021':
-        brats_dir = os.path.join(data_dir, 'BRATS2021', 'BraTS2021_Training_Data')
+    if dataset_version == 'brats2017':
+        # BRATS2017/Brats17TrainingData → HGG/LGG → Brats17_2013_2_1, Brats17_CBICA_AAB_1
+        brats_dir = os.path.join(data_dir, 'BRATS2017', 'Brats17TrainingData')
+        hgg_dir = os.path.join(brats_dir, 'HGG')
+        lgg_dir = os.path.join(brats_dir, 'LGG')
     elif dataset_version == 'brats2018':
+        # BRATS2018/MICCAI_BraTS_2018_Data_Training → HGG/LGG → Brats18_2013_2_1, Brats18_CBICA_AAB_1
         brats_dir = os.path.join(data_dir, 'BRATS2018', 'MICCAI_BraTS_2018_Data_Training')
         hgg_dir = os.path.join(brats_dir, 'HGG')
         lgg_dir = os.path.join(brats_dir, 'LGG')
+    elif dataset_version == 'brats2019':
+        # BRATS2019/MICCAI_BraTS_2019_Data_Training → HGG/LGG → Brats19_2013_2_1, Brats19_CBICA_AAB_1
+        # (루트 경로명이 명시되지 않았지만 일반적인 패턴으로 추정)
+        brats_dir = os.path.join(data_dir, 'BRATS2019', 'MICCAI_BraTS_2019_Data_Training')
+        hgg_dir = os.path.join(brats_dir, 'HGG')
+        lgg_dir = os.path.join(brats_dir, 'LGG')
+    elif dataset_version == 'brats2020':
+        # BRATS2020/MICCAI_BraTS2020_TrainingData → BraTS20_Training_001 (HGG/LGG 없음)
+        brats_dir = os.path.join(data_dir, 'BRATS2020', 'MICCAI_BraTS2020_TrainingData')
+    elif dataset_version == 'brats2021':
+        # BRATS2021/BraTS2021_Training_Data → BraTS2021_00000 (HGG/LGG 없음)
+        brats_dir = os.path.join(data_dir, 'BRATS2021', 'BraTS2021_Training_Data')
+    elif dataset_version == 'brats2023':
+        # BRATS2023/ASNR-MICCAI-BraTS2023-GLI-Challenge-TrainingData → BraTS-GLI-00000-000 (HGG/LGG 없음)
+        brats_dir = os.path.join(data_dir, 'BRATS2023', 'ASNR-MICCAI-BraTS2023-GLI-Challenge-TrainingData')
     elif dataset_version == 'brats2024':
         # BRATS2024:
         #   /home/work/3D_/BT/BRATS2024/training_data1_v2
@@ -275,7 +305,17 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
         raise ValueError(f"Unknown dataset_version: {dataset_version}")
     
     # 데이터셋 존재 여부 확인
-    if dataset_version in ('brats2021', 'brats2018'):
+    if dataset_version in ('brats2017', 'brats2018', 'brats2019'):
+        # HGG/LGG 구조를 가진 버전들
+        if not os.path.exists(brats_dir):
+            raise FileNotFoundError(f"Dataset not found at {brats_dir}")
+        if not os.path.exists(hgg_dir) and not os.path.exists(lgg_dir):
+            raise FileNotFoundError(
+                f"Neither HGG nor LGG directory found in {brats_dir}\n"
+                f"Expected: {hgg_dir} or {lgg_dir}"
+            )
+    elif dataset_version in ('brats2020', 'brats2021', 'brats2023'):
+        # 단일 디렉토리 구조를 가진 버전들
         if not os.path.exists(brats_dir):
             raise FileNotFoundError(f"Dataset not found at {brats_dir}")
     elif dataset_version == 'brats2024':
@@ -292,12 +332,8 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
     
     # 환자 디렉토리 수집
     patient_dirs = []
-    if dataset_version == 'brats2021':
-        for patient_dir in sorted(os.listdir(brats_dir)):
-            patient_path = os.path.join(brats_dir, patient_dir)
-            if os.path.isdir(patient_path):
-                patient_dirs.append(patient_path)
-    elif dataset_version == 'brats2018':
+    if dataset_version in ('brats2017', 'brats2018', 'brats2019'):
+        # HGG/LGG 구조를 가진 버전들
         if os.path.exists(hgg_dir):
             for patient_dir in sorted(os.listdir(hgg_dir)):
                 patient_path = os.path.join(hgg_dir, patient_dir)
@@ -308,6 +344,12 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
                 patient_path = os.path.join(lgg_dir, patient_dir)
                 if os.path.isdir(patient_path):
                     patient_dirs.append(patient_path)
+    elif dataset_version in ('brats2020', 'brats2021', 'brats2023'):
+        # 단일 디렉토리 구조를 가진 버전들
+        for patient_dir in sorted(os.listdir(brats_dir)):
+            patient_path = os.path.join(brats_dir, patient_dir)
+            if os.path.isdir(patient_path):
+                patient_dirs.append(patient_path)
     elif dataset_version == 'brats2024':
         # 두 개의 학습 디렉토리에서 환자 디렉토리를 모두 수집하여 단일 리스트로 통합
         for root_dir in [train_dir1, train_dir2]:
@@ -360,9 +402,13 @@ def main():
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Data root directory')
     parser.add_argument('--dataset_version', type=str, default='brats2021',
-                        choices=['brats2021', 'brats2018', 'brats2024'],
-                        help='Dataset version (brats2024: uses BRATS2024/training_data1_v2 and training_data_additional, '
-                             'outputs to /home/work/3D_/processed_data/BRATS2024 by default)')
+                        choices=['brats2017', 'brats2018', 'brats2019', 'brats2020', 'brats2021', 'brats2023', 'brats2024'],
+                        help='Dataset version. '
+                             'brats2017-2019: HGG/LGG structure. '
+                             'brats2020-2021: single directory. '
+                             'brats2023: single directory. '
+                             'brats2024: uses BRATS2024/training_data1_v2 and training_data_additional, '
+                             'outputs to /home/work/3D_/processed_data/BRATS2024 by default')
     parser.add_argument('--use_4modalities', action='store_true',
                         help='(Deprecated) H5 files are always saved with 4 modalities (T1, T1CE, T2, FLAIR). This flag is ignored but kept for backward compatibility.')
     parser.add_argument('--output_dir', type=str, default=None,
