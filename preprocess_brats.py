@@ -148,7 +148,7 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
     
     Args:
         data_dir: 데이터 루트 디렉토리
-        dataset_version: 'brats2021' 또는 'brats2018'
+        dataset_version: 'brats2021', 'brats2018' 또는 'brats2024'
         use_4modalities: 무시됨 (하위 호환성을 위해 유지). H5 파일은 항상 4개 모달리티로 저장됩니다.
         output_dir: 저장할 디렉토리 (None이면 기본 전처리 디렉토리 사용)
         skip_existing: 이미 전처리된 파일 스킵 여부
@@ -156,18 +156,28 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
     Note:
         - H5 파일은 항상 4개 모달리티 (T1, T1CE, T2, FLAIR)로 저장됩니다.
         - 실험 시 필요한 모달리티만 선택적으로 로드할 수 있습니다 (use_4modalities 파라미터 사용).
-        - output_dir이 None이면 기본적으로 프로젝트 루트의 data/ 디렉토리에 저장합니다.
-        - 예: /home/work/3D_/jaewon/project/3d-segmentation/data/BRATS2021_preprocessed/
+        - dataset_version에 따라 기본 output_dir이 달라집니다.
+          * brats2021, brats2018: 프로젝트 루트의 data/ 디렉토리 하위에 저장
+          * brats2024: /home/work/3D_/processed_data/BRATS2024 하위에 단일 폴더로 저장 (요청에 따른 고정 경로)
     """
     # 기본 전처리 디렉토리 설정 (output_dir이 None인 경우)
     if output_dir is None:
-        project_root = get_project_root()
-        data_dir_path = project_root / 'data'
-        if dataset_version == 'brats2021':
-            output_dir = data_dir_path / 'BRATS2021_preprocessed'
-        elif dataset_version == 'brats2018':
-            output_dir = data_dir_path / 'BRATS2018_preprocessed'
-        output_dir = str(output_dir)
+        if dataset_version in ('brats2021', 'brats2018'):
+            # 기존 브라츠 버전: 프로젝트 루트의 data/ 디렉토리 하위에 저장
+            project_root = get_project_root()
+            data_dir_path = project_root / 'data'
+            if dataset_version == 'brats2021':
+                output_dir = data_dir_path / 'BRATS2021_preprocessed'
+            elif dataset_version == 'brats2018':
+                output_dir = data_dir_path / 'BRATS2018_preprocessed'
+            output_dir = str(output_dir)
+        elif dataset_version == 'brats2024':
+            # 요청: BRATS2024는 /home/work/3D_/processed_data/BRATS2024/ 하위에 단일 폴더로 저장
+            processed_root = Path("/home/work/3D_/processed_data")
+            output_dir = processed_root / "BRATS2024"
+            output_dir = str(output_dir)
+        else:
+            raise ValueError(f"Unknown dataset_version: {dataset_version}")
         os.makedirs(output_dir, exist_ok=True)
     # 데이터셋 경로 설정
     if dataset_version == 'brats2021':
@@ -176,6 +186,14 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
         brats_dir = os.path.join(data_dir, 'BRATS2018', 'MICCAI_BraTS_2018_Data_Training')
         hgg_dir = os.path.join(brats_dir, 'HGG')
         lgg_dir = os.path.join(brats_dir, 'LGG')
+    elif dataset_version == 'brats2024':
+        # BRATS2024:
+        #   /home/work/3D_/BT/BRATS2024/training_data1_v2
+        #   /home/work/3D_/BT/BRATS2024/training_data_additional
+        brats2024_root = os.path.join(data_dir, 'BRATS2024')
+        train_dir1 = os.path.join(brats2024_root, 'training_data1_v2')
+        train_dir2 = os.path.join(brats2024_root, 'training_data_additional')
+        # existence check는 아래에서 patient_dirs 수집 시 함께 수행
     else:
         raise ValueError(f"Unknown dataset_version: {dataset_version}")
     
@@ -189,7 +207,7 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
             patient_path = os.path.join(brats_dir, patient_dir)
             if os.path.isdir(patient_path):
                 patient_dirs.append(patient_path)
-    else:  # brats2018
+    elif dataset_version == 'brats2018':
         if os.path.exists(hgg_dir):
             for patient_dir in sorted(os.listdir(hgg_dir)):
                 patient_path = os.path.join(hgg_dir, patient_dir)
@@ -198,6 +216,15 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
         if os.path.exists(lgg_dir):
             for patient_dir in sorted(os.listdir(lgg_dir)):
                 patient_path = os.path.join(lgg_dir, patient_dir)
+                if os.path.isdir(patient_path):
+                    patient_dirs.append(patient_path)
+    elif dataset_version == 'brats2024':
+        # 두 개의 학습 디렉토리에서 환자 디렉토리를 모두 수집하여 단일 리스트로 통합
+        for root_dir in [train_dir1, train_dir2]:
+            if not os.path.exists(root_dir):
+                raise FileNotFoundError(f"BRATS2024 train directory not found: {root_dir}")
+            for patient_dir in sorted(os.listdir(root_dir)):
+                patient_path = os.path.join(root_dir, patient_dir)
                 if os.path.isdir(patient_path):
                     patient_dirs.append(patient_path)
     
@@ -243,8 +270,9 @@ def main():
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Data root directory')
     parser.add_argument('--dataset_version', type=str, default='brats2021',
-                        choices=['brats2021', 'brats2018'],
-                        help='Dataset version')
+                        choices=['brats2021', 'brats2018', 'brats2024'],
+                        help='Dataset version (brats2024: uses BRATS2024/training_data1_v2 and training_data_additional, '
+                             'outputs to /home/work/3D_/processed_data/BRATS2024 by default)')
     parser.add_argument('--use_4modalities', action='store_true',
                         help='(Deprecated) H5 files are always saved with 4 modalities (T1, T1CE, T2, FLAIR). This flag is ignored but kept for backward compatibility.')
     parser.add_argument('--output_dir', type=str, default=None,
