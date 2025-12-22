@@ -83,23 +83,100 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
     try:
         # 파일 이름 찾기
         files = os.listdir(patient_dir)
-        t1ce_file = [f for f in files if 't1ce' in f.lower()][0]
-        flair_file = [f for f in files if 'flair.nii' in f.lower()][0]
-        seg_file = [f for f in files if 'seg' in f.lower()][0]
-        
+        files_lower = [f.lower() for f in files]
+
+        # 1) BRATS2024 전용 패턴 먼저 시도
+        # 예) BraTS-GLI-00005-100-t1n.nii.gz, -t1c.nii.gz, -t2f.nii.gz, -t2w.nii.gz, -seg.nii.gz
+        def _find_exact_suffix(suffix: str):
+            for f in files:
+                if f.endswith(suffix):
+                    return f
+            return None
+
+        t1_file = _find_exact_suffix("-t1n.nii.gz")
+        t1ce_file = _find_exact_suffix("-t1c.nii.gz")
+        flair_file = _find_exact_suffix("-t2f.nii.gz")  # FLAIR
+        t2_file = _find_exact_suffix("-t2w.nii.gz")     # T2-weighted
+        seg_file = _find_exact_suffix("-seg.nii.gz")
+
+        if any(f is not None for f in [t1_file, t1ce_file, flair_file, t2_file, seg_file]):
+            # BRATS2024 패턴으로 인식된 경우: 이 매핑을 우선 사용
+            missing = []
+            if t1_file is None:
+                missing.append("T1(-t1n.nii.gz)")
+            if t1ce_file is None:
+                missing.append("T1CE(-t1c.nii.gz)")
+            if t2_file is None:
+                missing.append("T2(-t2w.nii.gz)")
+            if flair_file is None:
+                missing.append("FLAIR(-t2f.nii.gz)")
+            if seg_file is None:
+                missing.append("SEG(-seg.nii.gz)")
+
+            if missing:
+                print(
+                    f"[WARN] Skipping {patient_dir}: missing BRATS2024-style modalities {missing}. "
+                    f"Files in dir: {files}"
+                )
+                return False
+        else:
+            # 2) BRATS2021/2018 및 기타 일반 패턴 (기존 로직을 보다 안전하게)
+            def _find_first_file(contains_list, exclude_list=None):
+                """
+                주어진 키워드를 포함하고(복수 가능), 제외 키워드는 포함하지 않는
+                첫 번째 NIfTI 파일(.nii 또는 .nii.gz)을 찾는다.
+                """
+                if exclude_list is None:
+                    exclude_list = []
+                candidates = []
+                for orig, low in zip(files, files_lower):
+                    if not (low.endswith(".nii") or low.endswith(".nii.gz")):
+                        continue
+                    if all(c in low for c in contains_list) and not any(ex in low for ex in exclude_list):
+                        candidates.append(orig)
+                return candidates[0] if candidates else None
+
+            # - T1CE: "t1ce" 또는 "t1c"
+            # - FLAIR: "flair"
+            # - T1: "t1" 이면서 "t1ce"/"t1c" 는 제외
+            # - T2: "t2"
+            # - seg: "seg" 또는 "segmentation"
+            t1ce_file = _find_first_file(["t1ce"], []) or _find_first_file(["t1c"], [])
+            flair_file = _find_first_file(["flair"], [])
+            seg_file = _find_first_file(["seg"], []) or _find_first_file(["segmentation"], [])
+            t1_file = _find_first_file(["t1"], ["t1ce", "t1c"])
+            t2_file = _find_first_file(["t2"], [])
+
+            missing = []
+            if t1_file is None:
+                missing.append("T1")
+            if t1ce_file is None:
+                missing.append("T1CE")
+            if t2_file is None:
+                missing.append("T2")
+            if flair_file is None:
+                missing.append("FLAIR")
+            if seg_file is None:
+                missing.append("SEG")
+
+            if missing:
+                print(
+                    f"[WARN] Skipping {patient_dir}: missing modalities {missing}. "
+                    f"Files in dir: {files}"
+                )
+                return False
+
         # NIfTI 파일 로드
         t1ce = nib.load(os.path.join(patient_dir, t1ce_file)).get_fdata()
         flair = nib.load(os.path.join(patient_dir, flair_file)).get_fdata()
         seg = nib.load(os.path.join(patient_dir, seg_file)).get_fdata()
-        
+
         # 정규화
         t1ce = _normalize_volume_np(t1ce)
         flair = _normalize_volume_np(flair)
-        
+
         # H5 파일은 항상 4개 모달리티로 저장 (T1, T1CE, T2, FLAIR)
         # 실험 시 필요한 모달리티만 선택적으로 로드 가능
-        t1_file = [f for f in files if 't1.nii' in f.lower() and 't1ce' not in f.lower()][0]
-        t2_file = [f for f in files if 't2.nii' in f.lower()][0]
         t1 = nib.load(os.path.join(patient_dir, t1_file)).get_fdata()
         t2 = nib.load(os.path.join(patient_dir, t2_file)).get_fdata()
         t1 = _normalize_volume_np(t1)
