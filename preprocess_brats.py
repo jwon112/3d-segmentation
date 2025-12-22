@@ -6,12 +6,13 @@ BraTS 데이터 전처리 스크립트
 이렇게 하면 학습 시 로딩 속도가 7-10배 빨라집니다.
 
 Usage:
-    python preprocess_brats.py --data_dir /path/to/data --dataset_version brats2021
-    python preprocess_brats.py --data_dir /path/to/data --dataset_version brats2018 --use_4modalities
-    python preprocess_brats.py --data_dir /path/to/data --dataset_version brats2017
-    python preprocess_brats.py --data_dir /path/to/data --dataset_version brats2019
-    python preprocess_brats.py --data_dir /path/to/data --dataset_version brats2020
-    python preprocess_brats.py --data_dir /path/to/data --dataset_version brats2023
+    python preprocess_brats.py --data_dir /home/work/3D_/BT --dataset_version brats2017
+    python preprocess_brats.py --data_dir /home/work/3D_/BT --dataset_version brats2018
+    python preprocess_brats.py --data_dir /home/work/3D_/BT --dataset_version brats2019
+    python preprocess_brats.py --data_dir /home/work/3D_/BT --dataset_version brats2020
+    python preprocess_brats.py --data_dir /home/work/3D_/BT --dataset_version brats2021
+    python preprocess_brats.py --data_dir /home/work/3D_/BT --dataset_version brats2023
+    python preprocess_brats.py --data_dir /home/work/3D_/BT --dataset_version brats2024
 """
 
 import os
@@ -400,7 +401,7 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
 def main():
     parser = argparse.ArgumentParser(description='Preprocess BraTS dataset')
     parser.add_argument('--data_dir', type=str, required=True,
-                        help='Data root directory')
+                        help='Data root directory (e.g., /home/work/3D_/BT). Should contain BRATS2017, BRATS2018, etc. subdirectories')
     parser.add_argument('--dataset_version', type=str, default='brats2021',
                         choices=['brats2017', 'brats2018', 'brats2019', 'brats2020', 'brats2021', 'brats2023', 'brats2024'],
                         help='Dataset version. '
