@@ -51,8 +51,9 @@ if __name__ == "__main__":
                        help='Use standard combined loss (Dice 50%% + CE 50%%) instead of nnU-Net style')
     parser.add_argument('--num_workers', type=int, default=8,
                        help='Number of DataLoader workers for training (val/test use 0 by default). Default: 2 for 2GB /dev/shm')
-    parser.add_argument('--dataset_version', type=str, default='brats2018', choices=['brats2021', 'brats2018'],
-                       help='Dataset version: brats2021 or brats2018 (default: brats2018)')
+    parser.add_argument('--dataset_version', type=str, default='brats2018',
+                       choices=['brats2017', 'brats2018', 'brats2019', 'brats2020', 'brats2021', 'brats2023', 'brats2024'],
+                       help='Dataset version (default: brats2018)')
     parser.add_argument('--sharing_strategy', type=str, default='file_descriptor', choices=['file_system', 'file_descriptor'],
                        help='PyTorch tensor sharing strategy for DataLoader workers. file_system avoids /dev/shm pressure.')
     parser.add_argument('--use_5fold', action='store_true', default=False,
@@ -85,7 +86,7 @@ if __name__ == "__main__":
                        help='Disable coordinate channels (x, y, z) for cascade models. Default: False (coords enabled)')
     parser.add_argument('--use_4modalities', action='store_true', default=False,
                        help='Use 4 modalities (T1, T1CE, T2, FLAIR) instead of 2 (T1CE, FLAIR). Default: False (uses 2 modalities)')
-    parser.add_argument('--preprocessed_base_dir', type=str, default=None,
+    parser.add_argument('--preprocessed_base_dir', type=str, default='/home/work/3D_/processed_data',
                        help='Base directory containing preprocessed H5 files (default: /home/work/3D_/processed_data). If None, uses default project data/ directory')
     
     args = parser.parse_args()
@@ -113,9 +114,7 @@ if __name__ == "__main__":
     # --use_standard_loss가 True이면 nnU-Net loss 비활성화
     use_nnunet_loss = args.use_nnunet_loss and not args.use_standard_loss
     
-    # 기본 전처리 디렉토리 설정
-    if args.preprocessed_base_dir is None:
-        args.preprocessed_base_dir = "/home/work/3D_/processed_data"
+    # 기본 전처리 디렉토리 설정 (이미 argparse default로 설정되어 있음)
     
     print("Starting 3D Segmentation Integrated Experiment System")
     print(f"Data path: {args.data_path}")

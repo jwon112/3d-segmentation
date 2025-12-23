@@ -74,16 +74,37 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         print(f"\nUsing device: {device}")
     
     # 데이터셋 경로 확인 (dataset_version에 따라)
-    if dataset_version == 'brats2021':
-        dataset_dir = os.path.join(data_path, 'BRATS2021', 'BraTS2021_Training_Data')
+    # 5-fold 모드이거나 전처리된 데이터를 사용하는 경우 dataset_dir 체크를 건너뛰어도 됨
+    # (전처리된 데이터가 있으면 원본 디렉토리가 없어도 됨)
+    dataset_dir = None
+    if dataset_version == 'brats2017':
+        dataset_dir = os.path.join(data_path, 'BRATS2017', 'Brats17TrainingData')
     elif dataset_version == 'brats2018':
         dataset_dir = os.path.join(data_path, 'BRATS2018', 'MICCAI_BraTS_2018_Data_Training')
+    elif dataset_version == 'brats2019':
+        dataset_dir = os.path.join(data_path, 'BRATS2019')
+    elif dataset_version == 'brats2020':
+        dataset_dir = os.path.join(data_path, 'BRATS2020', 'MICCAI_BraTS2020_TrainingData')
+    elif dataset_version == 'brats2021':
+        dataset_dir = os.path.join(data_path, 'BRATS2021', 'BraTS2021_Training_Data')
+    elif dataset_version == 'brats2023':
+        dataset_dir = os.path.join(data_path, 'BRATS2023', 'ASNR-MICCAI-BraTS2023-GLI-Challenge-TrainingData')
+    elif dataset_version == 'brats2024':
+        # BRATS2024는 두 개의 학습 디렉토리를 사용
+        dataset_dir = os.path.join(data_path, 'BRATS2024')
     else:
         raise ValueError(f"Unknown dataset_version: {dataset_version}")
     
-    if not os.path.exists(dataset_dir):
-        print(f"Warning: Dataset {dataset_version} not found at {dataset_dir}. Skipping...")
-        return None, pd.DataFrame()
+    # 전처리된 데이터가 있으면 원본 디렉토리 체크를 건너뛸 수 있음
+    # 하지만 경고는 출력
+    if dataset_dir and not os.path.exists(dataset_dir):
+        if is_main_process(rank):
+            print(f"Warning: Dataset {dataset_version} not found at {dataset_dir}")
+            if preprocessed_dir:
+                print(f"Using preprocessed data from: {preprocessed_dir}")
+            else:
+                print(f"Skipping...")
+                return None, pd.DataFrame()
     
     # 전처리된 데이터 디렉토리 설정
     preprocessed_dir = None
