@@ -85,6 +85,8 @@ if __name__ == "__main__":
                        help='Disable coordinate channels (x, y, z) for cascade models. Default: False (coords enabled)')
     parser.add_argument('--use_4modalities', action='store_true', default=False,
                        help='Use 4 modalities (T1, T1CE, T2, FLAIR) instead of 2 (T1CE, FLAIR). Default: False (uses 2 modalities)')
+    parser.add_argument('--preprocessed_base_dir', type=str, default=None,
+                       help='Base directory containing preprocessed H5 files (default: /home/work/3D_/processed_data). If None, uses default project data/ directory')
     
     args = parser.parse_args()
     
@@ -111,8 +113,13 @@ if __name__ == "__main__":
     # --use_standard_loss가 True이면 nnU-Net loss 비활성화
     use_nnunet_loss = args.use_nnunet_loss and not args.use_standard_loss
     
+    # 기본 전처리 디렉토리 설정
+    if args.preprocessed_base_dir is None:
+        args.preprocessed_base_dir = "/home/work/3D_/processed_data"
+    
     print("Starting 3D Segmentation Integrated Experiment System")
     print(f"Data path: {args.data_path}")
+    print(f"Preprocessed base dir: {args.preprocessed_base_dir}")
     print(f"Epochs: {args.epochs}")
     print(f"Batch size: {args.batch_size}")
     print(f"Seeds: {args.seeds}")
@@ -176,6 +183,7 @@ if __name__ == "__main__":
             train_crop_overlap=args.train_crop_overlap,
             include_coords=not args.no_coords,
             use_4modalities=args.use_4modalities,
+            preprocessed_base_dir=args.preprocessed_base_dir,
         )
         
         if results_dir and results_df is not None:

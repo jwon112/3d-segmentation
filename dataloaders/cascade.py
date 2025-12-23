@@ -532,6 +532,7 @@ def get_cascade_data_loaders(
     train_crops_per_center: int = 1,
     train_crop_overlap: float = 0.5,
     use_4modalities: bool = False,
+    preprocessed_dir: Optional[str] = None,
 ):
     """ROI detection + cascade segmentation loaders with CoordConv support.
     
@@ -551,6 +552,7 @@ def get_cascade_data_loaders(
         fold_split_dir=fold_split_dir,
         use_4modalities=use_4modalities,
         max_cache_size=0,  # 캐싱 비활성화: 순수 I/O 성능 측정
+        preprocessed_dir=preprocessed_dir,
     )
 
     train_base_dataset = train_base.dataset if hasattr(train_base, 'dataset') else train_base

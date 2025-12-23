@@ -30,7 +30,7 @@ from utils.runner.evaluation import evaluate_model
 from utils.runner.cascade_evaluation import load_roi_model_from_checkpoint, evaluate_segmentation_with_roi
 
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, cascade_infer_cfg=None, cascade_model_cfg=None, train_crops_per_center=1, train_crop_overlap=0.5, anisotropy_augment: bool = False, include_coords: bool = True, use_4modalities: bool = False):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, cascade_infer_cfg=None, cascade_model_cfg=None, train_crops_per_center=1, train_crop_overlap=0.5, anisotropy_augment: bool = False, include_coords: bool = True, use_4modalities: bool = False, preprocessed_base_dir=None):
     """3D Segmentation 통합 실험 실행
     
     Args:
@@ -85,6 +85,23 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         print(f"Warning: Dataset {dataset_version} not found at {dataset_dir}. Skipping...")
         return None, pd.DataFrame()
     
+    # 전처리된 데이터 디렉토리 설정
+    preprocessed_dir = None
+    if preprocessed_base_dir:
+        from pathlib import Path
+        preprocessed_base = Path(preprocessed_base_dir)
+        # dataset_version에 따라 적절한 디렉토리 경로 생성
+        version_upper = dataset_version.upper()
+        preprocessed_dir_path = preprocessed_base / version_upper
+        if preprocessed_dir_path.exists():
+            preprocessed_dir = str(preprocessed_dir_path)
+            if is_main_process(rank):
+                print(f"Using preprocessed data from: {preprocessed_dir}")
+        else:
+            if is_main_process(rank):
+                print(f"Warning: Preprocessed directory not found: {preprocessed_dir_path}")
+                print(f"Falling back to default preprocessed directory or original NIfTI files")
+    
     print(f"\n{'#'*80}")
     print(f"Dataset Version: {dataset_version.upper()}")
     print(f"{'#'*80}")
@@ -97,8 +114,28 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         print(f"{'='*60}")
         # Fold별 디렉토리 경로 설정
         from pathlib import Path
-        project_root = Path(__file__).parent.parent.parent.absolute()
-        fold_split_dir = str(project_root / 'data' / f'{dataset_version.upper()}_5fold_splits')
+        
+        # 1. preprocessed_base_dir이 있으면 그 하위에서 찾기
+        if preprocessed_base_dir:
+            preprocessed_base = Path(preprocessed_base_dir)
+            # 단일 버전: BRATS2024_5fold_splits
+            # 다중 버전: COMBINED_BRATS2017_BRATS2018_..._5fold_splits
+            version_upper = dataset_version.upper()
+            fold_split_dir_candidate = preprocessed_base / f'{version_upper}_5fold_splits'
+            
+            # 단일 버전 경로가 없으면 COMBINED 경로도 확인 (다중 버전일 수 있음)
+            if not fold_split_dir_candidate.exists():
+                # COMBINED_로 시작하는 디렉토리 찾기
+                combined_dirs = list(preprocessed_base.glob('COMBINED_*_5fold_splits'))
+                if combined_dirs:
+                    fold_split_dir_candidate = combined_dirs[0]  # 첫 번째 것 사용
+            
+            fold_split_dir = str(fold_split_dir_candidate) if fold_split_dir_candidate.exists() else None
+        else:
+            # 2. 기본값: 프로젝트 루트의 data/ 디렉토리
+            project_root = Path(__file__).parent.parent.parent.absolute()
+            fold_split_dir = str(project_root / 'data' / f'{dataset_version.upper()}_5fold_splits')
+        
         if not os.path.exists(fold_split_dir):
             if is_main_process(rank):
                 print(f"Warning: Fold split directory not found: {fold_split_dir}")
@@ -180,6 +217,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             train_crop_overlap=train_crop_overlap,
                             anisotropy_augment=anisotropy_augment,
                             include_coords=include_coords,
+                            preprocessed_dir=preprocessed_dir,  # 전처리된 데이터 디렉토리
                         )
                     except Exception as e:
                         if is_main_process(rank):

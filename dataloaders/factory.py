@@ -41,6 +41,7 @@ def get_data_loaders(
     train_crop_overlap: float = 0.5,
     anisotropy_augment: bool = False,
     include_coords: bool = True,
+    preprocessed_dir: Optional[str] = None,
 ):
     """공통 get_data_loaders 진입점 (기존 data_loader.get_data_loaders와 동일 인터페이스).
     
@@ -72,6 +73,7 @@ def get_data_loaders(
             train_crops_per_center=train_crops_per_center,
             train_crop_overlap=train_crop_overlap,
             use_4modalities=use_4modalities,  # 모달리티 선택 가능
+            preprocessed_dir=preprocessed_dir,
         )
         # Segmentation 데이터로더만 반환 (일반 get_data_loaders와 동일한 형식)
         seg_loaders = cascade_loaders['seg']
@@ -104,6 +106,7 @@ def get_data_loaders(
                 dataset_version=dataset_version,
                 use_4modalities=use_4modalities,
                 max_cache_size=0,
+                preprocessed_dir=preprocessed_dir,
                 fold_split_dir=fold_split_dir,
                 fold_idx=fold_idx,
             )
@@ -114,6 +117,7 @@ def get_data_loaders(
                 dataset_version=dataset_version,
                 use_4modalities=use_4modalities,
                 max_cache_size=0,
+                preprocessed_dir=preprocessed_dir,
                 fold_split_dir=fold_split_dir,
                 fold_idx=fold_idx,
             )
@@ -124,6 +128,7 @@ def get_data_loaders(
                 dataset_version=dataset_version,
                 use_4modalities=use_4modalities,
                 max_cache_size=0,
+                preprocessed_dir=preprocessed_dir,
                 fold_split_dir=fold_split_dir,
                 fold_idx=fold_idx,
             )
@@ -142,6 +147,7 @@ def get_data_loaders(
                 dataset_version=dataset_version,
                 use_4modalities=use_4modalities,
                 max_cache_size=0,  # 캐싱 비활성화: 순수 I/O 성능 측정
+                preprocessed_dir=preprocessed_dir,
             )
 
         train_dataset, val_dataset, test_dataset = split_brats_dataset(
