@@ -280,9 +280,9 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
         hgg_dir = os.path.join(brats_dir, 'HGG')
         lgg_dir = os.path.join(brats_dir, 'LGG')
     elif dataset_version == 'brats2019':
-        # BRATS2019/MICCAI_BraTS_2019_Data_Training → HGG/LGG → Brats19_2013_2_1, Brats19_CBICA_AAB_1
-        # (루트 경로명이 명시되지 않았지만 일반적인 패턴으로 추정)
-        brats_dir = os.path.join(data_dir, 'BRATS2019', 'MICCAI_BraTS_2019_Data_Training')
+        # BRATS2019 → HGG/LGG → Brats19_2013_2_1, Brats19_CBICA_AAB_1
+        # BRATS2019는 중간 디렉토리 없이 바로 HGG/LGG가 있는 구조
+        brats_dir = os.path.join(data_dir, 'BRATS2019')
         hgg_dir = os.path.join(brats_dir, 'HGG')
         lgg_dir = os.path.join(brats_dir, 'LGG')
     elif dataset_version == 'brats2020':
