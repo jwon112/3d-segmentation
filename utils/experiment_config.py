@@ -70,6 +70,7 @@ FIXED_NAME_MODELS = [
     'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d',
     'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s',
     'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s',
+    'segformer3d',
 ]
 
 # 4개 모달리티를 사용하는 모델들

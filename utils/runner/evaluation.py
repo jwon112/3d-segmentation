@@ -115,7 +115,12 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     with torch.no_grad():
         seg_cmap = ListedColormap(['black', '#ff0000', '#00ff00', '#0000ff'])
         cm_accum = np.zeros((4, 4), dtype=np.int64)
-        for inputs, labels in test_loader:
+        for batch_data in test_loader:
+            # 포그라운드 좌표가 포함될 수 있으므로 처리
+            if len(batch_data) == 3:
+                inputs, labels, _ = batch_data  # fg_coords_dict 무시
+            else:
+                inputs, labels = batch_data
             inputs, labels = inputs.to(device), labels.to(device)
             
             # 2D/3D 분기: 2D 모델은 그대로, 3D 모델은 depth 차원 추가

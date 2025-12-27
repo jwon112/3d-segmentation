@@ -117,7 +117,12 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         model.train()  # train 모드로 설정 (running stats 업데이트됨)
         warmup_batches = 20
         with torch.no_grad():  # gradient 계산 불필요, 메모리 절약
-            for i, (inputs, labels) in enumerate(train_loader):
+            for i, batch_data in enumerate(train_loader):
+                # 포그라운드 좌표가 포함될 수 있으므로 처리
+                if len(batch_data) == 3:
+                    inputs, labels, _ = batch_data  # fg_coords_dict 무시
+                else:
+                    inputs, labels = batch_data
                 if i >= warmup_batches:
                     break
                 
@@ -255,7 +260,12 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         with torch.no_grad():
             debug_printed = False
             all_sample_dices = []  # 디버깅: 모든 샘플의 Dice 수집
-            for idx, (inputs, labels) in enumerate(tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False)):
+            for idx, batch_data in enumerate(tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False)):
+                # 포그라운드 좌표가 포함될 수 있으므로 처리
+                if len(batch_data) == 3:
+                    inputs, labels, _ = batch_data  # fg_coords_dict 무시
+                else:
+                    inputs, labels = batch_data
                 inputs, labels = inputs.to(device), labels.to(device)
 
                 # MobileUNETR 2D는 2D 입력을 그대로 사용
