@@ -73,9 +73,28 @@ class BratsDataset3D(Dataset):
         # 2. 환경변수로 지정된 경우
         # 3. 기본값: 프로젝트 루트의 data/ 디렉토리
         if preprocessed_dir:
-            self.preprocessed_dir = preprocessed_dir
+            # preprocessed_dir이 기본 경로(/home/work/3D_/processed_data)인 경우 버전별 서브디렉토리 추가
+            if preprocessed_dir == '/home/work/3D_/processed_data' or preprocessed_dir.endswith('/processed_data'):
+                # 버전별 서브디렉토리 추가
+                version_subdir = os.path.join(preprocessed_dir, dataset_version.upper())
+                if os.path.exists(version_subdir):
+                    self.preprocessed_dir = version_subdir
+                else:
+                    # 서브디렉토리가 없으면 기본 경로 사용 (5-fold splits 등)
+                    self.preprocessed_dir = preprocessed_dir
+            else:
+                self.preprocessed_dir = preprocessed_dir
         elif os.environ.get('BRATS_PREPROCESSED_DIR'):
-            self.preprocessed_dir = os.environ.get('BRATS_PREPROCESSED_DIR')
+            env_dir = os.environ.get('BRATS_PREPROCESSED_DIR')
+            # 환경변수도 버전별 서브디렉토리 확인
+            if env_dir == '/home/work/3D_/processed_data' or env_dir.endswith('/processed_data'):
+                version_subdir = os.path.join(env_dir, dataset_version.upper())
+                if os.path.exists(version_subdir):
+                    self.preprocessed_dir = version_subdir
+                else:
+                    self.preprocessed_dir = env_dir
+            else:
+                self.preprocessed_dir = env_dir
         else:
             # 기본값: 프로젝트 루트의 data/ 디렉토리
             default_dir = get_default_preprocessed_dir(dataset_version)
