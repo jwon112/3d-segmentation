@@ -14,12 +14,13 @@ from matplotlib.colors import ListedColormap
 
 from utils.experiment_utils import sliding_window_inference_3d
 from metrics import calculate_wt_tc_et_dice, calculate_wt_tc_et_hd95
+from dataloaders import get_coord_map
 from models.modules.se_modules import SEBlock3D
 from models.modules.cbam_modules import CBAM3D, ChannelAttention3D
 
 
 def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model', distributed: bool = False, world_size: int = 1,
-                   sw_patch_size=(128, 128, 128), sw_overlap=0.25, results_dir: str = None):
+                   sw_patch_size=(128, 128, 128), sw_overlap=0.25, results_dir: str = None, coord_type: str = 'none'):
     """모델 평가 함수"""
     model.eval()
     real_model = model.module if hasattr(model, 'module') else model
@@ -142,8 +143,13 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                         if "out of memory" in str(e).lower():
                             if rank0:
                                 print(f"Warning: OOM during CBAM/SE weight collection, using sliding window (weights may not be collected)")
+                            # Cascade 모델인 경우 좌표 추가
+                            if model_name.startswith('cascade_') and coord_type != 'none':
+                                coord_map = get_coord_map(inputs.shape[2:], device=device, encoding_type=coord_type)
+                                coord_map = coord_map.unsqueeze(0)
+                                inputs = torch.cat([inputs, coord_map], dim=1)
                             logits = sliding_window_inference_3d(
-                                model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
+                                model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
                             )
                         else:
                             raise
@@ -164,14 +170,24 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                             # 메모리 부족 시 슬라이딩 윈도우 사용 (어텐션 수집 불가)
                             if "out of memory" in str(e).lower():
                                 print(f"Warning: OOM during attention collection, using sliding window without attention")
+                                # Cascade 모델인 경우 좌표 추가
+                                if model_name.startswith('cascade_') and coord_type != 'none':
+                                    coord_map = get_coord_map(inputs.shape[2:], device=device, encoding_type=coord_type)
+                                    coord_map = coord_map.unsqueeze(0)
+                                    inputs = torch.cat([inputs, coord_map], dim=1)
                                 logits = sliding_window_inference_3d(
-                                    model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
+                                    model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
                                 )
                             else:
                                 raise
                     else:
+                        # Cascade 모델인 경우 좌표 추가
+                        if model_name.startswith('cascade_') and coord_type != 'none':
+                            coord_map = get_coord_map(inputs.shape[2:], device=device, encoding_type=coord_type)
+                            coord_map = coord_map.unsqueeze(0)
+                            inputs = torch.cat([inputs, coord_map], dim=1)
                         logits = sliding_window_inference_3d(
-                            model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
+                            model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
                         )
                 elif collect_mvit_attention:
                     # MobileViT attention 가중치 수집 (이미 위에서 모듈 존재 및 return_attention 지원 확인됨)
@@ -185,14 +201,25 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                         if "out of memory" in str(e).lower():
                             if rank0:
                                 print(f"Warning: OOM during MobileViT attention collection, using sliding window without attention")
+                            # Cascade 모델인 경우 좌표 추가
+                            if model_name.startswith('cascade_') and coord_type != 'none':
+                                coord_map = get_coord_map(inputs.shape[2:], device=device, encoding_type=coord_type)
+                                coord_map = coord_map.unsqueeze(0)
+                                inputs = torch.cat([inputs, coord_map], dim=1)
                             logits = sliding_window_inference_3d(
-                                model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
+                                model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
                             )
                         else:
                             raise
                 else:
+                    # Cascade 모델인 경우 좌표 추가
+                    if model_name.startswith('cascade_') and coord_type != 'none':
+                        # 전체 볼륨에 좌표 추가
+                        coord_map = get_coord_map(inputs.shape[2:], device=device, encoding_type=coord_type)
+                        coord_map = coord_map.unsqueeze(0)  # (1, C_coord, H, W, D)
+                        inputs = torch.cat([inputs, coord_map], dim=1)  # (1, C+C_coord, H, W, D)
                     logits = sliding_window_inference_3d(
-                        model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
+                        model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
                     )
             else:
                 if collect_attention:

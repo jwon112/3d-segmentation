@@ -102,7 +102,7 @@ def _make_blend_weights_3d(patch_size):
     return w3.view(1, 1, ph, pw, pd)
 
 
-def sliding_window_inference_3d(model, volume, patch_size=(128, 128, 128), overlap=0.5, device='cuda', model_name='mobile_unetr_3d'):
+def sliding_window_inference_3d(model, volume, patch_size=(128, 128, 128), overlap=0.5, device='cuda', model_name='mobile_unetr_3d', coord_type='none'):
     """Naive sliding-window inference for tensors shaped (1, C, H, W, D).
     Aggregates logits with cosine blending. Returns logits of shape (1, C_out, H, W, D).
     """

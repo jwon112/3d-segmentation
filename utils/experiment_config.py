@@ -75,7 +75,7 @@ FIXED_NAME_MODELS = [
 
 # 4개 모달리티를 사용하는 모델들
 MODELS_WITH_4_MODALITIES = [
-    'unet3d_4modal_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s'
+    'unet3d_4modal_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s',
 ]
 
 
