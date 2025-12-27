@@ -175,7 +175,9 @@ def get_data_loaders(
         )
 
     if dim == '3d':
-        train_base_dataset = train_dataset.dataset if hasattr(train_dataset, 'dataset') else train_dataset
+        # Subset인 경우 원본 전체 데이터셋이 아닌 Subset 자체를 사용해야 함
+        # train_dataset.dataset은 원본 전체 데이터셋을 가리키므로 사용하면 안 됨
+        train_base_dataset = train_dataset
         
         # Validation/Test dataset은 전체 볼륨을 로드하므로 캐시를 비활성화하여 메모리 사용량 최소화
         if hasattr(val_dataset, 'dataset'):
