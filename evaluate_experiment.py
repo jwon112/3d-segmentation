@@ -52,6 +52,12 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     preprocessed_dir = None
     if preprocessed_base_dir:
         preprocessed_dir = os.path.join(preprocessed_base_dir, dataset_version.upper())
+        if is_main_process(rank):
+            print(f"[Debug] preprocessed_base_dir: {preprocessed_base_dir}")
+            print(f"[Debug] Using preprocessed directory: {preprocessed_dir}")
+    else:
+        if is_main_process(rank):
+            print(f"[Debug] preprocessed_base_dir is None or empty")
     
     train_loader, val_loader, test_loader, _, _, _ = get_data_loaders(
         data_dir=data_path,
@@ -476,14 +482,15 @@ if __name__ == "__main__":
                        help='Use 5-fold cross-validation mode (default: False)')
     parser.add_argument('--fold_idx', type=int, default=None,
                        help='Specific fold index to evaluate (only used with --use_5fold, default: None for all folds)')
-    parser.add_argument('--preprocessed_base_dir', type=str, default=None,
-                       help='Base directory containing preprocessed H5 files (default: None). If provided, will be used for datasets that require preprocessed data (e.g., brats2024)')
+    parser.add_argument('--preprocessed_base_dir', type=str, default='/home/work/3D_/processed_data',
+                       help='Base directory containing preprocessed H5 files (default: /home/work/3D_/processed_data). If provided, will be used for datasets that require preprocessed data (e.g., brats2024)')
     
     args = parser.parse_args()
     
     print("Starting evaluation of saved checkpoints...")
     print(f"Results directory: {args.results_dir}")
     print(f"Data path: {args.data_path}")
+    print(f"Preprocessed base dir: {args.preprocessed_base_dir}")
     print(f"Models: {args.models if args.models else 'All found checkpoints'}")
     print(f"Seeds: {args.seeds if args.seeds else 'All found seeds'}")
     print(f"Dimension: {args.dim}")
