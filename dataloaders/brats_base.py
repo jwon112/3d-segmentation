@@ -276,15 +276,25 @@ class BratsDataset3D(Dataset):
                 
                 # 모달리티 수 확인 및 선택
                 # H5 파일은 항상 4 modalities (T1, T1CE, T2, FLAIR)로 저장되어 있음
-                if image.shape[0] != 4:
-                    raise ValueError(f"Preprocessed H5 file should have 4 modalities, but got {image.shape[0]}")
-                
-                # use_4modalities에 따라 필요한 모달리티만 선택
-                # H5 파일 순서: [T1, T1CE, T2, FLAIR] = [0, 1, 2, 3]
-                # 2 modalities 사용 시: T1CE (index 1)와 FLAIR (index 3)만 선택
-                if not self.use_4modalities:
-                    # T1CE와 FLAIR만 선택 (indices 1, 3)
-                    image = image[[1, 3], :, :, :]  # (2, H, W, D)
+                actual_modalities = image.shape[0]
+                if actual_modalities != 4:
+                    # 디버깅: 실제 shape 출력
+                    import warnings
+                    warnings.warn(f"H5 file has {actual_modalities} modalities instead of 4. Shape: {image.shape}. File: {preprocessed_path}")
+                    # 4 modalities가 아니어도 계속 진행 (하위 호환성)
+                    # 단, 2 modalities인 경우 그대로 사용
+                    if actual_modalities == 2:
+                        # 이미 2 modalities로 저장된 경우
+                        pass
+                    else:
+                        raise ValueError(f"Preprocessed H5 file should have 4 modalities, but got {actual_modalities}. Shape: {image.shape}")
+                else:
+                    # use_4modalities에 따라 필요한 모달리티만 선택
+                    # H5 파일 순서: [T1, T1CE, T2, FLAIR] = [0, 1, 2, 3]
+                    # 2 modalities 사용 시: T1CE (index 1)와 FLAIR (index 3)만 선택
+                    if not self.use_4modalities:
+                        # T1CE와 FLAIR만 선택 (indices 1, 3)
+                        image = image[[1, 3], :, :, :]  # (2, H, W, D)
                 
                 # 포그라운드 좌표가 있으면 함께 반환
                 if fg_coords_dict:
