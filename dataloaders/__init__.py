@@ -14,6 +14,7 @@ from .brats_base import (
 from .patch_3d import BratsPatchDataset3D
 from .cascade import (
     get_normalized_coord_map,
+    get_coord_map,
     resize_volume,
     crop_volume_with_center,
     paste_patch_to_volume,
@@ -36,6 +37,7 @@ __all__ = [
     "BratsPatchDataset3D",
     # cascade / coordconv
     "get_normalized_coord_map",
+    "get_coord_map",
     "resize_volume",
     "crop_volume_with_center",
     "paste_patch_to_volume",
