@@ -330,6 +330,19 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
                 
                 # Cascade ROI 기반 평가
                 real_model = model.module if hasattr(model, 'module') else model
+                # preprocessed_dir 설정 (brats2024 등 전처리된 데이터 사용 시)
+                cascade_preprocessed_dir = None
+                if preprocessed_base_dir:
+                    if use_5fold:
+                        # 5-fold 모드: fold_split_dir 사용
+                        if fold_idx is not None:
+                            cascade_preprocessed_dir = os.path.join(preprocessed_base_dir, f'{dataset_version.upper()}_5fold_splits', f'fold_{fold_idx}')
+                        else:
+                            cascade_preprocessed_dir = os.path.join(preprocessed_base_dir, f'{dataset_version.upper()}_5fold_splits')
+                    else:
+                        # 일반 모드: 버전별 디렉토리 사용
+                        cascade_preprocessed_dir = os.path.join(preprocessed_base_dir, dataset_version.upper())
+                
                 metrics = evaluate_segmentation_with_roi(
                     seg_model=real_model,
                     roi_model=roi_model,
@@ -347,6 +360,7 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
                     use_blending=True,
                     results_dir=results_dir,
                     model_name=model_name,
+                    preprocessed_dir=cascade_preprocessed_dir,  # 전처리된 데이터 디렉토리
                 )
                 
                 if is_main_process(rank):

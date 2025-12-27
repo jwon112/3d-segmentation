@@ -206,6 +206,7 @@ def evaluate_segmentation_with_roi(
     use_blending=True,
     results_dir=None,
     model_name='model',
+    preprocessed_dir=None,
 ):
     """
     Evaluate trained segmentation model with pre-trained ROI detector.
@@ -225,6 +226,7 @@ def evaluate_segmentation_with_roi(
         use_5fold=use_5fold,
         fold_idx=fold_idx,
         use_4modalities=True,
+        preprocessed_dir=preprocessed_dir,
     )
     seg_model.eval()
     roi_model.eval()

@@ -525,6 +525,16 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                     include_coords=True,  # 기본값만 제공, 실제로는 자동 감지된 값 사용
                                 )
                                 real_model = model.module if hasattr(model, 'module') else model
+                                # preprocessed_dir 설정 (brats2024 등 전처리된 데이터 사용 시)
+                                cascade_preprocessed_dir = None
+                                if preprocessed_base_dir:
+                                    if use_5fold:
+                                        # 5-fold 모드: fold_split_dir 사용
+                                        cascade_preprocessed_dir = fold_split_dir
+                                    else:
+                                        # 일반 모드: 버전별 디렉토리 사용
+                                        cascade_preprocessed_dir = os.path.join(preprocessed_base_dir, dataset_version.upper())
+                                
                                 cascade_metrics = evaluate_segmentation_with_roi(
                                     seg_model=real_model,
                                     roi_model=roi_model,
@@ -542,6 +552,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                     use_blending=use_blending,
                                     results_dir=results_dir,  # MobileViT attention 분석용
                                     model_name=model_name,  # MobileViT attention 분석용
+                                    preprocessed_dir=cascade_preprocessed_dir,  # 전처리된 데이터 디렉토리
                                 )
                                 print(
                                     f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
