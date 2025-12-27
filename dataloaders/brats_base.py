@@ -296,8 +296,8 @@ class BratsDataset3D(Dataset):
                 
                 return result
             except Exception as e:
-                # fold별 디렉토리 모드에서는 H5 파일 로드 실패 시 에러 발생
-                if is_fold_split_mode:
+                # fold별 디렉토리 모드 또는 H5 파일 경로인 경우 H5 파일 로드 실패 시 에러 발생
+                if is_fold_split_mode or is_h5_file_path:
                     raise RuntimeError(
                         f"Failed to load preprocessed H5 file: {preprocessed_path}\n"
                         f"Error: {e}"
@@ -305,19 +305,11 @@ class BratsDataset3D(Dataset):
                 # 일반 모드에서는 원본 로드로 fallback
                 pass
         
-        # fold별 디렉토리 모드에서는 원본 NIfTI 로드 불가 (H5 파일이 필수)
-        if is_fold_split_mode:
+        # fold별 디렉토리 모드 또는 H5 파일 경로인 경우 원본 NIfTI 로드 불가 (H5 파일이 필수)
+        if is_fold_split_mode or is_h5_file_path:
             raise FileNotFoundError(
                 f"Preprocessed H5 file not found or failed to load: {preprocessed_path}\n"
-                f"Fold split mode requires preprocessed H5 files."
-            )
-        
-        # 원본 NIfTI 파일 로드 (fallback 또는 전처리된 데이터가 없는 경우)
-        # H5 파일인 경우 원본 NIfTI 로드 불가
-        if is_h5_file_path:
-            raise FileNotFoundError(
-                f"Cannot load NIfTI from H5 file path: {patient_dir}\n"
-                f"Preprocessed H5 file should have been loaded above."
+                f"This mode requires preprocessed H5 files."
             )
         
         # 캐시 미스: 파일 이름 캐싱 (lazy caching)
