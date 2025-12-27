@@ -453,6 +453,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                     print(f"Warning: Failed to recalculate PAM after deploy: {e}")
 
                     # Test set 평가 (모든 랭크 동일 경로)
+                    # Cascade 모델인 경우 coord_type을 전달 (하지만 cascade 평가는 별도로 수행)
                     metrics = evaluate_model(
                         model,
                         test_loader,
@@ -463,6 +464,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         sw_patch_size=(128, 128, 128),
                         sw_overlap=0.10,
                         results_dir=results_dir,
+                        coord_type=coord_type,  # coord_type 전달 (cascade 모델도 포함)
                     )
 
                     cascade_metrics = None

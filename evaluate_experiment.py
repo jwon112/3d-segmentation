@@ -26,6 +26,7 @@ from utils.experiment_utils import (
     INPUT_SIZE_2D, INPUT_SIZE_3D
 )
 from utils.runner import evaluate_model
+from utils.runner.cascade_evaluation import evaluate_segmentation_with_roi, load_roi_model_from_checkpoint
 from dataloaders import get_data_loaders
 from visualization import create_comprehensive_analysis, create_interactive_3d_plot
 from utils.gradcam_utils import generate_gradcam_for_model
@@ -266,13 +267,128 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
             print(f"PAM (Inference, batch_size=1): {pam_inference_mean / 1024**2:.2f} MB (mean of {len(pam_inference_list)} runs)")
     
     # Test set 평가
-    metrics = evaluate_model(
-        model, test_loader, device, model_name, 
-        distributed=distributed, world_size=world_size,
-        sw_patch_size=(128, 128, 128), sw_overlap=0.10, 
-        results_dir=results_dir,
-        coord_type=coord_type  # 체크포인트에서 감지한 coord_type 전달
-    )
+    # Cascade 모델은 ROI 기반 평가 사용
+    if model_name.startswith('cascade_'):
+        if is_main_process(rank):
+            print(f"\n[Cascade Model] Using ROI-based evaluation for {model_name}")
+        
+        # ROI 모델 경로 찾기 (여러 ROI 모델 이름 시도)
+        # 일반적으로 사용되는 ROI 모델 이름들
+        possible_roi_model_names = ['roi_unet3d_small', 'roi_mobileunetr3d_tiny', 'roi_mobileunetr3d_small']
+        roi_model_name = None
+        roi_weight_path = None
+        
+        # 1. results_dir에서 ROI 모델 체크포인트 찾기
+        for candidate_roi_name in possible_roi_model_names:
+            roi_checkpoint_patterns = [
+                os.path.join(results_dir, f"{candidate_roi_name}_seed_{seed}_best.pth"),
+                os.path.join(results_dir, f"{candidate_roi_name}_seed_{seed}_fold_{fold_idx}_best.pth") if use_5fold and fold_idx is not None else None,
+            ]
+            for pattern in roi_checkpoint_patterns:
+                if pattern and os.path.exists(pattern):
+                    roi_weight_path = pattern
+                    roi_model_name = candidate_roi_name
+                    break
+            if roi_weight_path:
+                break
+        
+        # 2. 기본 경로 시도 (여러 ROI 모델 이름)
+        if not roi_weight_path:
+            for candidate_roi_name in possible_roi_model_names:
+                default_path = f"models/weights/cascade/roi_model/{candidate_roi_name}/seed_{seed}/weights/best.pth"
+                if os.path.exists(default_path):
+                    roi_weight_path = default_path
+                    roi_model_name = candidate_roi_name
+                    break
+        
+        # 기본값 설정 (경로를 찾지 못한 경우)
+        if not roi_model_name:
+            roi_model_name = 'roi_unet3d_small'  # 기본값
+        
+        if roi_weight_path and os.path.exists(roi_weight_path):
+            try:
+                if is_main_process(rank):
+                    print(f"[Cascade] Loading ROI model from {roi_weight_path}")
+                
+                # coord_type에 따라 include_coords 결정
+                include_coords = (coord_type != 'none')
+                
+                roi_model, detected_include_coords = load_roi_model_from_checkpoint(
+                    roi_model_name,
+                    roi_weight_path,
+                    device,
+                    include_coords=include_coords,
+                )
+                
+                # coord_type에 따라 coord_encoding_type 결정
+                if coord_type == 'hybrid':
+                    coord_encoding_type = 'hybrid'
+                elif coord_type == 'simple':
+                    coord_encoding_type = 'simple'
+                else:
+                    coord_encoding_type = 'simple'  # 기본값
+                
+                # Cascade ROI 기반 평가
+                real_model = model.module if hasattr(model, 'module') else model
+                metrics = evaluate_segmentation_with_roi(
+                    seg_model=real_model,
+                    roi_model=roi_model,
+                    data_dir=data_path,
+                    dataset_version=dataset_version,
+                    seed=seed,
+                    roi_resize=(64, 64, 64),
+                    crop_size=(96, 96, 96),
+                    include_coords=include_coords,
+                    coord_encoding_type=coord_encoding_type,
+                    use_5fold=use_5fold,
+                    fold_idx=fold_idx if use_5fold else None,
+                    crops_per_center=1,
+                    crop_overlap=0.5,
+                    use_blending=True,
+                    results_dir=results_dir,
+                    model_name=model_name,
+                )
+                
+                if is_main_process(rank):
+                    print(f"[Cascade] Evaluation completed successfully")
+            except Exception as e:
+                if is_main_process(rank):
+                    print(f"[Cascade] Error during ROI-based evaluation: {e}")
+                    print(f"[Cascade] Falling back to standard evaluation...")
+                    import traceback
+                    traceback.print_exc()
+                # Fallback to standard evaluation
+                metrics = evaluate_model(
+                    model, test_loader, device, model_name, 
+                    distributed=distributed, world_size=world_size,
+                    sw_patch_size=(128, 128, 128), sw_overlap=0.10, 
+                    results_dir=results_dir,
+                    coord_type=coord_type
+                )
+        else:
+            # ROI 모델을 찾지 못한 경우 에러 발생 (fallback 하지 않음)
+            error_msg = f"[Cascade] Error: ROI model not found for cascade model {model_name}.\n"
+            error_msg += f"  Tried paths:\n"
+            for pattern in roi_checkpoint_patterns:
+                if pattern:
+                    error_msg += f"    - {pattern}\n"
+            if 'default_path' in locals():
+                error_msg += f"    - {default_path}\n"
+            error_msg += f"\n  Cascade models require ROI-based evaluation.\n"
+            error_msg += f"  Please ensure the ROI model checkpoint exists at one of the above paths."
+            
+            if is_main_process(rank):
+                print(error_msg)
+            raise FileNotFoundError(error_msg)
+    else:
+        # 일반 모델은 기존 방식 사용
+        metrics = evaluate_model(
+            model, test_loader, device, model_name, 
+            distributed=distributed, world_size=world_size,
+            sw_patch_size=(128, 128, 128), sw_overlap=0.10, 
+            results_dir=results_dir,
+            coord_type=coord_type  # 체크포인트에서 감지한 coord_type 전달
+        )
     
     # Grad-CAM 생성 (rank 0에서만, 3D 모델만)
     # TODO: Grad-CAM 기능은 아직 안정화되지 않아 주석 처리됨

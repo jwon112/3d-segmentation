@@ -18,6 +18,7 @@ from scipy import ndimage
 
 from dataloaders import (
     get_normalized_coord_map,
+    get_coord_map,
     resize_volume,
     crop_volume_with_center,
     paste_patch_to_volume,
@@ -25,10 +26,13 @@ from dataloaders import (
 )
 
 
-def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_coords: bool = True) -> torch.Tensor:
+def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_coords: bool = True, coord_encoding_type: str = 'simple') -> torch.Tensor:
     """Concatenate coord map and resize to ROI resolution."""
-    coord_map = get_normalized_coord_map(image.shape[1:], device=image.device)
-    roi_input = torch.cat([image, coord_map], dim=0) if include_coords else image
+    if include_coords:
+        coord_map = get_coord_map(image.shape[1:], device=image.device, encoding_type=coord_encoding_type)
+        roi_input = torch.cat([image, coord_map], dim=0)
+    else:
+        roi_input = image
     roi_input = resize_volume(roi_input, roi_resize, mode='trilinear')
     return roi_input
 
@@ -98,6 +102,7 @@ def run_roi_localization(
     device: torch.device,
     roi_resize: Sequence[int] = (64, 64, 64),
     include_coords: bool = True,
+    coord_encoding_type: str = 'simple',
     max_instances: int = 1,
     min_component_size: int = 50,
 ) -> Dict:
@@ -116,7 +121,7 @@ def run_roi_localization(
         }
     """
     roi_model.eval()
-    roi_input = _prepare_roi_input(image, roi_resize, include_coords=include_coords).unsqueeze(0).to(device)
+    roi_input = _prepare_roi_input(image, roi_resize, include_coords=include_coords, coord_encoding_type=coord_encoding_type).unsqueeze(0).to(device)
     with torch.no_grad():
         roi_logits = roi_model(roi_input)
     roi_probs = torch.softmax(roi_logits, dim=1)
@@ -147,12 +152,17 @@ def build_segmentation_input(
     center: Sequence[float],
     crop_size: Sequence[int],
     include_coords: bool = True,
+    coord_encoding_type: str = 'simple',
 ) -> Dict:
-    """Create 7-channel crop (4 MRI + 3 coord) around predicted center."""
+    """Create crop with coord channels around predicted center.
+    
+    Args:
+        coord_encoding_type: 'simple' (3 channels) or 'hybrid' (9 channels)
+    """
     seg_patch, origin = crop_volume_with_center(image, center, crop_size, return_origin=True)
     inputs = seg_patch
     if include_coords:
-        coord_map = get_normalized_coord_map(image.shape[1:], device=image.device)
+        coord_map = get_coord_map(image.shape[1:], device=image.device, encoding_type=coord_encoding_type)
         coord_patch = crop_volume_with_center(coord_map, center, crop_size, return_origin=False)
         inputs = torch.cat([seg_patch, coord_patch], dim=0)
     return {
@@ -245,6 +255,7 @@ def run_cascade_inference(
     roi_resize: Sequence[int] = (64, 64, 64),
     crop_size: Sequence[int] = (96, 96, 96),
     include_coords: bool = True,
+    coord_encoding_type: str = 'simple',
     max_instances: int = 3,
     min_component_size: int = 50,
     crops_per_center: int = 1,
@@ -271,6 +282,7 @@ def run_cascade_inference(
         device=device,
         roi_resize=roi_resize,
         include_coords=include_coords,
+        coord_encoding_type=coord_encoding_type,
         max_instances=max_instances,
         min_component_size=min_component_size,
     )
@@ -285,12 +297,13 @@ def run_cascade_inference(
     # Blending을 사용하는 경우 accumulator와 weight sum 초기화
     if use_blending and crops_per_center > 1:
         # 출력 채널 수 확인
-        # Cascade segmentation 모델은 항상 7채널 입력(4 MRI + 3 CoordConv)을 기대
+        # Cascade segmentation 모델은 항상 CoordConv 포함 입력을 기대
         dummy_input = build_segmentation_input(
             image=image,
             center=centers_full[0],
             crop_size=crop_size,
-            include_coords=True,  # Cascade segmentation 모델은 항상 CoordConv 포함
+            include_coords=include_coords,
+            coord_encoding_type=coord_encoding_type,
         )['inputs'].unsqueeze(0).to(device)
         with torch.no_grad():
             dummy_logits = seg_model(dummy_input)
@@ -314,12 +327,13 @@ def run_cascade_inference(
         )
         
         for crop_center in crop_centers:
-            # Cascade segmentation 모델은 항상 7채널 입력(4 MRI + 3 CoordConv)을 기대
+            # Cascade segmentation 모델은 항상 CoordConv 포함 입력을 기대
             seg_inputs = build_segmentation_input(
                 image=image,
                 center=crop_center,
                 crop_size=crop_size,
-                include_coords=True,  # Cascade segmentation 모델은 항상 CoordConv 포함
+                include_coords=include_coords,
+                coord_encoding_type=coord_encoding_type,
             )
             seg_tensor = seg_inputs['inputs'].unsqueeze(0).to(device)
             with torch.no_grad():

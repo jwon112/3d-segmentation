@@ -15,6 +15,7 @@ from metrics import calculate_wt_tc_et_dice
 
 def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                               roi_resize=(64, 64, 64), crop_size=(96, 96, 96), include_coords=True,
+                              coord_encoding_type='simple',
                               crops_per_center=1, crop_overlap=0.5, use_blending=True,
                               collect_attention=False, results_dir=None, model_name='model'):
     """
@@ -50,6 +51,7 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             roi_resize=roi_resize,
             crop_size=crop_size,
             include_coords=include_coords,
+            coord_encoding_type=coord_encoding_type,
             crops_per_center=crops_per_center,
             crop_overlap=crop_overlap,
             use_blending=use_blending,
@@ -195,6 +197,7 @@ def evaluate_segmentation_with_roi(
     roi_resize=(64, 64, 64),
     crop_size=(96, 96, 96),
     include_coords=True,
+    coord_encoding_type='simple',
     use_5fold=False,
     fold_idx=None,
     max_samples=None,
@@ -255,6 +258,7 @@ def evaluate_segmentation_with_roi(
         roi_resize=roi_resize,
         crop_size=crop_size,
         include_coords=include_coords,
+        coord_encoding_type=coord_encoding_type,
         crops_per_center=crops_per_center,
         crop_overlap=crop_overlap,
         use_blending=use_blending,
