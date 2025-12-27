@@ -24,6 +24,7 @@ def _to_3tuple(size: Sequence[int]) -> Tuple[int, int, int]:
 
 
 def get_normalized_coord_map(spatial_shape: Sequence[int], device: Optional[torch.device] = None) -> torch.Tensor:
+    """Simple 3-channel normalized coordinate map (0-1 range)."""
     shape = _to_3tuple(spatial_shape)
     if shape not in _COORD_MAP_CACHE:
         h, w, d = shape
@@ -37,6 +38,67 @@ def get_normalized_coord_map(spatial_shape: Sequence[int], device: Optional[torc
     if device is not None:
         coord_map = coord_map.to(device)
     return coord_map
+
+
+def get_hybrid_coord_map(spatial_shape: Sequence[int], device: Optional[torch.device] = None) -> torch.Tensor:
+    """Hybrid coordinate map: 3 linear channels + 6 Fourier feature channels (9 channels total).
+    
+    Returns:
+        Tensor of shape (9, H, W, D): 3 linear + 6 Fourier features
+    """
+    shape = _to_3tuple(spatial_shape)
+    h, w, d = shape
+    
+    # Linear coordinates (normalized 0-1)
+    ys = torch.linspace(0.0, 1.0, steps=h, dtype=torch.float32)
+    xs = torch.linspace(0.0, 1.0, steps=w, dtype=torch.float32)
+    zs = torch.linspace(0.0, 1.0, steps=d, dtype=torch.float32)
+    grid_y, grid_x, grid_z = torch.meshgrid(ys, xs, zs, indexing='ij')
+    
+    # Linear coordinates (3 channels)
+    linear_coord = torch.stack([grid_y, grid_x, grid_z], dim=0)
+    
+    # Fourier features: 6 channels (sin/cos for 3 axes at 1 frequency)
+    # Use frequency 1.0 for all axes
+    freq = 1.0
+    fourier_list = [
+        torch.sin(2 * torch.pi * freq * grid_y),
+        torch.cos(2 * torch.pi * freq * grid_y),
+        torch.sin(2 * torch.pi * freq * grid_x),
+        torch.cos(2 * torch.pi * freq * grid_x),
+        torch.sin(2 * torch.pi * freq * grid_z),
+        torch.cos(2 * torch.pi * freq * grid_z),
+    ]
+    
+    # Stack to get 6 channels (3 axes × 2 sin/cos)
+    # Total: 3 linear + 6 Fourier = 9 channels
+    fourier_coord = torch.stack(fourier_list, dim=0)  # (6, H, W, D)
+    
+    # Combine: 3 linear + 6 Fourier = 9 channels
+    hybrid_coord = torch.cat([linear_coord, fourier_coord], dim=0)  # (9, H, W, D)
+    
+    if device is not None:
+        hybrid_coord = hybrid_coord.to(device)
+    return hybrid_coord.contiguous()
+
+
+def get_coord_map(spatial_shape: Sequence[int], device: Optional[torch.device] = None, encoding_type: str = 'simple') -> torch.Tensor:
+    """Get coordinate map based on encoding type.
+    
+    Args:
+        spatial_shape: Spatial dimensions (H, W, D)
+        device: Target device
+        encoding_type: 'simple' (3 channels) or 'hybrid' (9 channels)
+    
+    Returns:
+        Coordinate map tensor: (3, H, W, D) for 'simple', (9, H, W, D) for 'hybrid'
+    """
+    if encoding_type == 'simple':
+        return get_normalized_coord_map(spatial_shape, device)
+    elif encoding_type == 'hybrid':
+        return get_hybrid_coord_map(spatial_shape, device)
+    else:
+        raise ValueError(f"Unknown encoding_type: {encoding_type}. Must be 'simple' or 'hybrid'")
 
 
 def _apply_anisotropy_resize(
@@ -340,7 +402,7 @@ class BratsCascadeROIDataset(Dataset):
             image, mask, _ = loaded_data  # fg_coords_dict는 cascade에서는 사용 안 함
         else:
             image, mask = loaded_data
-        coord_map = get_normalized_coord_map(mask.shape, device=image.device)
+        coord_map = get_coord_map(mask.shape, device=image.device, encoding_type=self.coord_encoding_type)
         if self.include_coords:
             roi_input = torch.cat([image, coord_map], dim=0)
         else:
@@ -498,7 +560,7 @@ class BratsCascadeSegmentationDataset(Dataset):
         img_crop, origin = crop_volume_with_center(image, center, self.crop_size, return_origin=True)
         mask_crop = crop_volume_with_center(mask, center, self.crop_size, return_origin=False).long()
         if self.include_coords:
-            coord_map = get_normalized_coord_map(mask.shape, device=image.device)
+            coord_map = get_coord_map(mask.shape, device=image.device, encoding_type=self.coord_encoding_type)
             coord_crop = crop_volume_with_center(coord_map, center, self.crop_size, return_origin=False)
             img_crop = torch.cat([img_crop, coord_crop], dim=0)
         img_crop, mask_crop = self._maybe_augment(img_crop, mask_crop, sample_idx=idx)
