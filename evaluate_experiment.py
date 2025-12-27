@@ -32,8 +32,12 @@ from utils.gradcam_utils import generate_gradcam_for_model
 
 def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='3d', 
                                  dataset_version='brats2018', batch_size=1, num_workers=0,
-                                 device='cuda', distributed=False, rank=0, world_size=1):
-    """저장된 체크포인트를 로드하여 평가만 수행"""
+                                 device='cuda', distributed=False, rank=0, world_size=1,
+                                 fold_idx=None, use_5fold=False):
+    """저장된 best.pt 체크포인트를 로드하여 평가, 기록, 시각화 파이프라인 수행
+    
+    비정상적으로 중단된 학습이나 여러 실험의 best.pt를 모아서 평가할 때 사용
+    """
     
     # 모델에 따라 use_4modalities 및 n_channels 결정
     use_4modalities = (model_name in ['unet3d_4modal_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s'] or
@@ -55,7 +59,9 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         distributed=distributed,
         world_size=world_size,
         rank=rank,
-        use_4modalities=use_4modalities
+        use_4modalities=use_4modalities,
+        use_5fold=use_5fold,
+        fold_idx=fold_idx
     )
     
     # 모델 생성
@@ -69,19 +75,26 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     else:
         model = model.to(device)
     
-    # 체크포인트 로드
-    ckpt_path = os.path.join(results_dir, f"{model_name}_seed_{seed}_best.pth")
+    # 체크포인트 로드 (5-fold 지원)
+    if use_5fold and fold_idx is not None:
+        ckpt_path = os.path.join(results_dir, f"{model_name}_seed_{seed}_fold_{fold_idx}_best.pth")
+    else:
+        ckpt_path = os.path.join(results_dir, f"{model_name}_seed_{seed}_best.pth")
+    
     if not os.path.exists(ckpt_path):
         if is_main_process(rank):
             print(f"Warning: Checkpoint not found at {ckpt_path}. Skipping...")
         return None
+    
+    if is_main_process(rank):
+        print(f"Loading best checkpoint from {ckpt_path}")
     
     real_model = model.module if hasattr(model, 'module') else model
     state = torch.load(ckpt_path, map_location=device)
     real_model.load_state_dict(state, strict=False)
     
     if is_main_process(rank):
-        print(f"Loaded checkpoint from {ckpt_path}")
+        print(f"Successfully loaded checkpoint from {ckpt_path}")
     
     # RepLK 모델의 경우 deploy 모드로 전환
     # Check if model name starts with any RepLK model prefix (supports all sizes: xs, s, m, l)
@@ -270,8 +283,9 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
 
 
 def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d', 
-                   dataset_version='brats2018', batch_size=1, num_workers=0):
-    """평가 실행"""
+                   dataset_version='brats2018', batch_size=1, num_workers=0,
+                   use_5fold=False, fold_idx=None):
+    """평가 실행 (Early stopping으로 중단된 경우에도 사용 가능)"""
     
     if not os.path.exists(results_dir):
         print(f"Error: Results directory not found: {results_dir}")
@@ -287,16 +301,31 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"\nUsing device: {device}")
     
-    # 사용 가능한 체크포인트 찾기
+    if is_main_process(rank):
+        print(f"\n[Evaluation Mode] Loading best.pt checkpoints for evaluation, recording, and visualization")
+    
+    # 사용 가능한 체크포인트 찾기 (5-fold 지원)
     all_checkpoints = []
     for file in os.listdir(results_dir):
         if file.endswith('_best.pth'):
-            # 파일명 형식: {model_name}_seed_{seed}_best.pth
-            parts = file.replace('_best.pth', '').split('_seed_')
-            if len(parts) == 2:
-                model_name = parts[0]
-                seed = int(parts[1])
-                all_checkpoints.append((model_name, seed))
+            # 파일명 형식: {model_name}_seed_{seed}_best.pth 또는 {model_name}_seed_{seed}_fold_{fold_idx}_best.pth
+            if '_fold_' in file:
+                # 5-fold 형식: {model_name}_seed_{seed}_fold_{fold_idx}_best.pth
+                parts = file.replace('_best.pth', '').split('_seed_')
+                if len(parts) == 2:
+                    model_name = parts[0]
+                    seed_fold = parts[1].split('_fold_')
+                    if len(seed_fold) == 2:
+                        seed = int(seed_fold[0])
+                        fold = int(seed_fold[1])
+                        all_checkpoints.append((model_name, seed, fold))
+            else:
+                # 일반 형식: {model_name}_seed_{seed}_best.pth
+                parts = file.replace('_best.pth', '').split('_seed_')
+                if len(parts) == 2:
+                    model_name = parts[0]
+                    seed = int(parts[1])
+                    all_checkpoints.append((model_name, seed, None))
     
     if not all_checkpoints:
         print(f"Error: No checkpoint files found in {results_dir}")
@@ -304,9 +333,11 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
     
     # 필터링
     if models:
-        all_checkpoints = [(m, s) for m, s in all_checkpoints if m in models]
+        all_checkpoints = [(m, s, f) for m, s, f in all_checkpoints if m in models]
     if seeds:
-        all_checkpoints = [(m, s) for m, s in all_checkpoints if s in seeds]
+        all_checkpoints = [(m, s, f) for m, s, f in all_checkpoints if s in seeds]
+    if use_5fold and fold_idx is not None:
+        all_checkpoints = [(m, s, f) for m, s, f in all_checkpoints if f == fold_idx]
     
     if not all_checkpoints:
         print(f"Error: No matching checkpoints found after filtering")
@@ -314,17 +345,23 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
     
     if is_main_process(rank):
         print(f"\nFound {len(all_checkpoints)} checkpoint(s) to evaluate:")
-        for model_name, seed in all_checkpoints:
-            print(f"  - {model_name} (seed {seed})")
+        for model_name, seed, fold in all_checkpoints:
+            if fold is not None:
+                print(f"  - {model_name} (seed {seed}, fold {fold})")
+            else:
+                print(f"  - {model_name} (seed {seed})")
     
     # 평가 실행
     all_results = []
     all_stage_pam_results = []  # Stage별 PAM 결과 저장용
-    for model_name, seed in all_checkpoints:
+    for model_name, seed, fold in all_checkpoints:
         try:
             if is_main_process(rank):
                 print(f"\n{'='*60}")
-                print(f"Evaluating {model_name.upper()} (seed {seed})...")
+                if fold is not None:
+                    print(f"Evaluating {model_name.upper()} (seed {seed}, fold {fold})...")
+                else:
+                    print(f"Evaluating {model_name.upper()} (seed {seed})...")
                 print(f"{'='*60}")
             
             results, stage_pam_results = load_checkpoint_and_evaluate(
@@ -339,7 +376,9 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
                 device=device,
                 distributed=distributed,
                 rank=rank,
-                world_size=world_size
+                world_size=world_size,
+                fold_idx=fold,
+                use_5fold=(fold is not None)
             )
             
             if results and is_main_process(rank):
@@ -348,7 +387,10 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
                 
         except Exception as e:
             if is_main_process(rank):
-                print(f"Error evaluating {model_name} (seed {seed}): {e}")
+                if fold is not None:
+                    print(f"Error evaluating {model_name} (seed {seed}, fold {fold}): {e}")
+                else:
+                    print(f"Error evaluating {model_name} (seed {seed}): {e}")
                 import traceback
                 traceback.print_exc()
             continue
@@ -417,11 +459,16 @@ if __name__ == "__main__":
                        help='Specific seeds to evaluate (default: all found seeds)')
     parser.add_argument('--dim', type=str, default='3d', choices=['2d', '3d'],
                        help='Data dimension: 2d or 3d (default: 3d)')
-    parser.add_argument('--dataset_version', type=str, default='brats2018', choices=['brats2021', 'brats2018'],
-                       help='Dataset version: brats2021 or brats2018 (default: brats2018)')
+    parser.add_argument('--dataset_version', type=str, default='brats2018',
+                       choices=['brats2017', 'brats2018', 'brats2019', 'brats2020', 'brats2021', 'brats2023', 'brats2024'],
+                       help='Dataset version (default: brats2018)')
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size for evaluation')
     parser.add_argument('--num_workers', type=int, default=0,
                        help='Number of DataLoader workers (default: 0 for evaluation)')
+    parser.add_argument('--use_5fold', action='store_true', default=False,
+                       help='Use 5-fold cross-validation mode (default: False)')
+    parser.add_argument('--fold_idx', type=int, default=None,
+                       help='Specific fold index to evaluate (only used with --use_5fold, default: None for all folds)')
     
     args = parser.parse_args()
     
@@ -442,7 +489,9 @@ if __name__ == "__main__":
             dim=args.dim,
             dataset_version=args.dataset_version,
             batch_size=args.batch_size,
-            num_workers=args.num_workers
+            num_workers=args.num_workers,
+            use_5fold=args.use_5fold,
+            fold_idx=args.fold_idx
         )
         
         if results_dir and results_df is not None and not results_df.empty:
