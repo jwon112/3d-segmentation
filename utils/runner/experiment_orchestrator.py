@@ -88,16 +88,43 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         print(f"\nUsing device: {device}")
     
     # 데이터셋 경로 확인 (dataset_version에 따라)
-    if dataset_version == 'brats2021':
-        dataset_dir = os.path.join(data_path, 'BRATS2021', 'BraTS2021_Training_Data')
-    elif dataset_version == 'brats2018':
-        dataset_dir = os.path.join(data_path, 'BRATS2018', 'MICCAI_BraTS_2018_Data_Training')
+    # use_5fold를 사용할 때는 전처리된 데이터를 사용하므로 원본 경로 체크 건너뛰기
+    if use_5fold:
+        # 5-fold 모드에서는 전처리된 데이터를 사용하므로 원본 경로 체크 건너뛰기
+        dataset_dir = None
     else:
-        raise ValueError(f"Unknown dataset_version: {dataset_version}")
-    
-    if not os.path.exists(dataset_dir):
-        print(f"Warning: Dataset {dataset_version} not found at {dataset_dir}. Skipping...")
-        return None, pd.DataFrame()
+        # 일반 모드: 원본 데이터셋 경로 확인
+        if dataset_version == 'brats2017':
+            dataset_dir = os.path.join(data_path, 'BRATS2017', 'Brats17TrainingData')
+        elif dataset_version == 'brats2018':
+            dataset_dir = os.path.join(data_path, 'BRATS2018', 'MICCAI_BraTS_2018_Data_Training')
+        elif dataset_version == 'brats2019':
+            # BRATS2019는 여러 가능한 경로 구조가 있을 수 있음
+            possible_paths = [
+                os.path.join(data_path, 'BRATS2019', 'HGG'),
+                os.path.join(data_path, 'BRATS2019', 'MICCAI_BraTS_2019_Data_Training', 'HGG'),
+            ]
+            dataset_dir = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    dataset_dir = path
+                    break
+        elif dataset_version == 'brats2020':
+            dataset_dir = os.path.join(data_path, 'BRATS2020', 'MICCAI_BraTS2020_TrainingData')
+        elif dataset_version == 'brats2021':
+            dataset_dir = os.path.join(data_path, 'BRATS2021', 'BraTS2021_Training_Data')
+        elif dataset_version == 'brats2023':
+            dataset_dir = os.path.join(data_path, 'BRATS2023', 'ASNR-MICCAI-BraTS2023-GLI-Challenge-TrainingData')
+        elif dataset_version == 'brats2024':
+            # BRATS2024는 전처리된 데이터를 사용하므로 원본 경로 체크 건너뛰기
+            dataset_dir = None
+        else:
+            raise ValueError(f"Unknown dataset_version: {dataset_version}")
+        
+        # 원본 경로가 필요한 경우에만 체크
+        if dataset_dir is not None and not os.path.exists(dataset_dir):
+            print(f"Warning: Dataset {dataset_version} not found at {dataset_dir}. Skipping...")
+            return None, pd.DataFrame()
     
     print(f"\n{'#'*80}")
     print(f"Dataset Version: {dataset_version.upper()}")
@@ -110,17 +137,39 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         print(f"5-Fold Cross-Validation Mode")
         print(f"{'='*60}")
         # Fold별 디렉토리 경로 설정
-        from pathlib import Path
-        project_root = Path(__file__).parent.parent.parent.absolute()
-        fold_split_dir = str(project_root / 'data' / f'{dataset_version.upper()}_5fold_splits')
-        if not os.path.exists(fold_split_dir):
-            if is_main_process(rank):
-                print(f"Warning: Fold split directory not found: {fold_split_dir}")
-                print(f"Please run prepare_5fold_splits.py first to create fold directories.")
-            fold_split_dir = None
+        # 1. preprocessed_base_dir 우선 사용
+        if preprocessed_base_dir:
+            fold_split_dir = os.path.join(preprocessed_base_dir, f'{dataset_version.upper()}_5fold_splits')
+            if not os.path.exists(fold_split_dir):
+                # Combined dataset도 확인 (COMBINED_BRATS2017_BRATS2018_..._5fold_splits)
+                import glob
+                pattern = os.path.join(preprocessed_base_dir, f'COMBINED_*_5fold_splits')
+                combined_dirs = glob.glob(pattern)
+                if combined_dirs:
+                    fold_split_dir = combined_dirs[0]
+                    if is_main_process(rank):
+                        print(f"Using combined fold split directory: {fold_split_dir}")
+                else:
+                    fold_split_dir = None
+                    if is_main_process(rank):
+                        print(f"Warning: Fold split directory not found: {os.path.join(preprocessed_base_dir, f'{dataset_version.upper()}_5fold_splits')}")
+                        print(f"Please run prepare_5fold_splits.py first to create fold directories.")
+            else:
+                if is_main_process(rank):
+                    print(f"Using fold split directory: {fold_split_dir}")
         else:
-            if is_main_process(rank):
-                print(f"Using fold split directory: {fold_split_dir}")
+            # 2. 기본 경로 (project_root/data)
+            from pathlib import Path
+            project_root = Path(__file__).parent.parent.parent.absolute()
+            fold_split_dir = str(project_root / 'data' / f'{dataset_version.upper()}_5fold_splits')
+            if not os.path.exists(fold_split_dir):
+                if is_main_process(rank):
+                    print(f"Warning: Fold split directory not found: {fold_split_dir}")
+                    print(f"Please run prepare_5fold_splits.py first to create fold directories.")
+                fold_split_dir = None
+            else:
+                if is_main_process(rank):
+                    print(f"Using fold split directory: {fold_split_dir}")
     else:
         fold_list = [None]  # 일반 모드에서는 fold 없음
         fold_split_dir = None
