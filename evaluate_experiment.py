@@ -76,18 +76,7 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         preprocessed_dir=preprocessed_dir
     )
     
-    # 모델 생성
-    model = get_model(model_name, n_channels=n_channels, n_classes=4, dim=dim)
-    
-    # DDP wrap if distributed
-    if distributed:
-        from torch.nn.parallel import DistributedDataParallel as DDP
-        model = model.to(device)
-        model = DDP(model, device_ids=[rank], output_device=rank, find_unused_parameters=False)
-    else:
-        model = model.to(device)
-    
-    # 체크포인트 로드 (5-fold 지원)
+    # 체크포인트 로드 (5-fold 지원) - 먼저 체크포인트를 로드해서 coord_type 감지
     if use_5fold and fold_idx is not None:
         ckpt_path = os.path.join(results_dir, f"{model_name}_seed_{seed}_fold_{fold_idx}_best.pth")
     else:
@@ -101,8 +90,89 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     if is_main_process(rank):
         print(f"Loading best checkpoint from {ckpt_path}")
     
-    real_model = model.module if hasattr(model, 'module') else model
+    # 체크포인트를 먼저 로드해서 coord_type과 modalities 수 자동 감지
     state = torch.load(ckpt_path, map_location=device)
+    
+    # Cascade 모델의 경우 첫 번째 레이어에서 입력 채널 수 감지
+    coord_type = 'none'  # 기본값
+    detected_n_modalities = 2  # 기본값 (T1CE, FLAIR)
+    
+    if model_name.startswith('cascade_'):
+        # Cascade 모델의 첫 번째 레이어 찾기 (stem.conv1.0.conv2d.weight 등)
+        detected_channels = None
+        detected_key = None
+        for key in state.keys():
+            if 'weight' in key and ('stem.conv1' in key or 'stem' in key or 'conv1' in key):
+                if 'conv2d.weight' in key or 'weight' in key:
+                    # shape: [out_channels, in_channels, ...]
+                    detected_channels = state[key].shape[1]
+                    detected_key = key
+                    break
+        
+        if detected_channels is not None:
+            if is_main_process(rank):
+                print(f"[Debug] Found first layer: {detected_key}, input channels: {detected_channels}")
+            
+            # 채널 수에 따라 coord_type과 modalities 수 추론
+            # 4 channels = 4 modalities, no coords
+            # 7 channels = 2 modalities + 3 simple coords
+            # 11 channels = 2 modalities + 9 hybrid coords
+            # 13 channels = 4 modalities + 9 hybrid coords
+            if detected_channels == 4:
+                coord_type = 'none'
+                detected_n_modalities = 4
+                if is_main_process(rank):
+                    print(f"Detected {detected_channels} input channels -> 4 modalities, coord_type='none'")
+            elif detected_channels == 7:
+                coord_type = 'simple'
+                detected_n_modalities = 2
+                if is_main_process(rank):
+                    print(f"Detected {detected_channels} input channels -> 2 modalities + 3 simple coords")
+            elif detected_channels == 11:
+                coord_type = 'hybrid'
+                detected_n_modalities = 2
+                if is_main_process(rank):
+                    print(f"Detected {detected_channels} input channels -> 2 modalities + 9 hybrid coords")
+            elif detected_channels == 13:
+                coord_type = 'hybrid'
+                detected_n_modalities = 4
+                if is_main_process(rank):
+                    print(f"Detected {detected_channels} input channels -> 4 modalities + 9 hybrid coords")
+            else:
+                if is_main_process(rank):
+                    print(f"Warning: Unexpected input channels {detected_channels}. Using defaults (2 modalities, coord_type='none')")
+        else:
+            if is_main_process(rank):
+                print(f"[Debug] Could not find first layer in checkpoint. Available keys (first 10): {list(state.keys())[:10]}")
+    
+    # 감지된 modalities 수로 n_channels 업데이트
+    n_channels = detected_n_modalities
+    
+    # coord_type에 따라 n_channels 조정 (cascade 모델의 경우)
+    if model_name.startswith('cascade_'):
+        if coord_type == 'simple':
+            n_coord_channels = 3
+        elif coord_type == 'hybrid':
+            n_coord_channels = 9
+        else:  # 'none'
+            n_coord_channels = 0
+        actual_n_channels = n_channels + n_coord_channels
+    else:
+        actual_n_channels = n_channels
+    
+    # 모델 생성 (coord_type 전달)
+    model = get_model(model_name, n_channels=actual_n_channels, n_classes=4, dim=dim, coord_type=coord_type)
+    
+    # DDP wrap if distributed
+    if distributed:
+        from torch.nn.parallel import DistributedDataParallel as DDP
+        model = model.to(device)
+        model = DDP(model, device_ids=[rank], output_device=rank, find_unused_parameters=False)
+    else:
+        model = model.to(device)
+    
+    # 체크포인트 로드
+    real_model = model.module if hasattr(model, 'module') else model
     real_model.load_state_dict(state, strict=False)
     
     if is_main_process(rank):
