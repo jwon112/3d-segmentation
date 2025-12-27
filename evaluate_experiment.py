@@ -33,7 +33,7 @@ from utils.gradcam_utils import generate_gradcam_for_model
 def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='3d', 
                                  dataset_version='brats2018', batch_size=1, num_workers=0,
                                  device='cuda', distributed=False, rank=0, world_size=1,
-                                 fold_idx=None, use_5fold=False):
+                                 fold_idx=None, use_5fold=False, preprocessed_base_dir=None):
     """저장된 best.pt 체크포인트를 로드하여 평가, 기록, 시각화 파이프라인 수행
     
     비정상적으로 중단된 학습이나 여러 실험의 best.pt를 모아서 평가할 때 사용
@@ -48,6 +48,11 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         n_channels = 2
     
     # 데이터 로더 생성
+    # preprocessed_base_dir이 제공되면 버전별 디렉토리로 변환
+    preprocessed_dir = None
+    if preprocessed_base_dir:
+        preprocessed_dir = os.path.join(preprocessed_base_dir, dataset_version.upper())
+    
     train_loader, val_loader, test_loader, _, _, _ = get_data_loaders(
         data_dir=data_path,
         batch_size=batch_size,
@@ -61,7 +66,8 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         rank=rank,
         use_4modalities=use_4modalities,
         use_5fold=use_5fold,
-        fold_idx=fold_idx
+        fold_idx=fold_idx,
+        preprocessed_dir=preprocessed_dir
     )
     
     # 모델 생성
@@ -284,7 +290,7 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
 
 def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d', 
                    dataset_version='brats2018', batch_size=1, num_workers=0,
-                   use_5fold=False, fold_idx=None):
+                   use_5fold=False, fold_idx=None, preprocessed_base_dir=None):
     """평가 실행 (Early stopping으로 중단된 경우에도 사용 가능)"""
     
     if not os.path.exists(results_dir):
@@ -378,7 +384,8 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
                 rank=rank,
                 world_size=world_size,
                 fold_idx=fold,
-                use_5fold=(fold is not None)
+                use_5fold=(fold is not None),
+                preprocessed_base_dir=preprocessed_base_dir
             )
             
             if results and is_main_process(rank):
@@ -469,6 +476,8 @@ if __name__ == "__main__":
                        help='Use 5-fold cross-validation mode (default: False)')
     parser.add_argument('--fold_idx', type=int, default=None,
                        help='Specific fold index to evaluate (only used with --use_5fold, default: None for all folds)')
+    parser.add_argument('--preprocessed_base_dir', type=str, default=None,
+                       help='Base directory containing preprocessed H5 files (default: None). If provided, will be used for datasets that require preprocessed data (e.g., brats2024)')
     
     args = parser.parse_args()
     
@@ -491,7 +500,8 @@ if __name__ == "__main__":
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             use_5fold=args.use_5fold,
-            fold_idx=args.fold_idx
+            fold_idx=args.fold_idx,
+            preprocessed_base_dir=args.preprocessed_base_dir
         )
         
         if results_dir and results_df is not None and not results_df.empty:
