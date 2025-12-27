@@ -100,7 +100,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     
     # 체크포인트 저장 경로 (실험 결과 폴더 내부)
     if results_dir is None:
-        results_dir = "baseline_results"
+        results_dir = "experiment_result"
     os.makedirs(results_dir, exist_ok=True)
     if ckpt_path is None:
         ckpt_path = os.path.join(results_dir, f"{model_name}_seed_{seed}_best.pth")

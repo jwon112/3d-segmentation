@@ -25,7 +25,7 @@ def train_roi_model(model, train_loader, val_loader, epochs, device, lr=1e-3,
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
     best_val_dice = 0.0
     best_epoch = 0
-    os.makedirs(results_dir or "baseline_results", exist_ok=True)
+    os.makedirs(results_dir or "experiment_result", exist_ok=True)
     disable_progress = not is_main_process(rank)
 
     for epoch in range(epochs):

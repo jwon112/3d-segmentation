@@ -3,8 +3,8 @@
 평가 전용 스크립트 - 저장된 체크포인트를 로드하여 평가만 수행
 
 Usage:
-    python evaluate_experiment.py --results_dir baseline_results/integrated_experiment_results_YYYYMMDD_HHMMSS --models unet3d_2modal_s unet3d_4modal_s
-    python evaluate_experiment.py --results_dir baseline_results/integrated_experiment_results_YYYYMMDD_HHMMSS --seeds 24 42
+    python evaluate_experiment.py --results_dir experiment_result/integrated_experiment_results_YYYYMMDD_HHMMSS --models unet3d_2modal_s unet3d_4modal_s
+    python evaluate_experiment.py --results_dir experiment_result/integrated_experiment_results_YYYYMMDD_HHMMSS --seeds 24 42
 """
 
 import os
@@ -408,7 +408,7 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Evaluate saved checkpoints')
     parser.add_argument('--results_dir', type=str, required=True,
-                       help='Results directory containing checkpoint files (e.g., baseline_results/integrated_experiment_results_YYYYMMDD_HHMMSS)')
+                       help='Results directory containing checkpoint files (e.g., experiment_result/integrated_experiment_results_YYYYMMDD_HHMMSS)')
     parser.add_argument('--data_path', type=str, default='/home/work/3D_/BT/',
                        help='Common path to BraTS dataset root (default: /home/work/3D_/BT/)')
     parser.add_argument('--models', nargs='+', type=str, default=None,

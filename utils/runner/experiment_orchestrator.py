@@ -63,7 +63,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     
     # 실험 결과 저장 디렉토리
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir = f"baseline_results/integrated_experiment_results_{timestamp}"
+    results_dir = f"experiment_result/integrated_experiment_results_{timestamp}"
     os.makedirs(results_dir, exist_ok=True)
     print(f"Train data augmentation: {'MRI augmentations' if use_mri_augmentation else 'None'}")
     print(f"Anisotropy augmentation: {'On' if anisotropy_augment else 'Off'}")

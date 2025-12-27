@@ -132,7 +132,7 @@ if __name__ == "__main__":
     print(f"Anisotropy Augmentation: {'Enabled' if args.anisotropy_augmentation else 'Disabled'}")
     print(f"Modalities: {'4 (T1, T1CE, T2, FLAIR)' if args.use_4modalities else '2 (T1CE, FLAIR)'}")
     print(f"Coordinate encoding type: {args.coord_type} ({'no coords' if args.coord_type == 'none' else '3 channels' if args.coord_type == 'simple' else '9 channels'})")
-    print(f"Results will be saved in: baseline_results/ folder")
+    print(f"Results will be saved in: experiment_result/ folder")
     if args.use_5fold:
         print(f"Using 5-fold cross-validation")
     
