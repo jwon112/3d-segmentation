@@ -138,8 +138,21 @@ class BratsDataset3D(Dataset):
                 print(f"  Found {lgg_count} LGG samples")
             if not samples:
                 raise ValueError(f"No patient data found in {brats2018_dir} (checked HGG and LGG folders)")
+        elif self.dataset_version in ('brats2017', 'brats2019', 'brats2020', 'brats2023', 'brats2024'):
+            # 이 버전들은 전처리된 데이터를 사용하거나 5-fold 모드에서만 사용
+            # 일반 모드에서는 전처리된 데이터나 5-fold split을 사용해야 함
+            if not self.fold_split_dir:
+                raise ValueError(
+                    f"Dataset version {self.dataset_version} requires either:\n"
+                    f"  1. use_5fold=True with fold_split_dir (5-fold cross-validation)\n"
+                    f"  2. preprocessed_dir with H5 files\n"
+                    f"Please use --use_5fold or provide preprocessed_dir."
+                )
+            # fold_split_dir이 있으면 _load_samples_from_fold()를 사용해야 함
+            # 여기서는 에러를 발생시키지 않고 빈 리스트 반환 (실제로는 _load_samples_from_fold()가 호출되어야 함)
+            return []
         else:
-            raise ValueError(f"Unknown dataset_version: {self.dataset_version}. Must be 'brats2021' or 'brats2018'")
+            raise ValueError(f"Unknown dataset_version: {self.dataset_version}. Supported versions: brats2017, brats2018, brats2019, brats2020, brats2021, brats2023, brats2024")
         return samples
 
     def _load_samples_from_fold(self):
