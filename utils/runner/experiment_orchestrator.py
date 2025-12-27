@@ -139,37 +139,22 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         # Fold별 디렉토리 경로 설정
         # 1. preprocessed_base_dir 우선 사용
         if preprocessed_base_dir:
-            fold_split_dir = os.path.join(preprocessed_base_dir, f'{dataset_version.upper()}_5fold_splits')
-            if not os.path.exists(fold_split_dir):
-                # Combined dataset도 확인 (COMBINED_BRATS2017_BRATS2018_..._5fold_splits)
-                import glob
-                pattern = os.path.join(preprocessed_base_dir, f'COMBINED_*_5fold_splits')
-                combined_dirs = glob.glob(pattern)
-                if combined_dirs:
-                    fold_split_dir = combined_dirs[0]
-                    if is_main_process(rank):
-                        print(f"Using combined fold split directory: {fold_split_dir}")
-                else:
-                    fold_split_dir = None
-                    if is_main_process(rank):
-                        print(f"Warning: Fold split directory not found: {os.path.join(preprocessed_base_dir, f'{dataset_version.upper()}_5fold_splits')}")
-                        print(f"Please run prepare_5fold_splits.py first to create fold directories.")
-            else:
-                if is_main_process(rank):
-                    print(f"Using fold split directory: {fold_split_dir}")
+            search_base_dir = preprocessed_base_dir
         else:
-            # 2. 기본 경로 (project_root/data)
-            from pathlib import Path
-            project_root = Path(__file__).parent.parent.parent.absolute()
-            fold_split_dir = str(project_root / 'data' / f'{dataset_version.upper()}_5fold_splits')
-            if not os.path.exists(fold_split_dir):
-                if is_main_process(rank):
-                    print(f"Warning: Fold split directory not found: {fold_split_dir}")
-                    print(f"Please run prepare_5fold_splits.py first to create fold directories.")
-                fold_split_dir = None
-            else:
-                if is_main_process(rank):
-                    print(f"Using fold split directory: {fold_split_dir}")
+            # 2. 기본값: /home/work/3D_/processed_data
+            search_base_dir = '/home/work/3D_/processed_data'
+        
+        # 특정 버전의 5fold_splits 디렉토리만 찾기
+        fold_split_dir = os.path.join(search_base_dir, f'{dataset_version.upper()}_5fold_splits')
+        if not os.path.exists(fold_split_dir):
+            fold_split_dir = None
+            if is_main_process(rank):
+                print(f"Error: Fold split directory not found: {fold_split_dir}")
+                print(f"Expected path: {os.path.join(search_base_dir, f'{dataset_version.upper()}_5fold_splits')}")
+                print(f"Please run prepare_5fold_splits.py first to create fold directories.")
+        else:
+            if is_main_process(rank):
+                print(f"Using fold split directory: {fold_split_dir}")
     else:
         fold_list = [None]  # 일반 모드에서는 fold 없음
         fold_split_dir = None

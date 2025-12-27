@@ -140,17 +140,27 @@ class BratsDataset3D(Dataset):
                 raise ValueError(f"No patient data found in {brats2018_dir} (checked HGG and LGG folders)")
         elif self.dataset_version in ('brats2017', 'brats2019', 'brats2020', 'brats2023', 'brats2024'):
             # 이 버전들은 전처리된 데이터를 사용하거나 5-fold 모드에서만 사용
-            # 일반 모드에서는 전처리된 데이터나 5-fold split을 사용해야 함
-            if not self.fold_split_dir:
+            # 5-fold 모드가 아니면 전처리된 H5 파일 디렉토리에서 로드
+            if self.preprocessed_dir and os.path.exists(self.preprocessed_dir):
+                # 전처리된 H5 파일 디렉토리에서 모든 H5 파일 로드
+                print(f"Loading {self.dataset_version} dataset from preprocessed directory: {self.preprocessed_dir}")
+                for h5_file in sorted(Path(self.preprocessed_dir).glob('*.h5')):
+                    # H5 파일 경로를 샘플로 저장 (__getitem__에서 사용)
+                    samples.append(str(h5_file.resolve()))
+                if not samples:
+                    raise ValueError(f"No H5 files found in preprocessed directory: {self.preprocessed_dir}")
+                print(f"  Found {len(samples)} preprocessed H5 files")
+            elif not self.fold_split_dir:
                 raise ValueError(
                     f"Dataset version {self.dataset_version} requires either:\n"
                     f"  1. use_5fold=True with fold_split_dir (5-fold cross-validation)\n"
-                    f"  2. preprocessed_dir with H5 files\n"
-                    f"Please use --use_5fold or provide preprocessed_dir."
+                    f"  2. preprocessed_dir with H5 files (current: {self.preprocessed_dir})\n"
+                    f"Please use --use_5fold or provide preprocessed_dir via --preprocessed_base_dir."
                 )
             # fold_split_dir이 있으면 _load_samples_from_fold()를 사용해야 함
             # 여기서는 에러를 발생시키지 않고 빈 리스트 반환 (실제로는 _load_samples_from_fold()가 호출되어야 함)
-            return []
+            if not samples:
+                return []
         else:
             raise ValueError(f"Unknown dataset_version: {self.dataset_version}. Supported versions: brats2017, brats2018, brats2019, brats2020, brats2021, brats2023, brats2024")
         return samples
@@ -201,15 +211,18 @@ class BratsDataset3D(Dataset):
             self._nifti_cache[patient_dir] = result
             return result
         
-        # Fold별 디렉토리에서 로드하는 경우: patient_dir이 이미 H5 파일 경로
+        # patient_dir이 H5 파일 경로인지 확인 (일반 모드에서 preprocessed_dir 사용 시)
+        is_h5_file_path = str(patient_dir).endswith('.h5')
+        
+        # Fold별 디렉토리에서 로드하는 경우 또는 H5 파일 경로를 직접 받은 경우
         is_fold_split_mode = (self.fold_split_dir and self.fold_idx is not None)
-        if is_fold_split_mode:
+        if is_fold_split_mode or is_h5_file_path:
             preprocessed_path = patient_dir
-            # fold별 디렉토리 모드에서는 H5 파일이 필수이므로, 없으면 에러 발생
+            # H5 파일이 필수이므로, 없으면 에러 발생
             if not os.path.exists(preprocessed_path):
                 raise FileNotFoundError(
                     f"Preprocessed H5 file not found: {preprocessed_path}\n"
-                    f"This is required when using fold_split_dir mode."
+                    f"This is required when using fold_split_dir mode or preprocessed_dir."
                 )
         # 전처리된 데이터 우선 로드 (HDF5)
         # 1. 별도 디렉토리 확인 (환경변수 또는 파라미터로 지정)
