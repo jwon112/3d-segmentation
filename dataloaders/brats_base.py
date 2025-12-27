@@ -313,6 +313,13 @@ class BratsDataset3D(Dataset):
             )
         
         # 원본 NIfTI 파일 로드 (fallback 또는 전처리된 데이터가 없는 경우)
+        # H5 파일인 경우 원본 NIfTI 로드 불가
+        if is_h5_file_path:
+            raise FileNotFoundError(
+                f"Cannot load NIfTI from H5 file path: {patient_dir}\n"
+                f"Preprocessed H5 file should have been loaded above."
+            )
+        
         # 캐시 미스: 파일 이름 캐싱 (lazy caching)
         # 각 worker가 독립적으로 파일 이름을 캐싱하여 os.listdir() 호출 최소화
         if patient_dir not in self._file_names_cache:

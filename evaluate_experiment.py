@@ -194,13 +194,24 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
             real_model.switch_to_deploy()
     
     # 파라미터 및 FLOPs 계산
+    # Cascade 모델의 경우 실제 입력 채널 수는 n_channels + n_coord_channels
+    if model_name.startswith('cascade_'):
+        if coord_type == 'hybrid':
+            actual_input_channels = n_channels + 9
+        elif coord_type == 'simple':
+            actual_input_channels = n_channels + 3
+        else:  # 'none'
+            actual_input_channels = n_channels
+    else:
+        actual_input_channels = n_channels
+    
     total_params = sum(p.numel() for p in real_model.parameters())
     if dim == '2d':
-        flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_2D))
-        input_size = (1, n_channels, *INPUT_SIZE_2D)
+        flops = calculate_flops(model, input_size=(1, actual_input_channels, *INPUT_SIZE_2D))
+        input_size = (1, actual_input_channels, *INPUT_SIZE_2D)
     else:
-        flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
-        input_size = (1, n_channels, *INPUT_SIZE_3D)
+        flops = calculate_flops(model, input_size=(1, actual_input_channels, *INPUT_SIZE_3D))
+        input_size = (1, actual_input_channels, *INPUT_SIZE_3D)
     
     # PAM 계산 (rank 0에서만, batch_size=1로 고정, 여러 번 측정)
     pam_train_list = []
