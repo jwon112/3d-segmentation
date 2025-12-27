@@ -725,16 +725,16 @@ def get_cascade_data_loaders(
         )
     
     def _build_val_test_loader(dataset, batch_size, sampler=None):
-        """Validation/Test loader: 메모리 사용량을 줄이기 위해 num_workers=0 (메인 프로세스에서 직접 로드)"""
+        """Validation/Test loader: num_workers=2 사용"""
         return DataLoader(
             dataset,
             batch_size=batch_size,
             shuffle=False,
             sampler=sampler,
-            num_workers=0,  # 메인 프로세스에서 직접 로드하여 메모리 사용량 최소화
-            pin_memory=False,
-            persistent_workers=False,
-            prefetch_factor=None,
+            num_workers=2,  # val/test 데이터로더에 num_workers 사용
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )
@@ -859,16 +859,16 @@ def get_roi_data_loaders(
         )
     
     def _build_val_test_loader(dataset, sampler=None):
-        """Validation/Test loader: 메모리 사용량을 줄이기 위해 num_workers=0 (메인 프로세스에서 직접 로드)"""
+        """Validation/Test loader: num_workers=2 사용"""
         return DataLoader(
             dataset,
             batch_size=batch_size,
             shuffle=False,
             sampler=sampler,
-            num_workers=0,  # 메인 프로세스에서 직접 로드하여 메모리 사용량 최소화
-            pin_memory=False,
-            persistent_workers=False,
-            prefetch_factor=None,
+            num_workers=2,  # val/test 데이터로더에 num_workers 사용
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )

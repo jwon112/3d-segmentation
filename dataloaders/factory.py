@@ -238,11 +238,11 @@ def get_data_loaders(
         val_dataset,
         batch_size=val_bs,
         shuffle=False,
-        num_workers=0,  # 메인 프로세스에서 직접 로드하여 메모리 사용량 최소화
-        pin_memory=False,
+        num_workers=2,  # val 데이터로더에 num_workers 사용
+        pin_memory=True,
         sampler=val_sampler,
-        persistent_workers=False,
-        prefetch_factor=None,
+        persistent_workers=True,
+        prefetch_factor=2,
         worker_init_fn=_worker_init_fn,
         generator=_generator,
     )
@@ -250,11 +250,11 @@ def get_data_loaders(
         test_dataset,
         batch_size=test_bs,
         shuffle=False,
-        num_workers=0,  # 메인 프로세스에서 직접 로드하여 메모리 사용량 최소화
-        pin_memory=False,
+        num_workers=2,  # test 데이터로더에 num_workers 사용
+        pin_memory=True,
         sampler=test_sampler,
-        persistent_workers=False,
-        prefetch_factor=None,
+        persistent_workers=True,
+        prefetch_factor=2,
         worker_init_fn=_worker_init_fn,
         generator=_generator,
     )
