@@ -238,7 +238,7 @@ def get_data_loaders(
         val_dataset,
         batch_size=val_bs,
         shuffle=False,
-        num_workers=2,  # val 데이터로더에 num_workers 사용
+        num_workers=3,  # val 데이터로더에 num_workers 사용
         pin_memory=True,
         sampler=val_sampler,
         persistent_workers=True,
@@ -250,7 +250,7 @@ def get_data_loaders(
         test_dataset,
         batch_size=test_bs,
         shuffle=False,
-        num_workers=2,  # test 데이터로더에 num_workers 사용
+        num_workers=3,  # test 데이터로더에 num_workers 사용
         pin_memory=True,
         sampler=test_sampler,
         persistent_workers=True,
