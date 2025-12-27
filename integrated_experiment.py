@@ -82,8 +82,9 @@ if __name__ == "__main__":
                        help='Number of crops per center during training (1=single crop, 2=2x2x2=8 crops, 3=3x3x3=27 crops). Each epoch randomly samples one crop from multiple positions. (default: 1)')
     parser.add_argument('--train_crop_overlap', type=float, default=0.5,
                        help='Overlap ratio between crops during training (0.0 ~ 1.0). If not specified, uses --crop_overlap value. (default: 0.5)')
-    parser.add_argument('--no_coords', action='store_true', default=False,
-                       help='Disable coordinate channels (x, y, z) for cascade models. Default: False (coords enabled)')
+    parser.add_argument('--coord_type', type=str, default='none',
+                       choices=['none', 'simple', 'hybrid'],
+                       help='Coordinate encoding type: none (no coords, 4 channels), simple (3 coord channels, 7 total), hybrid (9 coord channels, 13 total). Default: none')
     parser.add_argument('--use_4modalities', action='store_true', default=False,
                        help='Use 4 modalities (T1, T1CE, T2, FLAIR) instead of 2 (T1CE, FLAIR). Default: False (uses 2 modalities)')
     parser.add_argument('--preprocessed_base_dir', type=str, default='/home/work/3D_/processed_data',
@@ -130,7 +131,7 @@ if __name__ == "__main__":
     print(f"MRI Augmentation: {'Enabled' if args.use_mri_augmentation else 'Disabled'}")
     print(f"Anisotropy Augmentation: {'Enabled' if args.anisotropy_augmentation else 'Disabled'}")
     print(f"Modalities: {'4 (T1, T1CE, T2, FLAIR)' if args.use_4modalities else '2 (T1CE, FLAIR)'}")
-    print(f"Coordinate channels (for cascade models): {'Enabled' if not args.no_coords else 'Disabled'}")
+    print(f"Coordinate encoding type: {args.coord_type} ({'no coords' if args.coord_type == 'none' else '3 channels' if args.coord_type == 'simple' else '9 channels'})")
     print(f"Results will be saved in: baseline_results/ folder")
     if args.use_5fold:
         print(f"Using 5-fold cross-validation")
@@ -152,7 +153,7 @@ if __name__ == "__main__":
             'roi_weight_path': args.roi_weight_path,
             'roi_resize': tuple(args.roi_resize),
             'crop_size': tuple(args.cascade_crop_size),
-            'include_coords': not args.no_coords,
+            'coord_type': args.coord_type,
             'crops_per_center': args.crops_per_center,
             'crop_overlap': args.crop_overlap,
             'use_blending': args.use_crop_blending,
@@ -180,7 +181,7 @@ if __name__ == "__main__":
             cascade_model_cfg=cascade_model_cfg,
             train_crops_per_center=args.train_crops_per_center,
             train_crop_overlap=args.train_crop_overlap,
-            include_coords=not args.no_coords,
+            coord_type=args.coord_type,
             use_4modalities=args.use_4modalities,
             preprocessed_base_dir=args.preprocessed_base_dir,
         )

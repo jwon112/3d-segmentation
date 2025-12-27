@@ -30,7 +30,7 @@ from utils.runner.evaluation import evaluate_model
 from utils.runner.cascade_evaluation import load_roi_model_from_checkpoint, evaluate_segmentation_with_roi
 
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, cascade_infer_cfg=None, cascade_model_cfg=None, train_crops_per_center=1, train_crop_overlap=0.5, anisotropy_augment: bool = False, include_coords: bool = True, use_4modalities: bool = False, preprocessed_base_dir=None):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, cascade_infer_cfg=None, cascade_model_cfg=None, train_crops_per_center=1, train_crop_overlap=0.5, anisotropy_augment: bool = False, coord_type: str = 'none', use_4modalities: bool = False, preprocessed_base_dir=None):
     """3D Segmentation 통합 실험 실행
     
     Args:
@@ -48,12 +48,26 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         use_5fold: 5-fold cross-validation 사용 여부
     """
     
+    # coord_type에 따라 include_coords와 coord_encoding_type 결정
+    if coord_type == 'none':
+        include_coords = False
+        coord_encoding_type = 'simple'  # 사용 안 하지만 기본값
+    elif coord_type == 'simple':
+        include_coords = True
+        coord_encoding_type = 'simple'
+    elif coord_type == 'hybrid':
+        include_coords = True
+        coord_encoding_type = 'hybrid'
+    else:
+        raise ValueError(f"Unknown coord_type: {coord_type}. Must be 'none', 'simple', or 'hybrid'")
+    
     # 실험 결과 저장 디렉토리
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_dir = f"baseline_results/integrated_experiment_results_{timestamp}"
     os.makedirs(results_dir, exist_ok=True)
     print(f"Train data augmentation: {'MRI augmentations' if use_mri_augmentation else 'None'}")
     print(f"Anisotropy augmentation: {'On' if anisotropy_augment else 'Off'}")
+    print(f"Coordinate encoding type: {coord_type} (include_coords={include_coords}, encoding={coord_encoding_type})")
     
     # 사용 가능한 모델들 검증 및 필터링
     available_models = validate_and_filter_models(models)
@@ -74,54 +88,16 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         print(f"\nUsing device: {device}")
     
     # 데이터셋 경로 확인 (dataset_version에 따라)
-    # 5-fold 모드이거나 전처리된 데이터를 사용하는 경우 dataset_dir 체크를 건너뛰어도 됨
-    # (전처리된 데이터가 있으면 원본 디렉토리가 없어도 됨)
-    dataset_dir = None
-    if dataset_version == 'brats2017':
-        dataset_dir = os.path.join(data_path, 'BRATS2017', 'Brats17TrainingData')
+    if dataset_version == 'brats2021':
+        dataset_dir = os.path.join(data_path, 'BRATS2021', 'BraTS2021_Training_Data')
     elif dataset_version == 'brats2018':
         dataset_dir = os.path.join(data_path, 'BRATS2018', 'MICCAI_BraTS_2018_Data_Training')
-    elif dataset_version == 'brats2019':
-        dataset_dir = os.path.join(data_path, 'BRATS2019')
-    elif dataset_version == 'brats2020':
-        dataset_dir = os.path.join(data_path, 'BRATS2020', 'MICCAI_BraTS2020_TrainingData')
-    elif dataset_version == 'brats2021':
-        dataset_dir = os.path.join(data_path, 'BRATS2021', 'BraTS2021_Training_Data')
-    elif dataset_version == 'brats2023':
-        dataset_dir = os.path.join(data_path, 'BRATS2023', 'ASNR-MICCAI-BraTS2023-GLI-Challenge-TrainingData')
-    elif dataset_version == 'brats2024':
-        # BRATS2024는 두 개의 학습 디렉토리를 사용
-        dataset_dir = os.path.join(data_path, 'BRATS2024')
     else:
         raise ValueError(f"Unknown dataset_version: {dataset_version}")
     
-    # 전처리된 데이터가 있으면 원본 디렉토리 체크를 건너뛸 수 있음
-    # 하지만 경고는 출력
-    if dataset_dir and not os.path.exists(dataset_dir):
-        if is_main_process(rank):
-            print(f"Warning: Dataset {dataset_version} not found at {dataset_dir}")
-            if preprocessed_dir:
-                print(f"Using preprocessed data from: {preprocessed_dir}")
-            else:
-                print(f"Skipping...")
-                return None, pd.DataFrame()
-    
-    # 전처리된 데이터 디렉토리 설정
-    preprocessed_dir = None
-    if preprocessed_base_dir:
-        from pathlib import Path
-        preprocessed_base = Path(preprocessed_base_dir)
-        # dataset_version에 따라 적절한 디렉토리 경로 생성
-        version_upper = dataset_version.upper()
-        preprocessed_dir_path = preprocessed_base / version_upper
-        if preprocessed_dir_path.exists():
-            preprocessed_dir = str(preprocessed_dir_path)
-            if is_main_process(rank):
-                print(f"Using preprocessed data from: {preprocessed_dir}")
-        else:
-            if is_main_process(rank):
-                print(f"Warning: Preprocessed directory not found: {preprocessed_dir_path}")
-                print(f"Falling back to default preprocessed directory or original NIfTI files")
+    if not os.path.exists(dataset_dir):
+        print(f"Warning: Dataset {dataset_version} not found at {dataset_dir}. Skipping...")
+        return None, pd.DataFrame()
     
     print(f"\n{'#'*80}")
     print(f"Dataset Version: {dataset_version.upper()}")
@@ -135,28 +111,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         print(f"{'='*60}")
         # Fold별 디렉토리 경로 설정
         from pathlib import Path
-        
-        # 1. preprocessed_base_dir이 있으면 그 하위에서 찾기
-        if preprocessed_base_dir:
-            preprocessed_base = Path(preprocessed_base_dir)
-            # 단일 버전: BRATS2024_5fold_splits
-            # 다중 버전: COMBINED_BRATS2017_BRATS2018_..._5fold_splits
-            version_upper = dataset_version.upper()
-            fold_split_dir_candidate = preprocessed_base / f'{version_upper}_5fold_splits'
-            
-            # 단일 버전 경로가 없으면 COMBINED 경로도 확인 (다중 버전일 수 있음)
-            if not fold_split_dir_candidate.exists():
-                # COMBINED_로 시작하는 디렉토리 찾기
-                combined_dirs = list(preprocessed_base.glob('COMBINED_*_5fold_splits'))
-                if combined_dirs:
-                    fold_split_dir_candidate = combined_dirs[0]  # 첫 번째 것 사용
-            
-            fold_split_dir = str(fold_split_dir_candidate) if fold_split_dir_candidate.exists() else None
-        else:
-            # 2. 기본값: 프로젝트 루트의 data/ 디렉토리
-            project_root = Path(__file__).parent.parent.parent.absolute()
-            fold_split_dir = str(project_root / 'data' / f'{dataset_version.upper()}_5fold_splits')
-        
+        project_root = Path(__file__).parent.parent.parent.absolute()
+        fold_split_dir = str(project_root / 'data' / f'{dataset_version.upper()}_5fold_splits')
         if not os.path.exists(fold_split_dir):
             if is_main_process(rank):
                 print(f"Warning: Fold split directory not found: {fold_split_dir}")
@@ -237,8 +193,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             train_crops_per_center=train_crops_per_center,  # 학습 시 multi-crop 샘플링
                             train_crop_overlap=train_crop_overlap,
                             anisotropy_augment=anisotropy_augment,
-                            include_coords=include_coords,
-                            preprocessed_dir=preprocessed_dir,  # 전처리된 데이터 디렉토리
+                            coord_type=coord_type,  # 좌표 타입 전달
+                            preprocessed_dir=preprocessed_base_dir,  # 전처리된 데이터 디렉토리
                         )
                     except Exception as e:
                         if is_main_process(rank):
@@ -251,7 +207,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     try:
                         if is_main_process(rank):
                             print(f"Creating model: {model_name}...")
-                        model = get_model(model_name, n_channels=n_channels, n_classes=4, dim=dim, use_pretrained=use_pretrained, include_coords=include_coords)
+                        model = get_model(model_name, n_channels=n_channels, n_classes=4, dim=dim, use_pretrained=use_pretrained, coord_type=coord_type)
                         if is_main_process(rank):
                             print(f"Model {model_name} created successfully.")
                     except Exception as e:
@@ -295,10 +251,18 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         print("=" * 50)
                     
                     # 입력 크기 설정 (PAM, Latency 공용)
-                    # Cascade 모델은 n_channels(모달리티 수) + (3 if include_coords else 0)
+                    # Cascade 모델은 n_channels(모달리티 수) + coord_channels
                     actual_n_channels = n_channels
                     if model_name.startswith('cascade_'):
-                        actual_n_channels = n_channels + (3 if include_coords else 0)  # 모달리티 수 + (3 CoordConv if enabled)
+                        if coord_type == 'none':
+                            coord_channels = 0
+                        elif coord_type == 'simple':
+                            coord_channels = 3
+                        elif coord_type == 'hybrid':
+                            coord_channels = 9
+                        else:
+                            coord_channels = 0
+                        actual_n_channels = n_channels + coord_channels  # 모달리티 수 + coord channels
                     
                     if dim == '2d':
                         input_size = (1, actual_n_channels, *INPUT_SIZE_2D)
@@ -533,7 +497,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                     seed=seed,
                                     roi_resize=roi_resize,
                                     crop_size=crop_size,
-                                    include_coords=detected_include_coords,  # 감지된 값 사용
+                                    include_coords=include_coords,  # coord_type에서 결정된 값 사용
+                                    coord_encoding_type=coord_encoding_type,  # coord_type에서 결정된 값 사용
                                     use_5fold=use_5fold,
                                     fold_idx=fold_idx if use_5fold else None,
                                     crops_per_center=crops_per_center,
@@ -577,7 +542,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             best_val_et=best_val_et,
                             best_epoch=best_epoch,
                             cascade_metrics=cascade_metrics,
-                            roi_model_name=roi_model_name_for_result
+                            roi_model_name=roi_model_name_for_result,
+                            coord_type=coord_type  # 좌표 타입 추가
                         )
                         all_results.append(result)
                         

@@ -40,14 +40,28 @@ def get_data_loaders(
     train_crops_per_center: int = 1,
     train_crop_overlap: float = 0.5,
     anisotropy_augment: bool = False,
-    include_coords: bool = True,
+    coord_type: str = 'none',
     preprocessed_dir: Optional[str] = None,
 ):
     """공통 get_data_loaders 진입점 (기존 data_loader.get_data_loaders와 동일 인터페이스).
     
     Args:
         model_name: 모델 이름. cascade 모델인 경우 자동으로 cascade 데이터로더 사용.
+        coord_type: 좌표 인코딩 타입 ('none', 'simple', 'hybrid')
     """
+    # coord_type에 따라 include_coords와 coord_encoding_type 결정
+    if coord_type == 'none':
+        include_coords = False
+        coord_encoding_type = 'simple'  # 사용 안 하지만 기본값
+    elif coord_type == 'simple':
+        include_coords = True
+        coord_encoding_type = 'simple'
+    elif coord_type == 'hybrid':
+        include_coords = True
+        coord_encoding_type = 'hybrid'
+    else:
+        raise ValueError(f"Unknown coord_type: {coord_type}. Must be 'none', 'simple', or 'hybrid'")
+    
     # Cascade 모델인 경우 cascade 데이터로더 사용 (segmentation 단계만)
     if model_name and model_name.startswith('cascade_'):
         cascade_loaders = get_cascade_data_loaders(
@@ -64,6 +78,7 @@ def get_data_loaders(
             roi_resize=(64, 64, 64),  # ROI 모델 기본 크기
             seg_crop_size=(96, 96, 96),  # Segmentation 모델 기본 크기
             include_coords=include_coords,
+            coord_encoding_type=coord_encoding_type,
             center_jitter=0,  # 학습 시에는 jitter 없음 (또는 옵션으로 추가 가능)
             distributed=distributed,
             world_size=world_size,
@@ -72,7 +87,7 @@ def get_data_loaders(
             anisotropy_augment=anisotropy_augment,
             train_crops_per_center=train_crops_per_center,
             train_crop_overlap=train_crop_overlap,
-            use_4modalities=use_4modalities,  # 모달리티 선택 가능
+            use_4modalities=use_4modalities,
             preprocessed_dir=preprocessed_dir,
         )
         # Segmentation 데이터로더만 반환 (일반 get_data_loaders와 동일한 형식)
@@ -106,7 +121,6 @@ def get_data_loaders(
                 dataset_version=dataset_version,
                 use_4modalities=use_4modalities,
                 max_cache_size=0,
-                preprocessed_dir=preprocessed_dir,
                 fold_split_dir=fold_split_dir,
                 fold_idx=fold_idx,
             )
@@ -117,7 +131,6 @@ def get_data_loaders(
                 dataset_version=dataset_version,
                 use_4modalities=use_4modalities,
                 max_cache_size=0,
-                preprocessed_dir=preprocessed_dir,
                 fold_split_dir=fold_split_dir,
                 fold_idx=fold_idx,
             )
@@ -128,7 +141,6 @@ def get_data_loaders(
                 dataset_version=dataset_version,
                 use_4modalities=use_4modalities,
                 max_cache_size=0,
-                preprocessed_dir=preprocessed_dir,
                 fold_split_dir=fold_split_dir,
                 fold_idx=fold_idx,
             )
@@ -147,7 +159,6 @@ def get_data_loaders(
                 dataset_version=dataset_version,
                 use_4modalities=use_4modalities,
                 max_cache_size=0,  # 캐싱 비활성화: 순수 I/O 성능 측정
-                preprocessed_dir=preprocessed_dir,
             )
 
         train_dataset, val_dataset, test_dataset = split_brats_dataset(

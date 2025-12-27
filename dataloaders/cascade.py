@@ -531,17 +531,8 @@ def get_cascade_data_loaders(
     anisotropy_augment: bool = False,
     train_crops_per_center: int = 1,
     train_crop_overlap: float = 0.5,
-    use_4modalities: bool = False,
-    preprocessed_dir: Optional[str] = None,
 ):
-    """ROI detection + cascade segmentation loaders with CoordConv support.
-    
-    Args:
-        use_4modalities: If True, use 4 modalities (T1, T1CE, T2, FLAIR).
-                         If False, use 2 modalities (T1CE, FLAIR only).
-                         H5 files are stored with 4 modalities by default,
-                         and this parameter controls which modalities to extract.
-    """
+    """ROI detection + cascade segmentation loaders with CoordConv support."""
     train_base, val_base, test_base = get_brats_base_datasets(
         data_dir=data_dir,
         dataset_version=dataset_version,
@@ -550,9 +541,8 @@ def get_cascade_data_loaders(
         use_5fold=use_5fold,
         fold_idx=fold_idx,
         fold_split_dir=fold_split_dir,
-        use_4modalities=use_4modalities,
+        use_4modalities=True,
         max_cache_size=0,  # 캐싱 비활성화: 순수 I/O 성능 측정
-        preprocessed_dir=preprocessed_dir,
     )
 
     train_base_dataset = train_base.dataset if hasattr(train_base, 'dataset') else train_base
