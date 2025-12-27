@@ -155,11 +155,11 @@ def validate_and_filter_models(models: Optional[List[str]]) -> List[str]:
 def get_n_channels_for_model(model_name: str) -> int:
     """모델 이름에 따라 필요한 입력 채널 수 반환
     
-    Note: Cascade 모델의 경우 실제 입력은 7채널(4 MRI + 3 CoordConv)이지만,
-    데이터로더에서 자동으로 처리되므로 여기서는 4채널로 반환합니다.
+    Note: Cascade 모델도 기본값은 2 modalities입니다. 4 modalities를 사용하려면 --use_4modalities를 명시적으로 지정해야 합니다.
     """
-    if model_name in MODELS_WITH_4_MODALITIES or model_name.startswith('quadbranch_') or model_name.startswith('cascade_'):
+    if model_name in MODELS_WITH_4_MODALITIES or model_name.startswith('quadbranch_'):
         return 4
+    # cascade 모델도 기본값은 2 modalities
     return 2
 
 

@@ -39,44 +39,7 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     비정상적으로 중단된 학습이나 여러 실험의 best.pt를 모아서 평가할 때 사용
     """
     
-    # 모델에 따라 use_4modalities 및 n_channels 결정
-    use_4modalities = (model_name in ['unet3d_4modal_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s'] or
-                      model_name.startswith('quadbranch_'))
-    if use_4modalities:
-        n_channels = 4
-    else:
-        n_channels = 2
-    
-    # 데이터 로더 생성
-    # preprocessed_base_dir이 제공되면 버전별 디렉토리로 변환
-    preprocessed_dir = None
-    if preprocessed_base_dir:
-        preprocessed_dir = os.path.join(preprocessed_base_dir, dataset_version.upper())
-        if is_main_process(rank):
-            print(f"[Debug] preprocessed_base_dir: {preprocessed_base_dir}")
-            print(f"[Debug] Using preprocessed directory: {preprocessed_dir}")
-    else:
-        if is_main_process(rank):
-            print(f"[Debug] preprocessed_base_dir is None or empty")
-    
-    train_loader, val_loader, test_loader, _, _, _ = get_data_loaders(
-        data_dir=data_path,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        max_samples=None,
-        dim=dim,
-        dataset_version=dataset_version,
-        seed=seed,
-        distributed=distributed,
-        world_size=world_size,
-        rank=rank,
-        use_4modalities=use_4modalities,
-        use_5fold=use_5fold,
-        fold_idx=fold_idx,
-        preprocessed_dir=preprocessed_dir
-    )
-    
-    # 체크포인트 로드 (5-fold 지원) - 먼저 체크포인트를 로드해서 coord_type 감지
+    # 체크포인트 로드 (5-fold 지원) - 먼저 체크포인트를 로드해서 coord_type과 modalities 수 감지
     if use_5fold and fold_idx is not None:
         ckpt_path = os.path.join(results_dir, f"{model_name}_seed_{seed}_fold_{fold_idx}_best.pth")
     else:
@@ -145,12 +108,13 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
             if is_main_process(rank):
                 print(f"[Debug] Could not find first layer in checkpoint. Available keys (first 10): {list(state.keys())[:10]}")
     
-    # 감지된 modalities 수로 n_channels 업데이트
+    # 감지된 modalities 수로 n_channels 및 use_4modalities 업데이트
     # 주의: get_model은 n_channels에 modalities 수만 전달하고, coord_type을 통해 coord channels를 별도로 처리합니다
     n_channels = detected_n_modalities
+    use_4modalities = (detected_n_modalities == 4)
     
     if is_main_process(rank):
-        print(f"[Debug] Creating model with n_channels={n_channels}, coord_type={coord_type}")
+        print(f"[Debug] Creating model with n_channels={n_channels}, coord_type={coord_type}, use_4modalities={use_4modalities}")
         if model_name.startswith('cascade_'):
             if coord_type == 'hybrid':
                 expected_total = n_channels + 9
@@ -159,6 +123,35 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
             else:
                 expected_total = n_channels
             print(f"[Debug] Expected total input channels: {expected_total} (n_image_channels={n_channels} + n_coord_channels={9 if coord_type == 'hybrid' else 3 if coord_type == 'simple' else 0})")
+    
+    # 데이터 로더 생성 (체크포인트에서 감지한 use_4modalities 사용)
+    # preprocessed_base_dir이 제공되면 버전별 디렉토리로 변환
+    preprocessed_dir = None
+    if preprocessed_base_dir:
+        preprocessed_dir = os.path.join(preprocessed_base_dir, dataset_version.upper())
+        if is_main_process(rank):
+            print(f"[Debug] preprocessed_base_dir: {preprocessed_base_dir}")
+            print(f"[Debug] Using preprocessed directory: {preprocessed_dir}")
+    else:
+        if is_main_process(rank):
+            print(f"[Debug] preprocessed_base_dir is None or empty")
+    
+    train_loader, val_loader, test_loader, _, _, _ = get_data_loaders(
+        data_dir=data_path,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        max_samples=None,
+        dim=dim,
+        dataset_version=dataset_version,
+        seed=seed,
+        distributed=distributed,
+        world_size=world_size,
+        rank=rank,
+        use_4modalities=use_4modalities,  # 체크포인트에서 감지한 값 사용
+        use_5fold=use_5fold,
+        fold_idx=fold_idx,
+        preprocessed_dir=preprocessed_dir
+    )
     
     # 모델 생성 (coord_type 전달)
     # get_model 내부에서 coord_type에 따라 n_coord_channels를 계산하고 n_image_channels + n_coord_channels로 모델을 생성합니다

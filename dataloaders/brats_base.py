@@ -274,13 +274,17 @@ class BratsDataset3D(Dataset):
                                         warnings.warn(f"Foreground coordinates for class {cls} exceed int32 range: {coords_shape[0]}")
                                 fg_coords_dict[cls] = torch.from_numpy(coords_array).long()
                 
-                # 모달리티 수 확인
-                if self.use_4modalities and image.shape[0] != 4:
-                    # 전처리된 데이터가 2모달리티인데 4모달리티가 필요한 경우
-                    raise ValueError("Preprocessed data has wrong number of modalities")
-                elif not self.use_4modalities and image.shape[0] != 2:
-                    # 전처리된 데이터가 4모달리티인데 2모달리티가 필요한 경우
-                    raise ValueError("Preprocessed data has wrong number of modalities")
+                # 모달리티 수 확인 및 선택
+                # H5 파일은 항상 4 modalities (T1, T1CE, T2, FLAIR)로 저장되어 있음
+                if image.shape[0] != 4:
+                    raise ValueError(f"Preprocessed H5 file should have 4 modalities, but got {image.shape[0]}")
+                
+                # use_4modalities에 따라 필요한 모달리티만 선택
+                # H5 파일 순서: [T1, T1CE, T2, FLAIR] = [0, 1, 2, 3]
+                # 2 modalities 사용 시: T1CE (index 1)와 FLAIR (index 3)만 선택
+                if not self.use_4modalities:
+                    # T1CE와 FLAIR만 선택 (indices 1, 3)
+                    image = image[[1, 3], :, :, :]  # (2, H, W, D)
                 
                 # 포그라운드 좌표가 있으면 함께 반환
                 if fg_coords_dict:
@@ -473,6 +477,14 @@ class BratsDataset2D(Dataset):
                 with h5py.File(preprocessed_path, 'r') as f:
                     image_vol = torch.from_numpy(f['image'][:]).float()  # (C, H, W, D)
                     mask_vol = torch.from_numpy(f['mask'][:]).long()      # (H, W, D)
+                
+                # H5 파일은 항상 4 modalities (T1, T1CE, T2, FLAIR)로 저장되어 있음
+                # use_4modalities에 따라 필요한 모달리티만 선택
+                # H5 파일 순서: [T1, T1CE, T2, FLAIR] = [0, 1, 2, 3]
+                # 2 modalities 사용 시: T1CE (index 1)와 FLAIR (index 3)만 선택
+                if not self.use_4modalities:
+                    # T1CE와 FLAIR만 선택 (indices 1, 3)
+                    image_vol = image_vol[[1, 3], :, :, :]  # (2, H, W, D)
                 
                 # 슬라이스 추출
                 image_slice = image_vol[:, :, :, slice_idx]  # (C, H, W)
