@@ -551,7 +551,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     
     # 지원하는 모델 목록 정의 (패턴 기반)
     SUPPORTED_MODEL_PATTERNS = [
-        'unet3d_', 'unet3d_stride_', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d',
+        'unet3d_', 'unet3d_stride_', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'segformer3d',
         'dualbranch_01_unet_', 'dualbranch_02_unet_', 'dualbranch_03_unet_', 'dualbranch_04_unet_',
         'dualbranch_05_unet_', 'dualbranch_06_unet_', 'dualbranch_07_unet_', 'dualbranch_10_unet_',
         'dualbranch_11_unet_', 'dualbranch_13_unet_', 'dualbranch_14_',
@@ -726,6 +726,28 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 out_channels=n_classes
             )
         return _create_model_with_error_handling(model_name, _create_mobile_unetr_3d)
+    elif model_name == 'segformer3d':
+        # SegFormer3D 모델
+        if dim != '3d':
+            raise ValueError("SegFormer3D is only supported for 3D data (dim='3d')")
+        
+        def _create_segformer3d():
+            from models.model_segformer3d import SegFormer3D
+            return SegFormer3D(
+                in_channels=n_channels,
+                sr_ratios=[4, 2, 1, 1],
+                embed_dims=[32, 64, 160, 256],
+                patch_kernel_size=[7, 3, 3, 3],
+                patch_stride=[4, 2, 2, 2],
+                patch_padding=[3, 1, 1, 1],
+                mlp_ratios=[4, 4, 4, 4],
+                num_heads=[1, 2, 5, 8],
+                depths=[2, 2, 2, 2],
+                decoder_head_embedding_dim=256,
+                num_classes=n_classes,
+                decoder_dropout=0.0,
+            )
+        return _create_model_with_error_handling(model_name, _create_segformer3d)
     elif model_name.startswith('dualbranch_01_unet_'):
         # Dual-branch 3D UNet (v0.1) - Support xs, s, m, l sizes
         try:

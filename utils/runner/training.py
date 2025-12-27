@@ -97,6 +97,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     best_val_dice = 0.0
     best_epoch = 0
     best_val_wt = best_val_tc = best_val_et = 0.0
+    epochs_without_improvement = 0  # Early stopping을 위한 카운터
+    early_stopping_patience = 30  # 30 epoch 동안 개선 없으면 중단
     
     # 체크포인트 저장 경로 (실험 결과 폴더 내부)
     if results_dir is None:
@@ -328,6 +330,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             best_val_tc = va_tc
             best_val_et = va_et
             best_epoch = epoch + 1
+            epochs_without_improvement = 0  # 개선됨 - 카운터 리셋
             checkpoint_saved = True
             if is_main_process(rank):
                 # DDP 모델의 경우 module을 통해 접근
@@ -344,6 +347,15 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                             m._buffers.pop(bname, None)
                 torch.save(model_to_save.state_dict(), ckpt_path)
                 print(f"[Epoch {epoch+1}] Saved best checkpoint (Val Dice: {va_dice:.4f}) to {ckpt_path}")
+        else:
+            epochs_without_improvement += 1  # 개선 없음
+        
+        # Early stopping 체크
+        if epochs_without_improvement >= early_stopping_patience:
+            if is_main_process(rank):
+                print(f"\n[Early Stopping] No improvement for {early_stopping_patience} epochs. Stopping training.")
+                print(f"Best validation dice: {best_val_dice:.4f} at epoch {best_epoch}")
+            break
         
         # Epoch 결과 저장 (test_dice는 최종 평가 시에만 설정됨)
         epoch_results.append({
