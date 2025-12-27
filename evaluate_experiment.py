@@ -146,22 +146,23 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
                 print(f"[Debug] Could not find first layer in checkpoint. Available keys (first 10): {list(state.keys())[:10]}")
     
     # 감지된 modalities 수로 n_channels 업데이트
+    # 주의: get_model은 n_channels에 modalities 수만 전달하고, coord_type을 통해 coord channels를 별도로 처리합니다
     n_channels = detected_n_modalities
     
-    # coord_type에 따라 n_channels 조정 (cascade 모델의 경우)
-    if model_name.startswith('cascade_'):
-        if coord_type == 'simple':
-            n_coord_channels = 3
-        elif coord_type == 'hybrid':
-            n_coord_channels = 9
-        else:  # 'none'
-            n_coord_channels = 0
-        actual_n_channels = n_channels + n_coord_channels
-    else:
-        actual_n_channels = n_channels
+    if is_main_process(rank):
+        print(f"[Debug] Creating model with n_channels={n_channels}, coord_type={coord_type}")
+        if model_name.startswith('cascade_'):
+            if coord_type == 'hybrid':
+                expected_total = n_channels + 9
+            elif coord_type == 'simple':
+                expected_total = n_channels + 3
+            else:
+                expected_total = n_channels
+            print(f"[Debug] Expected total input channels: {expected_total} (n_image_channels={n_channels} + n_coord_channels={9 if coord_type == 'hybrid' else 3 if coord_type == 'simple' else 0})")
     
     # 모델 생성 (coord_type 전달)
-    model = get_model(model_name, n_channels=actual_n_channels, n_classes=4, dim=dim, coord_type=coord_type)
+    # get_model 내부에서 coord_type에 따라 n_coord_channels를 계산하고 n_image_channels + n_coord_channels로 모델을 생성합니다
+    model = get_model(model_name, n_channels=n_channels, n_classes=4, dim=dim, coord_type=coord_type)
     
     # DDP wrap if distributed
     if distributed:
