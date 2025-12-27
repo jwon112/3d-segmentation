@@ -253,6 +253,7 @@ class BratsCascadeROIDataset(Dataset):
         base_dataset: Dataset,
         target_size: Sequence[int] = (64, 64, 64),
         include_coords: bool = True,
+        coord_encoding_type: str = 'simple',
         augment: bool = False,
         anisotropy_augment: bool = False,
         deterministic: bool = False,  # Validation/Test에서 재현 가능한 augmentation을 위한 플래그
@@ -260,6 +261,7 @@ class BratsCascadeROIDataset(Dataset):
         self.base_dataset = base_dataset
         self.target_size = _to_3tuple(target_size)
         self.include_coords = include_coords
+        self.coord_encoding_type = coord_encoding_type
         self.augment = augment
         self.anisotropy_augment = anisotropy_augment
         self.deterministic = deterministic
@@ -358,6 +360,7 @@ class BratsCascadeSegmentationDataset(Dataset):
         base_dataset: Dataset,
         crop_size: Sequence[int] = (96, 96, 96),
         include_coords: bool = True,
+        coord_encoding_type: str = 'simple',
         center_jitter: int = 0,
         augment: bool = False,
         anisotropy_augment: bool = False,
@@ -369,6 +372,7 @@ class BratsCascadeSegmentationDataset(Dataset):
         self.base_dataset = base_dataset
         self.crop_size = _to_3tuple(crop_size)
         self.include_coords = include_coords
+        self.coord_encoding_type = coord_encoding_type
         self.center_jitter = max(0, int(center_jitter))
         self.augment = augment
         self.anisotropy_augment = anisotropy_augment
@@ -523,6 +527,7 @@ def get_cascade_data_loaders(
     roi_resize: Sequence[int] = (64, 64, 64),
     seg_crop_size: Sequence[int] = (96, 96, 96),
     include_coords: bool = True,
+    coord_encoding_type: str = 'simple',
     center_jitter: int = 0,
     distributed: bool = False,
     world_size: Optional[int] = None,
@@ -531,6 +536,8 @@ def get_cascade_data_loaders(
     anisotropy_augment: bool = False,
     train_crops_per_center: int = 1,
     train_crop_overlap: float = 0.5,
+    use_4modalities: bool = True,
+    preprocessed_dir: Optional[str] = None,
 ):
     """ROI detection + cascade segmentation loaders with CoordConv support."""
     train_base, val_base, test_base = get_brats_base_datasets(
@@ -541,8 +548,9 @@ def get_cascade_data_loaders(
         use_5fold=use_5fold,
         fold_idx=fold_idx,
         fold_split_dir=fold_split_dir,
-        use_4modalities=True,
+        use_4modalities=use_4modalities,
         max_cache_size=0,  # 캐싱 비활성화: 순수 I/O 성능 측정
+        preprocessed_dir=preprocessed_dir,
     )
 
     train_base_dataset = train_base.dataset if hasattr(train_base, 'dataset') else train_base
@@ -560,6 +568,7 @@ def get_cascade_data_loaders(
         train_base,
         target_size=roi_resize,
         include_coords=include_coords,
+        coord_encoding_type=coord_encoding_type,
         augment=use_mri_augmentation,
         anisotropy_augment=anisotropy_augment,
     )
@@ -567,6 +576,7 @@ def get_cascade_data_loaders(
         val_base, 
         target_size=roi_resize, 
         include_coords=include_coords,
+        coord_encoding_type=coord_encoding_type,
         augment=False,  # 일반 augmentation은 validation에서 사용 안 함
         anisotropy_augment=anisotropy_augment,  # Validation에도 이방성 augmentation 적용
         deterministic=True,  # Validation에서는 재현 가능한 augmentation 적용
@@ -575,6 +585,7 @@ def get_cascade_data_loaders(
         test_base, 
         target_size=roi_resize, 
         include_coords=include_coords,
+        coord_encoding_type=coord_encoding_type,
         augment=False,  # 일반 augmentation은 test에서 사용 안 함
         anisotropy_augment=anisotropy_augment,  # Test에도 이방성 augmentation 적용
         deterministic=True,  # Test에서는 재현 가능한 augmentation 적용
@@ -584,6 +595,7 @@ def get_cascade_data_loaders(
         train_base,
         crop_size=seg_crop_size,
         include_coords=include_coords,
+        coord_encoding_type=coord_encoding_type,
         center_jitter=center_jitter,
         augment=use_mri_augmentation,
         anisotropy_augment=anisotropy_augment,
@@ -595,6 +607,7 @@ def get_cascade_data_loaders(
         val_base,
         crop_size=seg_crop_size,
         include_coords=include_coords,
+        coord_encoding_type=coord_encoding_type,
         center_jitter=0,
         augment=False,
         anisotropy_augment=anisotropy_augment,  # Validation에도 이방성 augmentation 적용
@@ -604,6 +617,7 @@ def get_cascade_data_loaders(
         test_base,
         crop_size=seg_crop_size,
         include_coords=include_coords,
+        coord_encoding_type=coord_encoding_type,
         center_jitter=0,
         augment=False,
         anisotropy_augment=anisotropy_augment,  # Test에도 이방성 augmentation 적용

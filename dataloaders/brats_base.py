@@ -582,6 +582,7 @@ def get_brats_base_datasets(
     fold_split_dir: Optional[str] = None,
     use_4modalities: bool = True,
     max_cache_size: Optional[int] = None,
+    preprocessed_dir: Optional[str] = None,
 ):
     """Create base BratsDataset3D and return train/val/test splits."""
     # 5-fold 모드이고 fold_split_dir이 지정된 경우: fold별 디렉토리에서 직접 로드
@@ -595,6 +596,7 @@ def get_brats_base_datasets(
             max_cache_size=max_cache_size if max_cache_size is not None else 0,
             fold_split_dir=fold_split_dir,
             fold_idx=fold_idx,
+            preprocessed_dir=preprocessed_dir,
         )
         val_dataset = BratsDataset3D(
             data_dir,
@@ -605,6 +607,7 @@ def get_brats_base_datasets(
             max_cache_size=max_cache_size if max_cache_size is not None else 0,
             fold_split_dir=fold_split_dir,
             fold_idx=fold_idx,
+            preprocessed_dir=preprocessed_dir,
         )
         test_dataset = BratsDataset3D(
             data_dir,
@@ -615,6 +618,7 @@ def get_brats_base_datasets(
             max_cache_size=max_cache_size if max_cache_size is not None else 0,
             fold_split_dir=fold_split_dir,
             fold_idx=fold_idx,
+            preprocessed_dir=preprocessed_dir,
         )
         return train_dataset, val_dataset, test_dataset
     
@@ -626,6 +630,7 @@ def get_brats_base_datasets(
         dataset_version=dataset_version,
         use_4modalities=use_4modalities,
         max_cache_size=max_cache_size if max_cache_size is not None else 50,
+        preprocessed_dir=preprocessed_dir,
     )
     return split_brats_dataset(
         full_dataset=base_dataset,
