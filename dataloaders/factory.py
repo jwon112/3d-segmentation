@@ -159,6 +159,7 @@ def get_data_loaders(
                 dataset_version=dataset_version,
                 use_4modalities=use_4modalities,
                 max_cache_size=0,  # 캐싱 비활성화: 순수 I/O 성능 측정
+                preprocessed_dir=preprocessed_dir,
             )
 
         train_dataset, val_dataset, test_dataset = split_brats_dataset(
