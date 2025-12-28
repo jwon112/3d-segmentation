@@ -510,8 +510,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                 except Exception as e:
                                     print(f"Warning: Failed to recalculate PAM after deploy: {e}")
 
-                    # Test set 평가 (모든 랭크 동일 경로)
-                    # Cascade 모델인 경우 coord_type을 전달 (하지만 cascade 평가는 별도로 수행)
+                    # Test set 평가
+                    # evaluate_model이 cascade 모델을 자동으로 감지하여 ROI 기반 평가 수행
                     metrics = evaluate_model(
                         model,
                         test_loader,
@@ -522,112 +522,38 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         sw_patch_size=(128, 128, 128),
                         sw_overlap=0.5,
                         results_dir=results_dir,
-                        coord_type=coord_type,  # coord_type 전달 (cascade 모델도 포함)
+                        coord_type=coord_type,
                         dataset_version=dataset_version,
-                    )
-
-                    cascade_metrics = None
-                    # Cascade 평가: --use_cascade_pipeline 또는 cascade 모델인 경우
-                    should_run_cascade = (
-                        dim == '3d'
-                        and is_main_process(rank)
-                        and (
-                            (cascade_infer_cfg and cascade_infer_cfg.get('roi_weight_path'))
-                            or (model_name.startswith('cascade_') and cascade_model_cfg)
-                        )
+                        data_dir=data_path,  # Cascade 모델 평가용
+                        seed=seed,  # Cascade 모델 평가용
+                        use_5fold=use_5fold,  # Cascade 모델 평가용
+                        fold_idx=fold_idx,  # Cascade 모델 평가용
+                        fold_split_dir=fold_split_dir,  # Cascade 모델 평가용
+                        preprocessed_dir=os.path.join(preprocessed_base_dir, dataset_version.upper()) if preprocessed_base_dir else None,  # Cascade 모델 평가용
                     )
                     
-                    if should_run_cascade:
-                        # ROI weight 경로 결정
-                        roi_weight_path = None
-                        roi_model_name_for_infer = None
-                        roi_resize = (64, 64, 64)
-                        crop_size = (96, 96, 96)
-                        
-                        if cascade_infer_cfg and cascade_infer_cfg.get('roi_weight_path'):
-                            # 명시적으로 지정된 경우 (--use_cascade_pipeline)
-                            roi_weight_path = cascade_infer_cfg['roi_weight_path']
-                            roi_model_name_for_infer = cascade_infer_cfg['roi_model_name']
-                            roi_resize = cascade_infer_cfg.get('roi_resize', roi_resize)
-                            crop_size = cascade_infer_cfg.get('crop_size', crop_size)
-                            crops_per_center = cascade_infer_cfg.get('crops_per_center', 1)
-                            crop_overlap = cascade_infer_cfg.get('crop_overlap', 0.5)
-                            use_blending = cascade_infer_cfg.get('use_blending', True)
-                        elif model_name.startswith('cascade_') and cascade_model_cfg:
-                            # Cascade 모델인 경우 자동으로 경로 생성
-                            roi_model_name_for_infer = cascade_model_cfg['roi_model_name']
-                            default_path = f"models/weights/cascade/roi_model/{roi_model_name_for_infer}/seed_{seed}/weights/best.pth"
-                            if os.path.exists(default_path):
-                                roi_weight_path = default_path
-                                print(f"Using default ROI weight path for cascade model: {roi_weight_path}")
+                    cascade_metrics = None
+                    # Cascade 모델인 경우 cascade_metrics도 별도로 저장 (호환성 유지)
+                    if model_name.startswith('cascade_'):
+                        cascade_metrics = {
+                            'mean': metrics.get('dice', 0.0),
+                            'wt': metrics.get('wt', 0.0),
+                            'tc': metrics.get('tc', 0.0),
+                            'et': metrics.get('et', 0.0),
+                        }
+                        if dataset_version == 'brats2024' and 'rc' in metrics:
+                            cascade_metrics['rc'] = metrics.get('rc', 0.0)
+                        if is_main_process(rank):
+                            if dataset_version == 'brats2024' and 'rc' in cascade_metrics:
+                                print(
+                                    f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
+                                    f"(WT {cascade_metrics['wt']:.4f} | TC {cascade_metrics['tc']:.4f} | ET {cascade_metrics['et']:.4f} | RC {cascade_metrics['rc']:.4f})"
+                                )
                             else:
-                                print(f"Warning: Default ROI weight path not found: {default_path}. Skipping cascade evaluation.")
-                                roi_weight_path = None
-                            roi_resize = cascade_model_cfg.get('roi_resize', roi_resize)
-                            crop_size = cascade_model_cfg.get('crop_size', crop_size)
-                            # Cascade 모델인 경우 기본값 사용
-                            crops_per_center = 1
-                            crop_overlap = 0.5
-                            use_blending = True
-                        else:
-                            # 기본값
-                            crops_per_center = 1
-                            crop_overlap = 0.5
-                            use_blending = True
-                        
-                        if roi_weight_path and os.path.exists(roi_weight_path):
-                            try:
-                                roi_model, detected_include_coords = load_roi_model_from_checkpoint(
-                                    roi_model_name_for_infer,
-                                    roi_weight_path,
-                                    device=device,
-                                    include_coords=True,  # 기본값만 제공, 실제로는 자동 감지된 값 사용
+                                print(
+                                    f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
+                                    f"(WT {cascade_metrics['wt']:.4f} | TC {cascade_metrics['tc']:.4f} | ET {cascade_metrics['et']:.4f})"
                                 )
-                                real_model = model.module if hasattr(model, 'module') else model
-                                # preprocessed_dir 설정 (brats2024 등 전처리된 데이터 사용 시)
-                                cascade_preprocessed_dir = None
-                                if preprocessed_base_dir:
-                                    if use_5fold:
-                                        # 5-fold 모드: fold_split_dir 사용
-                                        cascade_preprocessed_dir = fold_split_dir
-                                    else:
-                                        # 일반 모드: 버전별 디렉토리 사용
-                                        cascade_preprocessed_dir = os.path.join(preprocessed_base_dir, dataset_version.upper())
-                                
-                                cascade_metrics = evaluate_segmentation_with_roi(
-                                    seg_model=real_model,
-                                    roi_model=roi_model,
-                                    data_dir=data_path,
-                                    dataset_version=dataset_version,
-                                    seed=seed,
-                                    roi_resize=roi_resize,
-                                    crop_size=crop_size,
-                                    include_coords=include_coords,  # coord_type에서 결정된 값 사용
-                                    coord_encoding_type=coord_encoding_type,  # coord_type에서 결정된 값 사용
-                                    use_5fold=use_5fold,
-                                    fold_idx=fold_idx if use_5fold else None,
-                                    crops_per_center=crops_per_center,
-                                    crop_overlap=crop_overlap,
-                                    use_blending=use_blending,
-                                    results_dir=results_dir,  # MobileViT attention 분석용
-                                    model_name=model_name,  # MobileViT attention 분석용
-                                    preprocessed_dir=cascade_preprocessed_dir,  # 전처리된 데이터 디렉토리
-                                )
-                                if dataset_version == 'brats2024' and 'rc' in cascade_metrics:
-                                    print(
-                                        f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
-                                        f"(WT {cascade_metrics['wt']:.4f} | TC {cascade_metrics['tc']:.4f} | ET {cascade_metrics['et']:.4f} | RC {cascade_metrics['rc']:.4f})"
-                                    )
-                                else:
-                                    print(
-                                        f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
-                                        f"(WT {cascade_metrics['wt']:.4f} | TC {cascade_metrics['tc']:.4f} | ET {cascade_metrics['et']:.4f})"
-                                    )
-                            except Exception as e:
-                                print(f"Warning: Cascade evaluation failed: {e}")
-                                import traceback
-                                traceback.print_exc()
-                                cascade_metrics = None
                     
                     # 결과 저장 (각 run마다 하나의 행만 생성, PAM과 Latency는 평균값 사용)
                     # PAM과 Latency 평균값 계산

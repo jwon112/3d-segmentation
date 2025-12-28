@@ -17,11 +17,123 @@ from metrics import calculate_wt_tc_et_dice  # , calculate_wt_tc_et_hd95  # HD95
 from dataloaders import get_coord_map
 from models.modules.se_modules import SEBlock3D
 from models.modules.cbam_modules import CBAM3D, ChannelAttention3D
+from utils.runner.cascade_evaluation import evaluate_segmentation_with_roi, load_roi_model_from_checkpoint
 
 
 def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model', distributed: bool = False, world_size: int = 1,
-                   sw_patch_size=(128, 128, 128), sw_overlap=0.5, results_dir: str = None, coord_type: str = 'none', dataset_version: str = 'brats2021'):
-    """모델 평가 함수"""
+                   sw_patch_size=(128, 128, 128), sw_overlap=0.5, results_dir: str = None, coord_type: str = 'none', dataset_version: str = 'brats2021',
+                   data_dir: str = None, seed: int = None, use_5fold: bool = False, fold_idx: int = None, 
+                   fold_split_dir: str = None, preprocessed_dir: str = None):
+    """모델 평가 함수
+    
+    Cascade 모델인 경우 자동으로 ROI 기반 평가를 수행합니다.
+    Cascade 모델 평가를 위해서는 data_dir, seed 등의 추가 파라미터가 필요합니다.
+    """
+    # Cascade 모델인 경우 자동으로 ROI 기반 평가 수행
+    if model_name.startswith('cascade_'):
+        # ROI 기반 평가에 필요한 파라미터 확인
+        if data_dir is None or seed is None:
+            raise ValueError(
+                f"Cascade models require data_dir and seed parameters for ROI-based evaluation. "
+                f"Please provide data_dir and seed when calling evaluate_model for cascade models."
+            )
+        
+        # ROI 모델 경로 찾기
+        possible_roi_model_names = ['roi_unet3d_small', 'roi_mobileunetr3d_tiny', 'roi_mobileunetr3d_small']
+        roi_model_name = None
+        roi_weight_path = None
+        
+        # 1. results_dir에서 ROI 모델 체크포인트 찾기
+        if results_dir:
+            for candidate_roi_name in possible_roi_model_names:
+                roi_checkpoint_patterns = [
+                    os.path.join(results_dir, f"{candidate_roi_name}_seed_{seed}_best.pth"),
+                    os.path.join(results_dir, f"{candidate_roi_name}_seed_{seed}_fold_{fold_idx}_best.pth") if use_5fold and fold_idx is not None else None,
+                ]
+                for pattern in roi_checkpoint_patterns:
+                    if pattern and os.path.exists(pattern):
+                        roi_weight_path = pattern
+                        roi_model_name = candidate_roi_name
+                        break
+                if roi_weight_path:
+                    break
+        
+        # 2. 기본 경로 시도
+        if not roi_weight_path:
+            for candidate_roi_name in possible_roi_model_names:
+                default_path = f"models/weights/cascade/roi_model/{candidate_roi_name}/seed_{seed}/weights/best.pth"
+                if os.path.exists(default_path):
+                    roi_weight_path = default_path
+                    roi_model_name = candidate_roi_name
+                    break
+        
+        if not roi_weight_path or not os.path.exists(roi_weight_path):
+            # ROI 모델을 찾지 못한 경우 에러 발생
+            error_msg = f"[Cascade] Error: ROI model not found for cascade model {model_name}.\n"
+            error_msg += f"  Cascade models require ROI-based evaluation.\n"
+            error_msg += f"  Please ensure the ROI model checkpoint exists."
+            raise FileNotFoundError(error_msg)
+        
+        # coord_type에 따라 include_coords 결정
+        include_coords = (coord_type != 'none')
+        
+        roi_model, detected_include_coords = load_roi_model_from_checkpoint(
+            roi_model_name,
+            roi_weight_path,
+            device,
+            include_coords=include_coords,
+        )
+        
+        # coord_type에 따라 coord_encoding_type 결정
+        if coord_type == 'hybrid':
+            coord_encoding_type = 'hybrid'
+        elif coord_type == 'simple':
+            coord_encoding_type = 'simple'
+        else:
+            coord_encoding_type = 'simple'
+        
+        real_model = model.module if hasattr(model, 'module') else model
+        
+        # Cascade ROI 기반 평가 수행
+        cascade_metrics = evaluate_segmentation_with_roi(
+            seg_model=real_model,
+            roi_model=roi_model,
+            data_dir=data_dir,
+            dataset_version=dataset_version,
+            seed=seed,
+            roi_resize=(64, 64, 64),
+            crop_size=(96, 96, 96),
+            include_coords=include_coords,
+            coord_encoding_type=coord_encoding_type,
+            use_5fold=use_5fold,
+            fold_idx=fold_idx,
+            fold_split_dir=fold_split_dir,
+            crops_per_center=1,
+            crop_overlap=0.5,
+            use_blending=True,
+            results_dir=results_dir,
+            model_name=model_name,
+            preprocessed_dir=preprocessed_dir,
+        )
+        
+        # cascade_metrics를 evaluate_model과 동일한 형식으로 변환
+        result = {
+            'dice': cascade_metrics.get('mean', 0.0),
+            'wt': cascade_metrics.get('wt', 0.0),
+            'tc': cascade_metrics.get('tc', 0.0),
+            'et': cascade_metrics.get('et', 0.0),
+            'hd95_wt': None,
+            'hd95_tc': None,
+            'hd95_et': None,
+            'hd95_mean': None,
+            'precision': None,
+            'recall': None,
+        }
+        if dataset_version == 'brats2024' and 'rc' in cascade_metrics:
+            result['rc'] = cascade_metrics.get('rc', 0.0)
+        
+        return result
+    
     model.eval()
     real_model = model.module if hasattr(model, 'module') else model
     test_dice = 0.0
