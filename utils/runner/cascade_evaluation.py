@@ -163,19 +163,15 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
     return result
 
 
-def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_coords=None):
+def load_roi_model_from_checkpoint(roi_model_name, weight_path, device):
     """Load ROI model weights for inference.
     
-    Automatically detects metadata from checkpoint if available, otherwise falls back to channel detection.
-    
-    Args:
-        include_coords: If None, auto-detect from checkpoint. Otherwise, use provided value.
+    ROI 모델은 항상 4채널(4 modalities, no coords) 또는 2채널(2 modalities, no coords)만 사용합니다.
+    Automatically detects use_4modalities from checkpoint if available, otherwise falls back to channel detection.
     
     Returns:
         model: Loaded ROI model
-        include_coords: Detected or provided include_coords value
-        use_4modalities: Detected or default use_4modalities value
-        coord_encoding_type: Detected coord_encoding_type ('simple' or 'hybrid')
+        use_4modalities: Detected or default use_4modalities value (True for 4 modalities, False for 2 modalities)
     """
     cfg = get_roi_model_config(roi_model_name)
     
@@ -183,37 +179,24 @@ def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_
     checkpoint = torch.load(weight_path, map_location=device)
     
     # Check if checkpoint has metadata (new format) or is just state_dict (old format)
-    coord_encoding_type = 'simple'  # 기본값
+    # ROI 모델은 항상 coords를 사용하지 않으므로 use_4modalities만 감지
     if isinstance(checkpoint, dict) and 'metadata' in checkpoint:
         # New format with metadata
         metadata = checkpoint['metadata']
         state = checkpoint['state_dict']
-        # include_coords가 None이면 metadata에서 가져오고, 아니면 제공된 값 사용
-        if include_coords is None:
-            include_coords = metadata.get('include_coords', False)
-        else:
-            # 제공된 값이 있으면 사용 (하지만 체크포인트의 실제 설정과 다를 수 있으므로 경고)
-            detected_include_coords = metadata.get('include_coords', False)
-            if detected_include_coords != include_coords:
-                rank = 0
-                if torch.distributed.is_available() and torch.distributed.is_initialized():
-                    rank = torch.distributed.get_rank()
-                if is_main_process(rank):
-                    print(f"Warning: ROI model checkpoint has include_coords={detected_include_coords}, but provided include_coords={include_coords}. Using checkpoint value.")
-                include_coords = detected_include_coords
         use_4modalities = metadata.get('use_4modalities', True)
-        coord_encoding_type = metadata.get('coord_encoding_type', 'simple')  # metadata에서 coord_encoding_type 가져오기
         # rank 확인
         rank = 0
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             rank = torch.distributed.get_rank()
         if is_main_process(rank):
-            print(f"Loaded ROI model with metadata: use_4modalities={use_4modalities}, include_coords={include_coords}, coord_encoding_type={coord_encoding_type}")
+            print(f"Loaded ROI model with metadata: use_4modalities={use_4modalities} (4 channels, no coords)")
     else:
         # Old format: just state_dict, detect from channels
         state = checkpoint
         
         # Detect input channels from checkpoint
+        # ROI 모델은 항상 2채널 또는 4채널만 사용 (coords 없음)
         detected_channels = None
         for key in state.keys():
             if 'weight' in key and ('enc_blocks.0.net.0' in key or 'patch_embed' in key or 'conv' in key):
@@ -224,13 +207,9 @@ def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_
                     detected_channels = state[key].shape[1]
                     break
         
-        # Auto-detect use_4modalities, include_coords, and coord_encoding_type based on detected channels
+        # Auto-detect use_4modalities based on detected channels
         # 2 channels = 2 modalities, no coords
         # 4 channels = 4 modalities, no coords
-        # 5 channels = 2 modalities + 3 simple coords
-        # 7 channels = 4 modalities + 3 simple coords
-        # 11 channels = 2 modalities + 9 hybrid coords
-        # 13 channels = 4 modalities + 9 hybrid coords
         # rank 확인
         rank = 0
         if torch.distributed.is_available() and torch.distributed.is_initialized():
@@ -239,51 +218,25 @@ def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_
         if detected_channels is not None:
             if detected_channels == 2:
                 use_4modalities = False
-                include_coords = False
-                coord_encoding_type = 'simple'
                 if is_main_process(rank):
-                    print(f"Detected 2-channel ROI model (2 modalities, no CoordConv). Using use_4modalities=False, include_coords=False")
+                    print(f"Detected 2-channel ROI model (2 modalities, no coords). Using use_4modalities=False")
             elif detected_channels == 4:
                 use_4modalities = True
-                include_coords = False
-                coord_encoding_type = 'simple'
                 if is_main_process(rank):
-                    print(f"Detected 4-channel ROI model (4 modalities, no CoordConv). Using use_4modalities=True, include_coords=False")
-            elif detected_channels == 5:
-                use_4modalities = False
-                include_coords = True
-                coord_encoding_type = 'simple'
-                if is_main_process(rank):
-                    print(f"Detected 5-channel ROI model (2 modalities + 3 simple coords). Using use_4modalities=False, include_coords=True, coord_encoding_type=simple")
-            elif detected_channels == 7:
-                use_4modalities = True
-                include_coords = True
-                coord_encoding_type = 'simple'
-                if is_main_process(rank):
-                    print(f"Detected 7-channel ROI model (4 modalities + 3 simple coords). Using use_4modalities=True, include_coords=True, coord_encoding_type=simple")
-            elif detected_channels == 11:
-                use_4modalities = False
-                include_coords = True
-                coord_encoding_type = 'hybrid'
-                if is_main_process(rank):
-                    print(f"Detected 11-channel ROI model (2 modalities + 9 hybrid coords). Using use_4modalities=False, include_coords=True, coord_encoding_type=hybrid")
-            elif detected_channels == 13:
-                use_4modalities = True
-                include_coords = True
-                coord_encoding_type = 'hybrid'
-                if is_main_process(rank):
-                    print(f"Detected 13-channel ROI model (4 modalities + 9 hybrid coords). Using use_4modalities=True, include_coords=True, coord_encoding_type=hybrid")
+                    print(f"Detected 4-channel ROI model (4 modalities, no coords). Using use_4modalities=True")
             else:
-                # 기본값 사용
+                # 기본값 사용 (4 modalities)
                 use_4modalities = True
-                coord_encoding_type = 'simple'
                 if is_main_process(rank):
-                    print(f"Warning: Unexpected input channels {detected_channels} in checkpoint. Using defaults: use_4modalities=True, include_coords={include_coords}, coord_encoding_type=simple")
+                    print(f"Warning: Unexpected input channels {detected_channels} in ROI checkpoint. Expected 2 or 4. Using default: use_4modalities=True")
+        else:
+            # 채널을 감지하지 못한 경우 기본값 사용
+            use_4modalities = True
+            if is_main_process(rank):
+                print(f"Warning: Could not detect input channels from ROI checkpoint. Using default: use_4modalities=True")
     
-    # ROI 모델 입력 채널 수 계산
-    n_modalities = 4 if use_4modalities else 2
-    n_coord_channels = 9 if (include_coords and coord_encoding_type == 'hybrid') else (3 if include_coords else 0)
-    n_channels = n_modalities + n_coord_channels
+    # ROI 모델 입력 채널 수 계산 (modalities만, coords 없음)
+    n_channels = 4 if use_4modalities else 2
     
     model = get_roi_model(
         roi_model_name,
@@ -294,7 +247,7 @@ def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_
     model.load_state_dict(state)
     model = model.to(device)
     model.eval()
-    return model, include_coords, use_4modalities, coord_encoding_type
+    return model, use_4modalities
 
 
 def evaluate_segmentation_with_roi(

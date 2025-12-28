@@ -27,11 +27,11 @@ from dataloaders import (
 from utils.experiment_utils import is_main_process
 
 
-def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_coords: bool = False, coord_encoding_type: str = 'simple', use_4modalities: bool = True) -> torch.Tensor:
+def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], use_4modalities: bool = True) -> torch.Tensor:
     """
     Prepare ROI input by extracting modalities only (no coords).
     
-    ROI 모델은 항상 4채널(4 modalities, no coords)만 사용합니다.
+    ROI 모델은 항상 4채널(4 modalities, no coords) 또는 2채널(2 modalities, no coords)만 사용합니다.
     Segmentation 모델의 coord_type과 무관하게 ROI 모델은 coords를 사용하지 않습니다.
     
     Args:
@@ -43,13 +43,9 @@ def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_c
                - 11: 2 modalities + 9 hybrid coords
                - 13: 4 modalities + 9 hybrid coords
         use_4modalities: Whether ROI model uses 4 modalities (True) or 2 modalities (False)
-        include_coords: 항상 False (ROI 모델은 coords 사용 안 함)
-        coord_encoding_type: 사용되지 않음 (ROI 모델은 coords 사용 안 함)
     
     입력 이미지가 이미 좌표를 포함하고 있을 수 있으므로, modalities만 추출합니다.
     """
-    # ROI 모델은 항상 coords를 사용하지 않음
-    include_coords = False
     
     # 입력 이미지의 채널 수 확인
     n_channels = image.shape[0]
@@ -161,8 +157,6 @@ def run_roi_localization(
     image: torch.Tensor,
     device: torch.device,
     roi_resize: Sequence[int] = (64, 64, 64),
-    include_coords: bool = True,
-    coord_encoding_type: str = 'simple',
     max_instances: int = 1,
     min_component_size: int = 50,
     roi_use_4modalities: bool = True,
@@ -182,8 +176,8 @@ def run_roi_localization(
         }
     """
     roi_model.eval()
-    # ROI 모델은 항상 coords를 사용하지 않음 (4채널 고정)
-    roi_input_prepared = _prepare_roi_input(image, roi_resize, include_coords=False, coord_encoding_type='simple', use_4modalities=roi_use_4modalities)
+    # ROI 모델은 항상 coords를 사용하지 않음 (modalities만 사용)
+    roi_input_prepared = _prepare_roi_input(image, roi_resize, use_4modalities=roi_use_4modalities)
     roi_input = roi_input_prepared.unsqueeze(0).to(device)
     
     # 최종 검증: ROI 입력 채널 수가 ROI 모델이 기대하는 채널 수와 일치하는지 확인
@@ -358,8 +352,6 @@ def run_cascade_inference(
         image=image,
         device=device,
         roi_resize=roi_resize,
-        include_coords=include_coords,
-        coord_encoding_type=coord_encoding_type,
         max_instances=max_instances,
         min_component_size=min_component_size,
         roi_use_4modalities=roi_use_4modalities,
@@ -368,6 +360,12 @@ def run_cascade_inference(
     centers_full = roi_info.get('centers_full') or [roi_info['center_full']]
 
     seg_model.eval()
+    
+    # 모델이 return_attention 파라미터를 지원하는지 확인
+    import inspect
+    real_seg_model = seg_model.module if hasattr(seg_model, 'module') else seg_model
+    sig = inspect.signature(real_seg_model.forward)
+    supports_return_attention = 'return_attention' in sig.parameters
     
     # MobileViT attention 수집 (첫 번째 crop만)
     all_attention_weights = [] if return_attention else None
@@ -448,11 +446,17 @@ def run_cascade_inference(
                             rank = torch.distributed.get_rank()
                         if is_main_process(rank):
                             print(f"[Cascade] Warning: Failed to collect attention weights: {e}")
-                            import traceback
-                            traceback.print_exc()
-                        seg_logits = seg_model(seg_tensor, return_attention=False)
+                        # return_attention을 지원하는 경우에만 파라미터 전달
+                        if supports_return_attention:
+                            seg_logits = seg_model(seg_tensor, return_attention=False)
+                        else:
+                            seg_logits = seg_model(seg_tensor)
                 else:
-                    seg_logits = seg_model(seg_tensor, return_attention=False)
+                    # return_attention을 지원하는 경우에만 파라미터 전달
+                    if supports_return_attention:
+                        seg_logits = seg_model(seg_tensor, return_attention=False)
+                    else:
+                        seg_logits = seg_model(seg_tensor)
             patch_logits = seg_logits.squeeze(0).cpu()  # (C, h, w, d)
             
             if use_blending and crops_per_center > 1 and blend_weights is not None:

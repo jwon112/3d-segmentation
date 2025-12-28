@@ -75,12 +75,11 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             raise FileNotFoundError(error_msg)
         
         # ROI 모델 로드
-        # ROI 모델은 항상 4채널(no coords) 고정으로 사용
-        roi_model, _, use_4modalities, _ = load_roi_model_from_checkpoint(
+        # ROI 모델은 항상 4채널(no coords) 또는 2채널(no coords) 고정으로 사용
+        roi_model, use_4modalities = load_roi_model_from_checkpoint(
             roi_model_name,
             roi_weight_path,
             device,
-            include_coords=False,  # ROI 모델은 항상 coords 사용 안 함
         )
         
         real_model = model.module if hasattr(model, 'module') else model
