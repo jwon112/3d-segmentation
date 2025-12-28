@@ -128,9 +128,10 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
             print(f"Warning: Dataset {dataset_version} not found at {dataset_dir}. Skipping...")
             return None, pd.DataFrame()
     
-    print(f"\n{'#'*80}")
-    print(f"Dataset Version: {dataset_version.upper()}")
-    print(f"{'#'*80}")
+    if is_main_process(rank):
+        print(f"\n{'#'*80}")
+        print(f"Dataset Version: {dataset_version.upper()}")
+        print(f"{'#'*80}")
     
     # preprocessed_base_dir에서 fold 경로 감지 (use_5fold와 무관)
     # fold_0, fold_1 등의 패턴 확인
@@ -151,9 +152,10 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     # 5-fold CV 또는 일반 실험
     if use_5fold:
         fold_list = list(range(5))
-        print(f"\n{'='*60}")
-        print(f"5-Fold Cross-Validation Mode")
-        print(f"{'='*60}")
+        if is_main_process(rank):
+            print(f"\n{'='*60}")
+            print(f"5-Fold Cross-Validation Mode")
+            print(f"{'='*60}")
         # Fold별 디렉토리 경로 설정
         # fold_split_dir이 이미 감지된 경우 사용, 아니면 기본 경로에서 찾기
         if detected_fold_split_dir:
@@ -192,14 +194,15 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     for seed in seeds:
         # 각 fold별로 실험 (5-fold CV인 경우)
         for fold_idx in fold_list:
-            if use_5fold:
-                print(f"\n{'='*60}")
-                print(f"Training 3D Segmentation Models - Dataset Version: {dataset_version.upper()}, Seed: {seed}, Fold: {fold_idx}")
-                print(f"{'='*60}")
-            else:
-                print(f"\n{'='*60}")
-                print(f"Training 3D Segmentation Models - Dataset Version: {dataset_version.upper()}, Seed: {seed}")
-                print(f"{'='*60}")
+            if is_main_process(rank):
+                if use_5fold:
+                    print(f"\n{'='*60}")
+                    print(f"Training 3D Segmentation Models - Dataset Version: {dataset_version.upper()}, Seed: {seed}, Fold: {fold_idx}")
+                    print(f"{'='*60}")
+                else:
+                    print(f"\n{'='*60}")
+                    print(f"Training 3D Segmentation Models - Dataset Version: {dataset_version.upper()}, Seed: {seed}")
+                    print(f"{'='*60}")
             
             # 전역 seed 설정 (데이터 분할, 학습 모두에 적용)
             set_seed(seed)
@@ -297,8 +300,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         )
                         model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=use_find_unused)
                     
-                    # 모델 정보 출력
-                    print(f"\n=== {model_name.upper()} Model Information ===")
+                    # 모델 정보 출력 (rank 0에서만)
+                    if is_main_process(rank):
+                        print(f"\n=== {model_name.upper()} Model Information ===")
                     real_model = model.module if hasattr(model, 'module') else model
                     total_params = sum(p.numel() for p in real_model.parameters())
                     trainable_params = sum(p.numel() for p in real_model.parameters() if p.requires_grad)
@@ -322,8 +326,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         print(f"Model output channels: {actual_out_channels}")
                         if actual_out_channels != n_classes and actual_out_channels != "unknown":
                             print(f"⚠️  WARNING: Model output channels ({actual_out_channels}) != expected n_classes ({n_classes})!")
-                    print(f"Total parameters: {total_params:,}")
-                    print(f"Trainable parameters: {trainable_params:,}")
+                        print(f"Total parameters: {total_params:,}")
+                        print(f"Trainable parameters: {trainable_params:,}")
                     
                     # 모델 크기 계산 (real_model 사용)
                     param_size = 0

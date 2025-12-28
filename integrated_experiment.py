@@ -105,12 +105,6 @@ if __name__ == "__main__":
         default_path = get_default_roi_weight_path(args.roi_model_name, args.seeds[0])
         if os.path.exists(default_path):
             args.roi_weight_path = default_path
-            # rank 확인 (distributed 환경에서만)
-            rank = 0
-            if torch.distributed.is_available() and torch.distributed.is_initialized():
-                rank = torch.distributed.get_rank()
-            if is_main_process(rank):
-                print(f"Using default ROI weight path: {args.roi_weight_path}")
         else:
             raise FileNotFoundError(
                 f"ROI weight file not found. Please specify --roi_weight_path or ensure the default path exists: {default_path}"
@@ -124,12 +118,17 @@ if __name__ == "__main__":
     
     # 기본 전처리 디렉토리 설정 (이미 argparse default로 설정되어 있음)
     
-    # rank 확인 (distributed 환경에서만)
+    # rank 확인 (torchrun 환경 변수 또는 distributed 초기화 상태 확인)
     rank = 0
-    if torch.distributed.is_available() and torch.distributed.is_initialized():
+    if 'RANK' in os.environ:
+        rank = int(os.environ['RANK'])
+    elif torch.distributed.is_available() and torch.distributed.is_initialized():
         rank = torch.distributed.get_rank()
     
     if is_main_process(rank):
+        if args.use_cascade_pipeline and args.roi_weight_path:
+            print(f"Using default ROI weight path: {args.roi_weight_path}")
+        print("Starting 3D Segmentation Integrated Experiment System")
         print("Starting 3D Segmentation Integrated Experiment System")
         print(f"Data path: {args.data_path}")
         print(f"Preprocessed base dir: {args.preprocessed_base_dir}")
@@ -201,9 +200,11 @@ if __name__ == "__main__":
             preprocessed_base_dir=args.preprocessed_base_dir,
         )
         
-        # rank 확인 (distributed 환경에서만)
+        # rank 확인 (환경 변수 또는 distributed 초기화 상태 확인)
         rank = 0
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
+        if 'RANK' in os.environ:
+            rank = int(os.environ['RANK'])
+        elif torch.distributed.is_available() and torch.distributed.is_initialized():
             rank = torch.distributed.get_rank()
         
         if is_main_process(rank):
@@ -214,8 +215,11 @@ if __name__ == "__main__":
                 print(f"\nExperiment failed.")
         
     except Exception as e:
+        # rank 확인 (환경 변수 또는 distributed 초기화 상태 확인)
         rank = 0
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
+        if 'RANK' in os.environ:
+            rank = int(os.environ['RANK'])
+        elif torch.distributed.is_available() and torch.distributed.is_initialized():
             rank = torch.distributed.get_rank()
         if is_main_process(rank):
             print(f"\nExperiment failed: {e}")
