@@ -200,6 +200,7 @@ def evaluate_segmentation_with_roi(
     coord_encoding_type='simple',
     use_5fold=False,
     fold_idx=None,
+    fold_split_dir=None,
     max_samples=None,
     crops_per_center=1,
     crop_overlap=0.5,
@@ -217,6 +218,7 @@ def evaluate_segmentation_with_roi(
         use_blending: True면 cosine blending, False면 voxel-wise max
         results_dir: 결과 저장 디렉토리 (MobileViT attention 분석용)
         model_name: 모델 이름 (MobileViT attention 분석용)
+        fold_split_dir: fold split 디렉토리 경로 (지정 시 해당 fold의 train/val/test 사용)
     """
     _, _, test_base = get_brats_base_datasets(
         data_dir=data_dir,
@@ -225,6 +227,7 @@ def evaluate_segmentation_with_roi(
         seed=seed,
         use_5fold=use_5fold,
         fold_idx=fold_idx,
+        fold_split_dir=fold_split_dir,
         use_4modalities=True,
         preprocessed_dir=preprocessed_dir,
     )

@@ -651,8 +651,12 @@ def get_brats_base_datasets(
     preprocessed_dir: Optional[str] = None,
 ):
     """Create base BratsDataset3D and return train/val/test splits."""
-    # 5-fold 모드이고 fold_split_dir이 지정된 경우: fold별 디렉토리에서 직접 로드
-    if use_5fold and fold_split_dir:
+    # fold_split_dir이 지정된 경우: fold별 디렉토리에서 직접 로드 (use_5fold와 무관)
+    # use_5fold=False여도 fold_split_dir을 지정하면 해당 fold의 train/val/test를 사용
+    if fold_split_dir:
+        # fold_idx가 지정되지 않았으면 기본값 0 사용
+        if fold_idx is None:
+            fold_idx = 0
         train_dataset = BratsDataset3D(
             data_dir,
             split='train',

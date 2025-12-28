@@ -127,12 +127,29 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     
     # 데이터 로더 생성 (체크포인트에서 감지한 use_4modalities 사용)
     # preprocessed_base_dir이 제공되면 버전별 디렉토리로 변환
+    # 만약 preprocessed_base_dir이 fold_0 같은 fold 경로로 끝나면 fold_split_dir로 인식
     preprocessed_dir = None
+    fold_split_dir = None
+    detected_fold_idx = fold_idx
+    
     if preprocessed_base_dir:
-        preprocessed_dir = os.path.join(preprocessed_base_dir, dataset_version.upper())
-        if is_main_process(rank):
-            print(f"[Debug] preprocessed_base_dir: {preprocessed_base_dir}")
-            print(f"[Debug] Using preprocessed directory: {preprocessed_dir}")
+        # fold_0, fold_1 등의 패턴 확인
+        import re
+        fold_pattern = re.search(r'/fold_(\d+)$', preprocessed_base_dir)
+        if fold_pattern:
+            # fold 경로로 지정된 경우: fold_split_dir과 fold_idx 자동 감지
+            detected_fold_idx = int(fold_pattern.group(1))
+            # 부모 디렉토리를 fold_split_dir로 사용
+            fold_split_dir = os.path.dirname(preprocessed_base_dir)
+            if is_main_process(rank):
+                print(f"[Debug] Detected fold path: {preprocessed_base_dir}")
+                print(f"[Debug] Using fold_split_dir: {fold_split_dir}, fold_idx: {detected_fold_idx}")
+        else:
+            # 일반 경로: 버전별 디렉토리 사용
+            preprocessed_dir = os.path.join(preprocessed_base_dir, dataset_version.upper())
+            if is_main_process(rank):
+                print(f"[Debug] preprocessed_base_dir: {preprocessed_base_dir}")
+                print(f"[Debug] Using preprocessed directory: {preprocessed_dir}")
     else:
         if is_main_process(rank):
             print(f"[Debug] preprocessed_base_dir is None or empty")
@@ -150,7 +167,8 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         rank=rank,
         use_4modalities=use_4modalities,  # 체크포인트에서 감지한 값 사용
         use_5fold=use_5fold,
-        fold_idx=fold_idx,
+        fold_idx=detected_fold_idx,
+        fold_split_dir=fold_split_dir,
         preprocessed_dir=preprocessed_dir
     )
     
@@ -331,8 +349,13 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
                 # Cascade ROI 기반 평가
                 real_model = model.module if hasattr(model, 'module') else model
                 # preprocessed_dir 설정 (brats2024 등 전처리된 데이터 사용 시)
+                # fold_split_dir이 있으면 fold 디렉토리에서 로드, 없으면 일반 preprocessed_dir 사용
                 cascade_preprocessed_dir = None
-                if preprocessed_base_dir:
+                cascade_fold_split_dir = fold_split_dir
+                cascade_fold_idx = detected_fold_idx if fold_split_dir else (fold_idx if use_5fold else None)
+                
+                if preprocessed_base_dir and not fold_split_dir:
+                    # fold_split_dir이 없으면 일반 경로 사용
                     if use_5fold:
                         # 5-fold 모드: fold_split_dir 사용
                         if fold_idx is not None:
@@ -354,13 +377,14 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
                     include_coords=include_coords,
                     coord_encoding_type=coord_encoding_type,
                     use_5fold=use_5fold,
-                    fold_idx=fold_idx if use_5fold else None,
+                    fold_idx=cascade_fold_idx,
+                    fold_split_dir=cascade_fold_split_dir,
                     crops_per_center=1,
                     crop_overlap=0.5,
                     use_blending=True,
                     results_dir=results_dir,
                     model_name=model_name,
-                    preprocessed_dir=cascade_preprocessed_dir,  # 전처리된 데이터 디렉토리
+                    preprocessed_dir=cascade_preprocessed_dir,  # 전처리된 데이터 디렉토리 (fold_split_dir이 없을 때만 사용)
                 )
                 
                 if is_main_process(rank):
