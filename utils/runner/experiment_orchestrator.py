@@ -270,6 +270,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             print(f"Creating model: {model_name}...")
                         # BRATS2024는 RC(Resection Cavity) 포함으로 5개 클래스, 다른 버전은 4개 클래스
                         n_classes = 5 if dataset_version == 'brats2024' else 4
+                        if is_main_process(rank):
+                            print(f"[Model Config] dataset_version={dataset_version}, n_classes={n_classes}")
                         model = get_model(model_name, n_channels=n_channels, n_classes=n_classes, dim=dim, use_pretrained=use_pretrained, coord_type=coord_type)
                         if is_main_process(rank):
                             print(f"Model {model_name} created successfully.")
@@ -298,6 +300,26 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     real_model = model.module if hasattr(model, 'module') else model
                     total_params = sum(p.numel() for p in real_model.parameters())
                     trainable_params = sum(p.numel() for p in real_model.parameters() if p.requires_grad)
+                    # 모델 출력 채널 수 확인 (디버깅용)
+                    if hasattr(real_model, 'out_channels'):
+                        actual_out_channels = real_model.out_channels
+                    elif hasattr(real_model, 'num_classes'):
+                        actual_out_channels = real_model.num_classes
+                    else:
+                        # 모델의 마지막 레이어에서 출력 채널 수 추출
+                        try:
+                            dummy_input = torch.randn(1, n_channels, 64, 64, 64).to(device)
+                            with torch.no_grad():
+                                dummy_output = real_model(dummy_input)
+                            actual_out_channels = dummy_output.shape[1]
+                        except:
+                            actual_out_channels = "unknown"
+                    if is_main_process(rank):
+                        print(f"Dataset version: {dataset_version}")
+                        print(f"Expected n_classes: {n_classes}")
+                        print(f"Model output channels: {actual_out_channels}")
+                        if actual_out_channels != n_classes and actual_out_channels != "unknown":
+                            print(f"⚠️  WARNING: Model output channels ({actual_out_channels}) != expected n_classes ({n_classes})!")
                     print(f"Total parameters: {total_params:,}")
                     print(f"Trainable parameters: {trainable_params:,}")
                     
