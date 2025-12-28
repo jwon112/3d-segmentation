@@ -83,11 +83,13 @@ def train_roi_model(model, train_loader, val_loader, epochs, device, lr=1e-3,
             best_epoch = epoch + 1
             if ckpt_path and is_main_process(rank):
                 # 체크포인트에 metadata 저장 (기존 체크포인트와의 호환성을 위해 state_dict도 포함)
+                # ROI 모델은 현재 항상 simple coords만 사용하지만, 향후 hybrid coords 지원을 위해 coord_encoding_type도 저장
                 checkpoint = {
                     'state_dict': model.state_dict(),
                     'metadata': {
                         'use_4modalities': use_4modalities,
                         'include_coords': include_coords,
+                        'coord_encoding_type': 'simple',  # ROI 모델은 현재 항상 simple coords 사용
                     }
                 }
                 torch.save(checkpoint, ckpt_path)

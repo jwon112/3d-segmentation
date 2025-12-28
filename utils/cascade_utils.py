@@ -71,6 +71,7 @@ def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_c
             )
     
     # ROI 모델에 좌표를 추가할지 결정
+    # coord_encoding_type에 따라 simple (3 채널) 또는 hybrid (9 채널) coords 사용
     if include_coords:
         coord_map = get_coord_map(image.shape[1:], device=image.device, encoding_type=coord_encoding_type)
         roi_input = torch.cat([image_modalities, coord_map], dim=0)
@@ -78,7 +79,9 @@ def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_c
         roi_input = image_modalities
     
     # 최종 ROI 입력 채널 수 확인 및 검증
-    expected_channels = (4 if use_4modalities else 2) + (3 if include_coords else 0)
+    # coord_encoding_type에 따라 coords 채널 수 결정: simple=3, hybrid=9
+    n_coord_channels = 9 if (include_coords and coord_encoding_type == 'hybrid') else (3 if include_coords else 0)
+    expected_channels = (4 if use_4modalities else 2) + n_coord_channels
     if roi_input.shape[0] != expected_channels:
         raise ValueError(
             f"[_prepare_roi_input] Unexpected ROI input channels: {roi_input.shape[0]}. "
@@ -182,14 +185,16 @@ def run_roi_localization(
     roi_input = roi_input_prepared.unsqueeze(0).to(device)
     
     # 최종 검증: ROI 입력 채널 수가 ROI 모델이 기대하는 채널 수와 일치하는지 확인
-    expected_roi_channels = (4 if roi_use_4modalities else 2) + (3 if include_coords else 0)
+    # coord_encoding_type에 따라 coords 채널 수 결정: simple=3, hybrid=9
+    n_coord_channels = 9 if (include_coords and coord_encoding_type == 'hybrid') else (3 if include_coords else 0)
+    expected_roi_channels = (4 if roi_use_4modalities else 2) + n_coord_channels
     if roi_input.shape[1] != expected_roi_channels:
         raise ValueError(
             f"[run_roi_localization] ROI input channel mismatch: "
-            f"Expected {expected_roi_channels} channels (modalities: {4 if roi_use_4modalities else 2}, coords: {3 if include_coords else 0}), "
+            f"Expected {expected_roi_channels} channels (modalities: {4 if roi_use_4modalities else 2}, coords: {n_coord_channels}, encoding_type: {coord_encoding_type}), "
             f"but got {roi_input.shape[1]} channels. "
             f"Input image had {image.shape[0]} channels. "
-            f"roi_use_4modalities={roi_use_4modalities}, include_coords={include_coords}"
+            f"roi_use_4modalities={roi_use_4modalities}, include_coords={include_coords}, coord_encoding_type={coord_encoding_type}"
         )
     
     with torch.no_grad():

@@ -77,20 +77,16 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
         # coord_type에 따라 include_coords 결정
         include_coords = (coord_type != 'none')
         
-        roi_model, detected_include_coords, use_4modalities = load_roi_model_from_checkpoint(
+        roi_model, detected_include_coords, use_4modalities, detected_coord_encoding_type = load_roi_model_from_checkpoint(
             roi_model_name,
             roi_weight_path,
             device,
             include_coords=include_coords,
         )
         
-        # coord_type에 따라 coord_encoding_type 결정
-        if coord_type == 'hybrid':
-            coord_encoding_type = 'hybrid'
-        elif coord_type == 'simple':
-            coord_encoding_type = 'simple'
-        else:
-            coord_encoding_type = 'simple'
+        # ROI 모델의 coord_encoding_type 사용 (체크포인트에서 감지한 값)
+        # segmentation 모델의 coord_type과 일치하도록 하거나, ROI 모델이 학습된 coord_encoding_type 사용
+        coord_encoding_type = detected_coord_encoding_type
         
         real_model = model.module if hasattr(model, 'module') else model
         
