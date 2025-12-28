@@ -268,8 +268,55 @@ class BratsDataset3D(Dataset):
         if HAS_H5PY and os.path.exists(preprocessed_path):
             try:
                 with h5py.File(preprocessed_path, 'r') as f:
+                    # #region agent log
+                    import json
+                    import time
+                    log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+                    h5_image_shape = f['image'].shape
+                    h5_mask_shape = f['mask'].shape
+                    try:
+                        with open(log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "load-check",
+                                "hypothesisId": "H3",
+                                "location": "brats_base.py:270",
+                                "message": "H5 file shape before load",
+                                "data": {
+                                    "patient_dir": os.path.basename(patient_dir) if not str(patient_dir).endswith('.h5') else os.path.basename(patient_dir),
+                                    "h5_image_shape": list(h5_image_shape),
+                                    "h5_mask_shape": list(h5_mask_shape),
+                                    "preprocessed_path": preprocessed_path
+                                },
+                                "timestamp": int(time.time() * 1000)
+                            }, ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass
+                    # #endregion
+                    
                     image = torch.from_numpy(f['image'][:]).float()
                     mask = torch.from_numpy(f['mask'][:]).long()
+                    
+                    # #region agent log
+                    try:
+                        with open(log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "load-check",
+                                "hypothesisId": "H3",
+                                "location": "brats_base.py:272",
+                                "message": "H5 loaded tensor shapes",
+                                "data": {
+                                    "patient_dir": os.path.basename(patient_dir) if not str(patient_dir).endswith('.h5') else os.path.basename(patient_dir),
+                                    "image_shape": list(image.shape),
+                                    "mask_shape": list(mask.shape),
+                                    "split": self.split
+                                },
+                                "timestamp": int(time.time() * 1000)
+                            }, ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass
+                    # #endregion
                     
                     # 포그라운드 좌표 로드 (있으면 사용, 없으면 None)
                     fg_coords_dict = {}

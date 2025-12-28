@@ -73,8 +73,58 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_versio
         - For BRATS2024: tensor of shape (4,) -> [WT, TC, ET, RC]
         - For other versions: tensor of shape (3,) -> [WT, TC, ET]
     """
+    # #region agent log
+    import json
+    import time
+    log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+    try:
+        with open(log_path, 'a', encoding='utf-8') as log_file:
+            log_file.write(json.dumps({
+                "sessionId": "debug-session",
+                "runId": "eval-check",
+                "hypothesisId": "H3",
+                "location": "metrics.py:76",
+                "message": "calculate_wt_tc_et_dice entry",
+                "data": {
+                    "logits_shape": list(logits.shape),
+                    "target_shape": list(target.shape),
+                    "logits_num_classes": logits.shape[1],
+                    "target_min": int(target.min().item()),
+                    "target_max": int(target.max().item()),
+                    "target_unique": [int(x) for x in torch.unique(target).cpu().tolist()],
+                    "dataset_version": dataset_version
+                },
+                "timestamp": int(time.time() * 1000)
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    
     # Argmax predictions
     pred = torch.argmax(logits, dim=1)  # (B, H, W[, D])
+    
+    # #region agent log
+    try:
+        with open(log_path, 'a', encoding='utf-8') as log_file:
+            log_file.write(json.dumps({
+                "sessionId": "debug-session",
+                "runId": "eval-check",
+                "hypothesisId": "H3",
+                "location": "metrics.py:100",
+                "message": "After argmax",
+                "data": {
+                    "pred_shape": list(pred.shape),
+                    "pred_min": int(pred.min().item()),
+                    "pred_max": int(pred.max().item()),
+                    "pred_unique": [int(x) for x in torch.unique(pred).cpu().tolist()],
+                    "pred_class_counts": dict(zip(*[int(x) for x in torch.unique(pred, return_counts=True)[0].cpu().tolist()], 
+                                                   [int(x) for x in torch.unique(pred, return_counts=True)[1].cpu().tolist()]))
+                },
+                "timestamp": int(time.time() * 1000)
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
     # Binary masks for regions
     def to_bool(x):

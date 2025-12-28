@@ -47,39 +47,45 @@ def get_hybrid_coord_map(spatial_shape: Sequence[int], device: Optional[torch.de
         Tensor of shape (9, H, W, D): 3 linear + 6 Fourier features
     """
     shape = _to_3tuple(spatial_shape)
-    h, w, d = shape
     
-    # Linear coordinates (normalized 0-1)
-    ys = torch.linspace(0.0, 1.0, steps=h, dtype=torch.float32)
-    xs = torch.linspace(0.0, 1.0, steps=w, dtype=torch.float32)
-    zs = torch.linspace(0.0, 1.0, steps=d, dtype=torch.float32)
-    grid_y, grid_x, grid_z = torch.meshgrid(ys, xs, zs, indexing='ij')
+    # 캐시 확인 (같은 shape에 대해서는 재사용)
+    cache_key = ('hybrid', shape)
+    if cache_key not in _COORD_MAP_CACHE:
+        h, w, d = shape
+        
+        # Linear coordinates (normalized 0-1)
+        ys = torch.linspace(0.0, 1.0, steps=h, dtype=torch.float32)
+        xs = torch.linspace(0.0, 1.0, steps=w, dtype=torch.float32)
+        zs = torch.linspace(0.0, 1.0, steps=d, dtype=torch.float32)
+        grid_y, grid_x, grid_z = torch.meshgrid(ys, xs, zs, indexing='ij')
+        
+        # Linear coordinates (3 channels)
+        linear_coord = torch.stack([grid_y, grid_x, grid_z], dim=0)
+        
+        # Fourier features: 6 channels (sin/cos for 3 axes at 1 frequency)
+        # Use frequency 1.0 for all axes
+        freq = 1.0
+        fourier_list = [
+            torch.sin(2 * torch.pi * freq * grid_y),
+            torch.cos(2 * torch.pi * freq * grid_y),
+            torch.sin(2 * torch.pi * freq * grid_x),
+            torch.cos(2 * torch.pi * freq * grid_x),
+            torch.sin(2 * torch.pi * freq * grid_z),
+            torch.cos(2 * torch.pi * freq * grid_z),
+        ]
+        
+        # Stack to get 6 channels (3 axes × 2 sin/cos)
+        # Total: 3 linear + 6 Fourier = 9 channels
+        fourier_coord = torch.stack(fourier_list, dim=0)  # (6, H, W, D)
+        
+        # Combine: 3 linear + 6 Fourier = 9 channels
+        hybrid_coord = torch.cat([linear_coord, fourier_coord], dim=0)  # (9, H, W, D)
+        _COORD_MAP_CACHE[cache_key] = hybrid_coord.contiguous()
     
-    # Linear coordinates (3 channels)
-    linear_coord = torch.stack([grid_y, grid_x, grid_z], dim=0)
-    
-    # Fourier features: 6 channels (sin/cos for 3 axes at 1 frequency)
-    # Use frequency 1.0 for all axes
-    freq = 1.0
-    fourier_list = [
-        torch.sin(2 * torch.pi * freq * grid_y),
-        torch.cos(2 * torch.pi * freq * grid_y),
-        torch.sin(2 * torch.pi * freq * grid_x),
-        torch.cos(2 * torch.pi * freq * grid_x),
-        torch.sin(2 * torch.pi * freq * grid_z),
-        torch.cos(2 * torch.pi * freq * grid_z),
-    ]
-    
-    # Stack to get 6 channels (3 axes × 2 sin/cos)
-    # Total: 3 linear + 6 Fourier = 9 channels
-    fourier_coord = torch.stack(fourier_list, dim=0)  # (6, H, W, D)
-    
-    # Combine: 3 linear + 6 Fourier = 9 channels
-    hybrid_coord = torch.cat([linear_coord, fourier_coord], dim=0)  # (9, H, W, D)
-    
+    hybrid_coord = _COORD_MAP_CACHE[cache_key]
     if device is not None:
         hybrid_coord = hybrid_coord.to(device)
-    return hybrid_coord.contiguous()
+    return hybrid_coord
 
 
 def get_coord_map(spatial_shape: Sequence[int], device: Optional[torch.device] = None, encoding_type: str = 'simple') -> torch.Tensor:

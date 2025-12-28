@@ -236,6 +236,13 @@ def build_segmentation_input(
     if include_coords:
         if coord_map is None:
             # Fallback: create coord_map if not provided (for backward compatibility)
+            # 이 경우는 발생하지 않아야 함 (run_cascade_inference에서 coord_map을 전달해야 함)
+            import warnings
+            warnings.warn(
+                f"build_segmentation_input: coord_map is None, creating on-the-fly. "
+                f"This should not happen in cascade inference. "
+                f"image.shape={image.shape}, center={center}, crop_size={crop_size}"
+            )
             coord_map = get_coord_map(image.shape[1:], device=image.device, encoding_type=coord_encoding_type)
         coord_patch = crop_volume_with_center(coord_map, center, crop_size, return_origin=False)
         inputs = torch.cat([seg_patch, coord_patch], dim=0)
@@ -373,19 +380,13 @@ def run_cascade_inference(
     
     # coord_map을 한 번만 생성하여 재사용 (성능 최적화)
     # 이전에는 각 crop마다 get_coord_map을 호출했지만, 이제는 샘플당 1번만 생성
+    # get_hybrid_coord_map도 이제 캐시를 사용하므로 같은 shape에 대해서는 매우 빠름
     coord_map_full = None
     coord_map_time = 0.0
     if include_coords:
         coord_map_start = time.time()
         coord_map_full = get_coord_map(image.shape[1:], device=image.device, encoding_type=coord_encoding_type)
         coord_map_time = time.time() - coord_map_start
-        # 첫 번째 호출에서만 로그 출력 (디버깅용)
-        if return_timing:
-            rank = 0
-            if torch.distributed.is_available() and torch.distributed.is_initialized():
-                rank = torch.distributed.get_rank()
-            if is_main_process(rank):
-                print(f"[Cascade] Created coord_map: shape={coord_map_full.shape}, volume_shape={image.shape[1:]}, time={coord_map_time:.3f}s")
     
     # 모델이 return_attention 파라미터를 지원하는지 확인
     import inspect

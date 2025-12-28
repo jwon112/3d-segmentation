@@ -177,6 +177,33 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
         flair = nib.load(os.path.join(patient_dir, flair_file)).get_fdata()
         seg = nib.load(os.path.join(patient_dir, seg_file)).get_fdata()
 
+        # #region agent log
+        import json
+        import time
+        log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+        try:
+            with open(log_path, 'a', encoding='utf-8') as log_file:
+                log_file.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "preprocess-check",
+                    "hypothesisId": "H1",
+                    "location": "preprocess_brats.py:176",
+                    "message": "NIfTI loaded shapes",
+                    "data": {
+                        "patient_dir": os.path.basename(patient_dir),
+                        "t1ce_shape": list(t1ce.shape),
+                        "flair_shape": list(flair.shape),
+                        "seg_shape": list(seg.shape),
+                        "t1ce_file": t1ce_file,
+                        "flair_file": flair_file,
+                        "seg_file": seg_file
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+
         # 정규화
         t1ce = _normalize_volume_np(t1ce)
         flair = _normalize_volume_np(flair)
@@ -185,12 +212,56 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
         # 실험 시 필요한 모달리티만 선택적으로 로드 가능
         t1 = nib.load(os.path.join(patient_dir, t1_file)).get_fdata()
         t2 = nib.load(os.path.join(patient_dir, t2_file)).get_fdata()
+        
+        # #region agent log
+        try:
+            with open(log_path, 'a', encoding='utf-8') as log_file:
+                log_file.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "preprocess-check",
+                    "hypothesisId": "H1",
+                    "location": "preprocess_brats.py:187",
+                    "message": "NIfTI loaded shapes (T1, T2)",
+                    "data": {
+                        "patient_dir": os.path.basename(patient_dir),
+                        "t1_shape": list(t1.shape),
+                        "t2_shape": list(t2.shape),
+                        "t1_file": t1_file,
+                        "t2_file": t2_file
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        
         t1 = _normalize_volume_np(t1)
         t2 = _normalize_volume_np(t2)
         image = np.stack([t1, t1ce, t2, flair], axis=-1)  # (H, W, D, 4)
         
         # (H, W, D, C) -> (C, H, W, D)로 변환
         image = np.transpose(image, (3, 0, 1, 2)).astype(np.float32)
+        
+        # #region agent log
+        try:
+            with open(log_path, 'a', encoding='utf-8') as log_file:
+                log_file.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "preprocess-check",
+                    "hypothesisId": "H2",
+                    "location": "preprocess_brats.py:193",
+                    "message": "Image shape before H5 save",
+                    "data": {
+                        "patient_dir": os.path.basename(patient_dir),
+                        "image_shape": list(image.shape),
+                        "mask_shape": list(mask.shape),
+                        "output_path": output_path
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         
         # Mask 처리
         mask = seg.astype(np.int64)

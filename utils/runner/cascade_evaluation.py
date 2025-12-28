@@ -150,16 +150,74 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
         else:
             target_batch = target.unsqueeze(0)  # 안전장치
         
-        # Shape 확인 (디버깅용)
+        # Shape 확인 및 디버깅 정보 (첫 번째 샘플)
         if idx == 0:  # 첫 번째 샘플만 출력
             if is_main_process(rank):
                 print(f"[Cascade Evaluation] full_logits.shape={full_logits.shape}, target_batch.shape={target_batch.shape}")
+                # #region agent log
+                import json
+                import time
+                log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+                try:
+                    with open(log_path, 'a', encoding='utf-8') as log_file:
+                        log_file.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "eval-check",
+                            "hypothesisId": "H1",
+                            "location": "cascade_evaluation.py:156",
+                            "message": "Before Dice calculation - shapes and value ranges",
+                            "data": {
+                                "full_logits_shape": list(full_logits.shape),
+                                "target_batch_shape": list(target_batch.shape),
+                                "full_logits_min": float(full_logits.min().item()),
+                                "full_logits_max": float(full_logits.max().item()),
+                                "full_logits_mean": float(full_logits.mean().item()),
+                                "target_batch_min": int(target_batch.min().item()),
+                                "target_batch_max": int(target_batch.max().item()),
+                                "target_batch_unique": [int(x) for x in torch.unique(target_batch).cpu().tolist()],
+                                "dataset_version": dataset_version
+                            },
+                            "timestamp": int(time.time() * 1000)
+                        }, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+                # #endregion
+                
+                # Prediction 확인
+                pred_argmax = torch.argmax(full_logits, dim=1)
+                pred_unique = torch.unique(pred_argmax).cpu().tolist()
+                target_unique = torch.unique(target_batch).cpu().tolist()
+                print(f"[Cascade Evaluation] Sample {idx+1}: pred unique classes={pred_unique}, target unique classes={target_unique}")
+                print(f"[Cascade Evaluation] Sample {idx+1}: pred class counts={dict(zip(*torch.unique(pred_argmax, return_counts=True)))}")
+                print(f"[Cascade Evaluation] Sample {idx+1}: target class counts={dict(zip(*torch.unique(target_batch, return_counts=True)))}")
         
         try:
             dice_start = time.time()
             dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version).detach().cpu()
             dice_time = time.time() - dice_start
             total_dice_time += dice_time
+            
+            # #region agent log
+            if idx == 0:
+                try:
+                    with open(log_path, 'a', encoding='utf-8') as log_file:
+                        log_file.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "eval-check",
+                            "hypothesisId": "H2",
+                            "location": "cascade_evaluation.py:160",
+                            "message": "After Dice calculation",
+                            "data": {
+                                "dice_values": [float(x) for x in dice.tolist()],
+                                "dice_shape": list(dice.shape),
+                                "dataset_version": dataset_version
+                            },
+                            "timestamp": int(time.time() * 1000)
+                        }, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+            # #endregion
+            
             dice_rows.append(dice)
             
             sample_total_time = time.time() - sample_start_time
