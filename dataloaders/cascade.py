@@ -187,9 +187,17 @@ def crop_volume_with_center(tensor: torch.Tensor, center: Sequence[float], crop_
 
     c, h, w, d = tensor.shape
     size = _to_3tuple(crop_size)
-    center = [float(c_val) for c_val in center]
-    half = [s / 2.0 for s in size]
-    starts = [int(round(c_val - h_val)) for c_val, h_val in zip(center, half)]
+    # center는 (cy, cx, cz) 순서로 들어옴
+    # tensor.shape는 (C, H, W, D) = (C, h, w, d) 순서
+    # 따라서 center[0]=cy는 h 차원, center[1]=cx는 w 차원, center[2]=cz는 d 차원에 매칭
+    cy, cx, cz = [float(c_val) for c_val in center]
+    half_h, half_w, half_d = [s / 2.0 for s in size]
+    
+    # 각 차원별로 시작 위치 계산
+    start_h = int(round(cy - half_h))
+    start_w = int(round(cx - half_w))
+    start_d = int(round(cz - half_d))
+    starts = [start_h, start_w, start_d]
 
     src_ranges = []
     dst_ranges = []
