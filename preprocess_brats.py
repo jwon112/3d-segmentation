@@ -48,7 +48,7 @@ def _normalize_volume_np(vol):
     return out
 
 
-def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, force_overwrite=False):
+def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, force_overwrite=False, dataset_version='brats2021'):
     """
     단일 볼륨을 전처리하여 저장
     
@@ -62,6 +62,7 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
         use_4modalities: 무시됨 (하위 호환성을 위해 유지). H5 파일은 항상 4개 모달리티로 저장됩니다.
         output_path: 저장할 파일 경로 (None이면 patient_dir/preprocessed.h5)
         force_overwrite: 강제 덮어쓰기 여부
+        dataset_version: 데이터셋 버전 (BRATS2024는 RC 포함으로 라벨 매핑 안 함)
     
     Returns:
         bool: 성공 여부
@@ -193,15 +194,27 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
         
         # Mask 처리
         mask = seg.astype(np.int64)
-        mask = np.where(mask == 4, 3, mask)
+        # BRATS2024는 RC(Resection Cavity)가 라벨 3으로 존재하므로 라벨 매핑을 하지 않음
+        # 다른 BRATS 버전은 라벨 4(ET)를 3으로 매핑
+        if dataset_version != 'brats2024':
+            mask = np.where(mask == 4, 3, mask)
         
         # 포그라운드 좌표 사전 계산 (패치 샘플링 최적화)
         # 클래스별 포그라운드 좌표를 미리 계산하여 저장
+        # BRATS2024는 5개 클래스 (0, 1, 2, 3, 4), 다른 버전은 4개 클래스 (0, 1, 2, 3)
         fg_coords_dict = {}
-        for cls in [1, 2, 3]:
-            coords = np.argwhere(mask == cls)
-            if len(coords) > 0:
-                fg_coords_dict[f'fg_coords_{cls}'] = coords
+        if dataset_version == 'brats2024':
+            # BRATS2024: 클래스 1, 2, 3(RC), 4(ET)
+            for cls in [1, 2, 3, 4]:
+                coords = np.argwhere(mask == cls)
+                if len(coords) > 0:
+                    fg_coords_dict[f'fg_coords_{cls}'] = coords
+        else:
+            # 다른 BRATS 버전: 클래스 1, 2, 3(ET)
+            for cls in [1, 2, 3]:
+                coords = np.argwhere(mask == cls)
+                if len(coords) > 0:
+                    fg_coords_dict[f'fg_coords_{cls}'] = coords
         
         # HDF5로 저장 (메타데이터 포함, gzip level 4 - 벤치마크 결과 최적값)
         # 벤치마크 결과: level 4가 Cold cache 로딩(270ms)에서 가장 빠름, 파일 크기(6.89MB)도 최소
@@ -386,7 +399,7 @@ def preprocess_all_volumes(data_dir, dataset_version='brats2021', use_4modalitie
             continue
         
         force_overwrite = not skip_existing
-        if preprocess_volume(patient_dir, use_4modalities, output_path, force_overwrite):
+        if preprocess_volume(patient_dir, use_4modalities, output_path, force_overwrite, dataset_version=dataset_version):
             success_count += 1
         else:
             error_count += 1

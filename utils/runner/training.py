@@ -66,7 +66,7 @@ def save_hybrid_stats_to_csv(model, results_dir: str, model_name: str, seed: int
 
 
 def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
-                sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True, results_dir=None, ckpt_path=None, train_crops_per_center=1):
+                sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True, results_dir=None, ckpt_path=None, train_crops_per_center=1, dataset_version='brats2021'):
     """모델 훈련 함수
     
     Args:
@@ -216,7 +216,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             bwd_times.append(t_bwd - t_fwd)
             
             # BraTS composite Dice (WT, TC, ET)
-            dice_scores = calculate_wt_tc_et_dice(logits.detach(), labels)
+            dice_scores = calculate_wt_tc_et_dice(logits.detach(), labels, dataset_version=dataset_version)
             # 평균 Dice (WT/TC/ET 평균)
             mean_dice = dice_scores.mean()
             bsz = inputs.size(0)
@@ -283,7 +283,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 else:
                     logits = model(inputs)
                 loss = criterion(logits, labels)
-                dice_scores = calculate_wt_tc_et_dice(logits, labels)
+                dice_scores = calculate_wt_tc_et_dice(logits, labels, dataset_version=dataset_version)
                 # WT/TC/ET 평균
                 mean_dice = dice_scores.mean()
                 all_sample_dices.append(mean_dice.item())  # 디버깅

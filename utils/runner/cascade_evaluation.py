@@ -17,7 +17,7 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                               roi_resize=(64, 64, 64), crop_size=(96, 96, 96), include_coords=True,
                               coord_encoding_type='simple',
                               crops_per_center=1, crop_overlap=0.5, use_blending=True,
-                              collect_attention=False, results_dir=None, model_name='model'):
+                              collect_attention=False, results_dir=None, model_name='model', dataset_version='brats2021'):
     """
     Run cascade inference on base dataset and compute WT/TC/ET dice.
     
@@ -94,7 +94,7 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
         if idx == 0:  # 첫 번째 샘플만 출력
             print(f"[Cascade Evaluation] full_logits.shape={full_logits.shape}, target_batch.shape={target_batch.shape}")
         
-        dice = calculate_wt_tc_et_dice(full_logits, target_batch).detach().cpu()
+        dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version).detach().cpu()
         dice_rows.append(dice)
     
     if not dice_rows:
@@ -270,5 +270,6 @@ def evaluate_segmentation_with_roi(
         collect_attention=collect_attention,
         results_dir=results_dir,
         model_name=model_name,
+        dataset_version=dataset_version,
     )
 

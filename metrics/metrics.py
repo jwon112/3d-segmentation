@@ -58,11 +58,16 @@ def calculate_dice_score(pred, target, smooth=1e-5, num_classes=4):
 
 
 
-def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5):
+def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_version: str = 'brats2021'):
     """Compute BraTS composite region Dice: WT, TC, ET.
 
-    Assumes target labels are mapped to 0..3 with: 0=BG, 1=NCR/NET, 2=ED, 3=ET.
-    WT = 1 ∪ 2 ∪ 3, TC = 1 ∪ 3, ET = 3.
+    For BRATS2021 and earlier:
+        Assumes target labels are mapped to 0..3 with: 0=BG, 1=NCR/NET, 2=ED, 3=ET.
+        WT = 1 ∪ 2 ∪ 3, TC = 1 ∪ 3, ET = 3.
+    
+    For BRATS2024:
+        Assumes target labels are 0..4 with: 0=BG, 1=NCR/NET, 2=ED, 3=RC, 4=ET.
+        WT = 1 ∪ 2 ∪ 3 ∪ 4 (all tumor regions including RC), TC = 1 ∪ 4, ET = 4.
 
     Returns: tensor of shape (3,) -> [WT, TC, ET]
     """
@@ -73,13 +78,28 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5):
     def to_bool(x):
         return x.to(dtype=torch.bool)
 
-    pred_wt = to_bool((pred == 1) | (pred == 2) | (pred == 3))
-    pred_tc = to_bool((pred == 1) | (pred == 3))
-    pred_et = to_bool(pred == 3)
+    if dataset_version == 'brats2024':
+        # BRATS2024: 5 classes (0=BG, 1=NCR/NET, 2=ED, 3=RC, 4=ET)
+        # WT = 1 ∪ 2 ∪ 3 ∪ 4 (all tumor regions including RC)
+        # TC = 1 ∪ 4 (NCR/NET + ET, excluding RC and ED)
+        # ET = 4 (Enhancing Tumor only)
+        pred_wt = to_bool((pred == 1) | (pred == 2) | (pred == 3) | (pred == 4))
+        pred_tc = to_bool((pred == 1) | (pred == 4))
+        pred_et = to_bool(pred == 4)
 
-    tgt_wt = to_bool((target == 1) | (target == 2) | (target == 3))
-    tgt_tc = to_bool((target == 1) | (target == 3))
-    tgt_et = to_bool(target == 3)
+        tgt_wt = to_bool((target == 1) | (target == 2) | (target == 3) | (target == 4))
+        tgt_tc = to_bool((target == 1) | (target == 4))
+        tgt_et = to_bool(target == 4)
+    else:
+        # Other BRATS versions: 4 classes (0=BG, 1=NCR/NET, 2=ED, 3=ET)
+        # WT = 1 ∪ 2 ∪ 3, TC = 1 ∪ 3, ET = 3
+        pred_wt = to_bool((pred == 1) | (pred == 2) | (pred == 3))
+        pred_tc = to_bool((pred == 1) | (pred == 3))
+        pred_et = to_bool(pred == 3)
+
+        tgt_wt = to_bool((target == 1) | (target == 2) | (target == 3))
+        tgt_tc = to_bool((target == 1) | (target == 3))
+        tgt_et = to_bool(target == 3)
 
     def dice_bin(pb, tb):
         # Compute per-sample dice then average over batch

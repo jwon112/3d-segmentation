@@ -174,7 +174,9 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     
     # 모델 생성 (coord_type 전달)
     # get_model 내부에서 coord_type에 따라 n_coord_channels를 계산하고 n_image_channels + n_coord_channels로 모델을 생성합니다
-    model = get_model(model_name, n_channels=n_channels, n_classes=4, dim=dim, coord_type=coord_type)
+    # BRATS2024는 RC(Resection Cavity) 포함으로 5개 클래스, 다른 버전은 4개 클래스
+    n_classes = 5 if dataset_version == 'brats2024' else 4
+    model = get_model(model_name, n_channels=n_channels, n_classes=n_classes, dim=dim, coord_type=coord_type)
     
     # DDP wrap if distributed
     if distributed:
@@ -401,7 +403,8 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
                     distributed=distributed, world_size=world_size,
                     sw_patch_size=(128, 128, 128), sw_overlap=0.5, 
                     results_dir=results_dir,
-                    coord_type=coord_type
+                    coord_type=coord_type,
+                    dataset_version=dataset_version
                 )
         else:
             # ROI 모델을 찾지 못한 경우 에러 발생 (fallback 하지 않음)
@@ -425,7 +428,8 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
             distributed=distributed, world_size=world_size,
             sw_patch_size=(128, 128, 128), sw_overlap=0.5, 
             results_dir=results_dir,
-            coord_type=coord_type  # 체크포인트에서 감지한 coord_type 전달
+            coord_type=coord_type,  # 체크포인트에서 감지한 coord_type 전달
+            dataset_version=dataset_version
         )
     
     # Grad-CAM 생성 (rank 0에서만, 3D 모델만)

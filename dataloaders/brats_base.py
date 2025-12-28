@@ -261,7 +261,9 @@ class BratsDataset3D(Dataset):
                     # 포그라운드 좌표 로드 (있으면 사용, 없으면 None)
                     fg_coords_dict = {}
                     if f.attrs.get('has_fg_coords', False):
-                        for cls in [1, 2, 3]:
+                        # BRATS2024는 5개 클래스 (1, 2, 3, 4), 다른 버전은 4개 클래스 (1, 2, 3)
+                        classes_to_load = [1, 2, 3, 4] if self.dataset_version == 'brats2024' else [1, 2, 3]
+                        for cls in classes_to_load:
                             coords_key = f'fg_coords_{cls}'
                             if coords_key in f:
                                 coords_array = f[coords_key][:]
@@ -295,6 +297,11 @@ class BratsDataset3D(Dataset):
                     if not self.use_4modalities:
                         # T1CE와 FLAIR만 선택 (indices 1, 3)
                         image = image[[1, 3], :, :, :]  # (2, H, W, D)
+                
+                # BRATS2024는 RC(Resection Cavity)가 라벨 3으로 존재하므로 라벨 매핑을 하지 않음
+                # 다른 BRATS 버전은 라벨 4(ET)를 3으로 매핑
+                if self.dataset_version != 'brats2024':
+                    mask = torch.where(mask == 4, torch.tensor(3).long(), mask)
                 
                 # 포그라운드 좌표가 있으면 함께 반환
                 if fg_coords_dict:
@@ -365,7 +372,10 @@ class BratsDataset3D(Dataset):
             image = torch.from_numpy(np.transpose(image, (3, 0, 1, 2))).float()
 
         mask = torch.from_numpy(seg).long()
-        mask = torch.where(mask == 4, torch.tensor(3).long(), mask)
+        # BRATS2024는 RC(Resection Cavity)가 라벨 3으로 존재하므로 라벨 매핑을 하지 않음
+        # 다른 BRATS 버전은 라벨 4(ET)를 3으로 매핑
+        if self.dataset_version != 'brats2024':
+            mask = torch.where(mask == 4, torch.tensor(3).long(), mask)
         
         result = (image, mask)
         

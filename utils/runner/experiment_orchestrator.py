@@ -268,7 +268,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     try:
                         if is_main_process(rank):
                             print(f"Creating model: {model_name}...")
-                        model = get_model(model_name, n_channels=n_channels, n_classes=4, dim=dim, use_pretrained=use_pretrained, coord_type=coord_type)
+                        # BRATS2024는 RC(Resection Cavity) 포함으로 5개 클래스, 다른 버전은 4개 클래스
+                        n_classes = 5 if dataset_version == 'brats2024' else 4
+                        model = get_model(model_name, n_channels=n_channels, n_classes=n_classes, dim=dim, use_pretrained=use_pretrained, coord_type=coord_type)
                         if is_main_process(rank):
                             print(f"Model {model_name} created successfully.")
                     except Exception as e:
@@ -383,7 +385,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
                         train_sampler=train_sampler, rank=rank,
                         sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim=dim, use_nnunet_loss=use_nnunet_loss,
-                        results_dir=results_dir, ckpt_path=ckpt_path, train_crops_per_center=train_crops_per_center
+                        results_dir=results_dir, ckpt_path=ckpt_path, train_crops_per_center=train_crops_per_center,
+                        dataset_version=dataset_version
                     )
                     
                     # FLOPs 계산 (모델이 device에 있는 상태에서)
@@ -492,6 +495,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         sw_overlap=0.5,
                         results_dir=results_dir,
                         coord_type=coord_type,  # coord_type 전달 (cascade 모델도 포함)
+                        dataset_version=dataset_version,
                     )
 
                     cascade_metrics = None
