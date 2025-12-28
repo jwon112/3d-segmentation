@@ -636,12 +636,16 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             all_epochs_results.append(epoch_data)
                     
                     if is_main_process(rank):
+                        # precision과 recall이 None일 수 있으므로 안전하게 처리
+                        prec_str = f"{metrics['precision']:.4f}" if metrics.get('precision') is not None else "N/A"
+                        rec_str = f"{metrics['recall']:.4f}" if metrics.get('recall') is not None else "N/A"
+                        
                         if dataset_version == 'brats2024' and 'rc' in metrics:
                             print(f"Final Val Dice: {best_val_dice:.4f} (WT {best_val_wt:.4f} | TC {best_val_tc:.4f} | ET {best_val_et:.4f} | RC {best_val_rc:.4f}) (epoch {best_epoch})")
-                            print(f"Final Test Dice: {metrics['dice']:.4f} (WT {metrics['wt']:.4f} | TC {metrics['tc']:.4f} | ET {metrics['et']:.4f} | RC {metrics['rc']:.4f}) | Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
+                            print(f"Final Test Dice: {metrics['dice']:.4f} (WT {metrics['wt']:.4f} | TC {metrics['tc']:.4f} | ET {metrics['et']:.4f} | RC {metrics['rc']:.4f}) | Prec {prec_str} Rec {rec_str}")
                         else:
                             print(f"Final Val Dice: {best_val_dice:.4f} (WT {best_val_wt:.4f} | TC {best_val_tc:.4f} | ET {best_val_et:.4f}) (epoch {best_epoch})")
-                            print(f"Final Test Dice: {metrics['dice']:.4f} (WT {metrics['wt']:.4f} | TC {metrics['tc']:.4f} | ET {metrics['et']:.4f}) | Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
+                            print(f"Final Test Dice: {metrics['dice']:.4f} (WT {metrics['wt']:.4f} | TC {metrics['tc']:.4f} | ET {metrics['et']:.4f}) | Prec {prec_str} Rec {rec_str}")
                 
                 except Exception as e:
                     # 모든 프로세스에서 에러 로깅 (디버깅을 위해)

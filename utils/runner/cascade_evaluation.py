@@ -4,6 +4,7 @@ Cascade ROI→Seg 파이프라인 평가 관련 함수
 """
 
 import os
+import time
 import torch
 
 from utils.experiment_utils import get_roi_model, is_main_process
@@ -44,12 +45,22 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
     if is_main_process(rank):
         print(f"[Cascade Evaluation] Starting evaluation on {total_samples} samples...")
     
+    # 시간 측정용 변수
+    total_data_load_time = 0.0
+    total_roi_time = 0.0
+    total_seg_time = 0.0
+    total_dice_time = 0.0
+    
     for idx in range(len(base_dataset)):
+        sample_start_time = time.time()
+        
         # 진행 상황 로그 (10개마다 또는 첫 번째/마지막 샘플)
         if is_main_process(rank) and (idx == 0 or idx % 10 == 0 or idx == total_samples - 1):
             print(f"[Cascade Evaluation] Processing sample {idx+1}/{total_samples}...")
         
         try:
+            # 데이터 로드 시간 측정
+            data_load_start = time.time()
             # base_dataset이 (image, mask) 또는 (image, mask, fg_coords_dict) 반환 가능
             loaded_data = base_dataset[idx]
             if len(loaded_data) == 3:
@@ -58,10 +69,17 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                 image, target = loaded_data
             image = image.to(device)
             target = target.to(device)
+            data_load_time = time.time() - data_load_start
+            total_data_load_time += data_load_time
             
             if is_main_process(rank) and idx == 0:
                 print(f"[Cascade Evaluation] Sample {idx+1}: image.shape={image.shape}, target.shape={target.shape}")
+                print(f"[Cascade Evaluation] Sample {idx+1}: Data load time: {data_load_time:.3f}s")
+                # 볼륨 크기 확인 (디버깅용)
+                print(f"[Cascade Evaluation] Sample {idx+1}: Volume size (H, W, D) = {image.shape[1:]}")
             
+            # Cascade inference 시간 측정
+            inference_start = time.time()
             result = run_cascade_inference(
                 roi_model=roi_model,
                 seg_model=seg_model,
@@ -76,10 +94,22 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                 use_blending=use_blending,
                 return_attention=collect_attention,
                 roi_use_4modalities=roi_use_4modalities,
+                return_timing=True,
             )
+            inference_time = time.time() - inference_start
             
-            if is_main_process(rank) and idx == 0:
-                print(f"[Cascade Evaluation] Sample {idx+1}: run_cascade_inference completed")
+            # ROI와 Segmentation 시간 분리
+            timing_info = result.get('timing', {})
+            roi_time = timing_info.get('roi_time', 0.0)
+            seg_time = timing_info.get('seg_time', 0.0)
+            num_centers = timing_info.get('num_centers', 1)
+            num_crops = timing_info.get('num_crops', 1)
+            
+            total_roi_time += roi_time
+            total_seg_time += seg_time
+            
+            if is_main_process(rank) and (idx == 0 or idx % 10 == 0):
+                print(f"[Cascade Evaluation] Sample {idx+1}: ROI={roi_time:.3f}s, Seg={seg_time:.3f}s (centers={num_centers}, crops={num_crops}), Total={inference_time:.3f}s")
         except Exception as e:
             error_msg = f"[Cascade Evaluation] Error processing sample {idx+1}/{total_samples}: {type(e).__name__}: {e}"
             if is_main_process(rank):
@@ -126,13 +156,18 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                 print(f"[Cascade Evaluation] full_logits.shape={full_logits.shape}, target_batch.shape={target_batch.shape}")
         
         try:
+            dice_start = time.time()
             dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version).detach().cpu()
+            dice_time = time.time() - dice_start
+            total_dice_time += dice_time
             dice_rows.append(dice)
+            
+            sample_total_time = time.time() - sample_start_time
             if is_main_process(rank) and (idx == 0 or idx % 10 == 0 or idx == total_samples - 1):
                 if dataset_version == 'brats2024':
-                    print(f"[Cascade Evaluation] Sample {idx+1}: Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f}, RC={dice[3]:.4f}")
+                    print(f"[Cascade Evaluation] Sample {idx+1}: Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f}, RC={dice[3]:.4f} | Total: {sample_total_time:.3f}s")
                 else:
-                    print(f"[Cascade Evaluation] Sample {idx+1}: Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f}")
+                    print(f"[Cascade Evaluation] Sample {idx+1}: Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f} | Total: {sample_total_time:.3f}s")
         except Exception as e:
             error_msg = f"[Cascade Evaluation] Error calculating dice for sample {idx+1}/{total_samples}: {type(e).__name__}: {e}"
             if is_main_process(rank):
@@ -142,7 +177,15 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             raise
     
     if is_main_process(rank):
-        print(f"[Cascade Evaluation] Completed processing all {total_samples} samples. Calculating final metrics...")
+        total_eval_time = total_data_load_time + total_seg_time + total_dice_time
+        print(f"[Cascade Evaluation] Completed processing all {total_samples} samples.")
+        print(f"[Cascade Evaluation] Timing summary:")
+        print(f"  - Data loading: {total_data_load_time:.2f}s (avg: {total_data_load_time/total_samples:.3f}s/sample, {total_data_load_time/total_eval_time*100:.1f}%)")
+        print(f"  - ROI localization: {total_roi_time:.2f}s (avg: {total_roi_time/total_samples:.3f}s/sample, {total_roi_time/total_eval_time*100:.1f}%)")
+        print(f"  - Segmentation inference: {total_seg_time:.2f}s (avg: {total_seg_time/total_samples:.3f}s/sample, {total_seg_time/total_eval_time*100:.1f}%)")
+        print(f"  - Dice calculation: {total_dice_time:.2f}s (avg: {total_dice_time/total_samples:.3f}s/sample, {total_dice_time/total_eval_time*100:.1f}%)")
+        print(f"  - Total: {total_eval_time:.2f}s")
+        print(f"[Cascade Evaluation] Calculating final metrics...")
     
     is_brats2024 = (dataset_version == 'brats2024')
     if not dice_rows:

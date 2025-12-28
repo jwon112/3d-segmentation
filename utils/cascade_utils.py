@@ -223,16 +223,20 @@ def build_segmentation_input(
     crop_size: Sequence[int],
     include_coords: bool = True,
     coord_encoding_type: str = 'simple',
+    coord_map: Optional[torch.Tensor] = None,
 ) -> Dict:
     """Create crop with coord channels around predicted center.
     
     Args:
         coord_encoding_type: 'simple' (3 channels) or 'hybrid' (9 channels)
+        coord_map: Pre-computed coordinate map (optional). If None, will be created on-the-fly.
     """
     seg_patch, origin = crop_volume_with_center(image, center, crop_size, return_origin=True)
     inputs = seg_patch
     if include_coords:
-        coord_map = get_coord_map(image.shape[1:], device=image.device, encoding_type=coord_encoding_type)
+        if coord_map is None:
+            # Fallback: create coord_map if not provided (for backward compatibility)
+            coord_map = get_coord_map(image.shape[1:], device=image.device, encoding_type=coord_encoding_type)
         coord_patch = crop_volume_with_center(coord_map, center, crop_size, return_origin=False)
         inputs = torch.cat([seg_patch, coord_patch], dim=0)
     return {
@@ -333,6 +337,7 @@ def run_cascade_inference(
     use_blending: bool = True,
     return_attention: bool = False,
     roi_use_4modalities: bool = True,
+    return_timing: bool = False,
 ) -> Dict:
     """
     Full cascade inference: ROI -> multi-crop -> segmentation -> merge & uncrop.
@@ -347,6 +352,8 @@ def run_cascade_inference(
         use_blending: True면 cosine blending, False면 voxel-wise max
         return_attention: True면 MobileViT attention weights도 반환
     """
+    import time
+    roi_start = time.time()
     roi_info = run_roi_localization(
         roi_model=roi_model,
         image=image,
@@ -356,10 +363,29 @@ def run_cascade_inference(
         min_component_size=min_component_size,
         roi_use_4modalities=roi_use_4modalities,
     )
+    roi_time = time.time() - roi_start
 
     centers_full = roi_info.get('centers_full') or [roi_info['center_full']]
+    seg_time_total = 0.0
+    num_seg_calls = 0
 
     seg_model.eval()
+    
+    # coord_map을 한 번만 생성하여 재사용 (성능 최적화)
+    # 이전에는 각 crop마다 get_coord_map을 호출했지만, 이제는 샘플당 1번만 생성
+    coord_map_full = None
+    coord_map_time = 0.0
+    if include_coords:
+        coord_map_start = time.time()
+        coord_map_full = get_coord_map(image.shape[1:], device=image.device, encoding_type=coord_encoding_type)
+        coord_map_time = time.time() - coord_map_start
+        # 첫 번째 호출에서만 로그 출력 (디버깅용)
+        if return_timing:
+            rank = 0
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                rank = torch.distributed.get_rank()
+            if is_main_process(rank):
+                print(f"[Cascade] Created coord_map: shape={coord_map_full.shape}, volume_shape={image.shape[1:]}, time={coord_map_time:.3f}s")
     
     # 모델이 return_attention 파라미터를 지원하는지 확인
     import inspect
@@ -380,6 +406,7 @@ def run_cascade_inference(
             crop_size=crop_size,
             include_coords=include_coords,
             coord_encoding_type=coord_encoding_type,
+            coord_map=coord_map_full,  # 재사용
         )['inputs'].unsqueeze(0).to(device)
         with torch.no_grad():
             dummy_logits = seg_model(dummy_input)
@@ -410,9 +437,11 @@ def run_cascade_inference(
                 crop_size=crop_size,
                 include_coords=include_coords,
                 coord_encoding_type=coord_encoding_type,
+                coord_map=coord_map_full,  # 재사용: 한 번 생성한 coord_map을 모든 crop에서 사용
             )
             seg_tensor = seg_inputs['inputs'].unsqueeze(0).to(device)
             with torch.no_grad():
+                seg_start = time.time()
                 if return_attention and all_attention_weights is not None and len(all_attention_weights) == 0:
                     # MobileViT attention 수집 (첫 번째 crop만)
                     try:
@@ -457,6 +486,8 @@ def run_cascade_inference(
                         seg_logits = seg_model(seg_tensor, return_attention=False)
                     else:
                         seg_logits = seg_model(seg_tensor)
+                seg_time_total += time.time() - seg_start
+                num_seg_calls += 1
             patch_logits = seg_logits.squeeze(0).cpu()  # (C, h, w, d)
             
             if use_blending and crops_per_center > 1 and blend_weights is not None:
@@ -511,5 +542,14 @@ def run_cascade_inference(
     }
     if return_attention and all_attention_weights is not None:
         result['attention_weights'] = all_attention_weights
+    if return_timing:
+        result['timing'] = {
+            'roi_time': roi_time,
+            'seg_time': seg_time_total,
+            'coord_map_time': coord_map_time,
+            'num_seg_calls': num_seg_calls,
+            'num_centers': len(centers_full),
+            'num_crops': num_seg_calls,
+        }
     return result
 
