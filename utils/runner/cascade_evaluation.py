@@ -192,7 +192,7 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
         
         try:
             dice_start = time.time()
-            dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version).detach().cpu()
+            dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version, sample_idx=idx).detach().cpu()
             dice_time = time.time() - dice_start
             total_dice_time += dice_time
             

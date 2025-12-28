@@ -60,7 +60,7 @@ def calculate_dice_score(pred, target, smooth=1e-5, num_classes=4):
 
 
 
-def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_version: str = 'brats2021'):
+def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_version: str = 'brats2021', sample_idx: int = -1):
     """Compute BraTS composite region Dice: WT, TC, ET (and RC for BRATS2024).
 
     For BRATS2021 and earlier:
@@ -158,7 +158,7 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_versio
         tgt_et = to_bool(target == 3)
         tgt_rc = None  # RC 없음
 
-    def dice_bin(pb, tb):
+    def dice_bin(pb, tb, region_name=""):
         # Compute per-sample dice then average over batch
         # spatial_dims: 배치 차원(0)을 제외한 모든 공간 차원
         # pb/tb shape: (B, H, W[, D]) 또는 (H, W[, D])
@@ -189,6 +189,47 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_versio
             # 공간 차원에 대해 sum 연산 수행
             inter = (pb & tb).sum(dim=spatial_dims).float()
             union = pb.sum(dim=spatial_dims).float() + tb.sum(dim=spatial_dims).float()
+            pb_sum = pb.sum(dim=spatial_dims).float()
+            tb_sum = tb.sum(dim=spatial_dims).float()
+            
+            # 첫 번째 샘플에 대해서만 디버그 로그 출력
+            if sample_idx == 0:
+                # 배치 차원이 있으면 첫 번째 배치만, 없으면 그대로
+                if inter.dim() > 0:
+                    inter_val = inter[0].item() if inter.numel() > 0 else 0.0
+                    union_val = union[0].item() if union.numel() > 0 else 0.0
+                    pb_sum_val = pb_sum[0].item() if pb_sum.numel() > 0 else 0.0
+                    tb_sum_val = tb_sum[0].item() if tb_sum.numel() > 0 else 0.0
+                else:
+                    inter_val = inter.item() if inter.numel() > 0 else 0.0
+                    union_val = union.item() if union.numel() > 0 else 0.0
+                    pb_sum_val = pb_sum.item() if pb_sum.numel() > 0 else 0.0
+                    tb_sum_val = tb_sum.item() if tb_sum.numel() > 0 else 0.0
+                
+                print(f"[Dice Debug] {region_name}: intersection={inter_val:.0f}, union={union_val:.0f}, pred_sum={pb_sum_val:.0f}, target_sum={tb_sum_val:.0f}")
+                
+                # 로그 파일에도 기록
+                try:
+                    with open(log_path, 'a', encoding='utf-8') as log_file:
+                        log_file.write(json.dumps({
+                            "sessionId": "debug-session",
+                            "runId": "eval-check",
+                            "hypothesisId": "H4",
+                            "location": f"metrics.py:dice_bin({region_name})",
+                            "message": f"Dice calculation for {region_name}",
+                            "data": {
+                                "region_name": region_name,
+                                "intersection": float(inter_val),
+                                "union": float(union_val),
+                                "pred_sum": float(pb_sum_val),
+                                "target_sum": float(tb_sum_val),
+                                "smooth": smooth
+                            },
+                            "timestamp": int(time.time() * 1000)
+                        }, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+            
             d = (2.0 * inter + smooth) / (union + smooth)
             
             # If tb is empty across sample, set dice to 0 (exclude meaningless perfect)
@@ -209,13 +250,13 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_versio
             )
             raise
 
-    wt = dice_bin(pred_wt, tgt_wt)
-    tc = dice_bin(pred_tc, tgt_tc)
-    et = dice_bin(pred_et, tgt_et)
+    wt = dice_bin(pred_wt, tgt_wt, "WT")
+    tc = dice_bin(pred_tc, tgt_tc, "TC")
+    et = dice_bin(pred_et, tgt_et, "ET")
     
     if dataset_version == 'brats2024':
         # BRATS2024: RC도 계산
-        rc = dice_bin(pred_rc, tgt_rc)
+        rc = dice_bin(pred_rc, tgt_rc, "RC")
         return torch.stack([wt, tc, et, rc])
     else:
         # Other BRATS versions: WT, TC, ET만 반환

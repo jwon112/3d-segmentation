@@ -23,7 +23,7 @@ from utils.runner.cascade_evaluation import evaluate_segmentation_with_roi, load
 def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model', distributed: bool = False, world_size: int = 1,
                    sw_patch_size=(128, 128, 128), sw_overlap=0.5, results_dir: str = None, coord_type: str = 'none', dataset_version: str = 'brats2021',
                    data_dir: str = None, seed: int = None, use_5fold: bool = False, fold_idx: int = None, 
-                   fold_split_dir: str = None, preprocessed_dir: str = None):
+                   fold_split_dir: str = None, preprocessed_dir: str = None, crops_per_center: int = 1, crop_overlap: float = 0.5, use_blending: bool = True):
     """모델 평가 함수
     
     Cascade 모델인 경우 자동으로 ROI 기반 평가를 수행합니다.
@@ -115,9 +115,9 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             use_5fold=use_5fold,
             fold_idx=fold_idx,
             fold_split_dir=fold_split_dir,
-            crops_per_center=1,
-            crop_overlap=0.5,
-            use_blending=True,
+            crops_per_center=crops_per_center,
+            crop_overlap=crop_overlap,
+            use_blending=use_blending,
             results_dir=results_dir,
             model_name=model_name,
             preprocessed_dir=preprocessed_dir,
