@@ -27,9 +27,12 @@ from dataloaders import (
 from utils.experiment_utils import is_main_process
 
 
-def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_coords: bool = True, coord_encoding_type: str = 'simple', use_4modalities: bool = True) -> torch.Tensor:
+def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_coords: bool = False, coord_encoding_type: str = 'simple', use_4modalities: bool = True) -> torch.Tensor:
     """
-    Prepare ROI input by extracting modalities and optionally adding coordinates.
+    Prepare ROI input by extracting modalities only (no coords).
+    
+    ROI 모델은 항상 4채널(4 modalities, no coords)만 사용합니다.
+    Segmentation 모델의 coord_type과 무관하게 ROI 모델은 coords를 사용하지 않습니다.
     
     Args:
         image: Input image tensor (C, H, W, D) where C can be:
@@ -40,9 +43,14 @@ def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_c
                - 11: 2 modalities + 9 hybrid coords
                - 13: 4 modalities + 9 hybrid coords
         use_4modalities: Whether ROI model uses 4 modalities (True) or 2 modalities (False)
+        include_coords: 항상 False (ROI 모델은 coords 사용 안 함)
+        coord_encoding_type: 사용되지 않음 (ROI 모델은 coords 사용 안 함)
     
     입력 이미지가 이미 좌표를 포함하고 있을 수 있으므로, modalities만 추출합니다.
     """
+    # ROI 모델은 항상 coords를 사용하지 않음
+    include_coords = False
+    
     # 입력 이미지의 채널 수 확인
     n_channels = image.shape[0]
     
@@ -70,26 +78,19 @@ def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_c
                 f"ROI model expects 2 modalities (T1CE, FLAIR), but input image has only {n_channels} channels."
             )
     
-    # ROI 모델에 좌표를 추가할지 결정
-    # coord_encoding_type에 따라 simple (3 채널) 또는 hybrid (9 채널) coords 사용
-    if include_coords:
-        coord_map = get_coord_map(image.shape[1:], device=image.device, encoding_type=coord_encoding_type)
-        roi_input = torch.cat([image_modalities, coord_map], dim=0)
-    else:
-        roi_input = image_modalities
+    # ROI 모델은 항상 modalities만 사용 (coords 추가 안 함)
+    roi_input = image_modalities
     
     # 최종 ROI 입력 채널 수 확인 및 검증
-    # coord_encoding_type에 따라 coords 채널 수 결정: simple=3, hybrid=9
-    n_coord_channels = 9 if (include_coords and coord_encoding_type == 'hybrid') else (3 if include_coords else 0)
-    expected_channels = (4 if use_4modalities else 2) + n_coord_channels
+    # ROI 모델은 항상 modalities만 사용 (coords 없음)
+    expected_channels = 4 if use_4modalities else 2
     if roi_input.shape[0] != expected_channels:
         raise ValueError(
             f"[_prepare_roi_input] Unexpected ROI input channels: {roi_input.shape[0]}. "
-            f"Expected: {expected_channels} "
-            f"(modalities: {4 if use_4modalities else 2}, coords: {3 if include_coords else 0}). "
+            f"Expected: {expected_channels} (modalities only, no coords). "
             f"Input image had {n_channels} channels. "
             f"image_modalities shape: {image_modalities.shape}, "
-            f"include_coords: {include_coords}"
+            f"use_4modalities: {use_4modalities}"
         )
     
     roi_input = resize_volume(roi_input, roi_resize, mode='trilinear')
@@ -181,20 +182,20 @@ def run_roi_localization(
         }
     """
     roi_model.eval()
-    roi_input_prepared = _prepare_roi_input(image, roi_resize, include_coords=include_coords, coord_encoding_type=coord_encoding_type, use_4modalities=roi_use_4modalities)
+    # ROI 모델은 항상 coords를 사용하지 않음 (4채널 고정)
+    roi_input_prepared = _prepare_roi_input(image, roi_resize, include_coords=False, coord_encoding_type='simple', use_4modalities=roi_use_4modalities)
     roi_input = roi_input_prepared.unsqueeze(0).to(device)
     
     # 최종 검증: ROI 입력 채널 수가 ROI 모델이 기대하는 채널 수와 일치하는지 확인
-    # coord_encoding_type에 따라 coords 채널 수 결정: simple=3, hybrid=9
-    n_coord_channels = 9 if (include_coords and coord_encoding_type == 'hybrid') else (3 if include_coords else 0)
-    expected_roi_channels = (4 if roi_use_4modalities else 2) + n_coord_channels
+    # ROI 모델은 항상 modalities만 사용 (coords 없음)
+    expected_roi_channels = 4 if roi_use_4modalities else 2
     if roi_input.shape[1] != expected_roi_channels:
         raise ValueError(
             f"[run_roi_localization] ROI input channel mismatch: "
-            f"Expected {expected_roi_channels} channels (modalities: {4 if roi_use_4modalities else 2}, coords: {n_coord_channels}, encoding_type: {coord_encoding_type}), "
+            f"Expected {expected_roi_channels} channels (modalities only, no coords), "
             f"but got {roi_input.shape[1]} channels. "
             f"Input image had {image.shape[0]} channels. "
-            f"roi_use_4modalities={roi_use_4modalities}, include_coords={include_coords}, coord_encoding_type={coord_encoding_type}"
+            f"roi_use_4modalities={roi_use_4modalities}"
         )
     
     with torch.no_grad():

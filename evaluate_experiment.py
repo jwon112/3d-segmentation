@@ -337,14 +337,13 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
             print(error_msg)
             raise FileNotFoundError(error_msg)
         
-        # coord_type에 따라 include_coords 결정
-        include_coords = (coord_type != 'none')
-        
-        roi_model, detected_include_coords, use_4modalities, detected_coord_encoding_type = load_roi_model_from_checkpoint(
+        # ROI 모델 로드
+        # ROI 모델은 항상 4채널(no coords) 고정으로 사용
+        roi_model, _, use_4modalities, _ = load_roi_model_from_checkpoint(
             roi_model_name,
             roi_weight_path,
             device,
-            include_coords=include_coords,
+            include_coords=False,  # ROI 모델은 항상 coords 사용 안 함
         )
         
         real_model = model.module if hasattr(model, 'module') else model
@@ -356,8 +355,9 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
             else:
                 cascade_preprocessed_dir = os.path.join(preprocessed_base_dir, dataset_version.upper())
         
-        # ROI 모델의 coord_encoding_type 사용 (체크포인트에서 감지한 값)
-        # segmentation 모델의 coord_type과 일치하도록 하거나, ROI 모델이 학습된 coord_encoding_type 사용
+        # Cascade ROI 기반 평가 수행
+        # ROI 모델은 항상 4채널(no coords) 고정
+        # Segmentation 모델만 coord_type에 따라 동작
         metrics = evaluate_segmentation_with_roi(
             seg_model=real_model,
             roi_model=roi_model,
@@ -366,8 +366,8 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
             seed=seed,
             roi_resize=(64, 64, 64),
             crop_size=(96, 96, 96),
-            include_coords=include_coords,
-            coord_encoding_type=detected_coord_encoding_type,  # ROI 모델이 학습된 coord_encoding_type 사용
+            include_coords=False,  # ROI 모델은 항상 coords 사용 안 함
+            coord_encoding_type='simple',  # ROI 모델은 coords 사용 안 하므로 의미 없음
             use_5fold=use_5fold,
             fold_idx=detected_fold_idx if fold_split_dir else (fold_idx if use_5fold else None),
             fold_split_dir=fold_split_dir,

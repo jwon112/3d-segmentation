@@ -163,10 +163,13 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
     return result
 
 
-def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_coords=True):
+def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_coords=None):
     """Load ROI model weights for inference.
     
     Automatically detects metadata from checkpoint if available, otherwise falls back to channel detection.
+    
+    Args:
+        include_coords: If None, auto-detect from checkpoint. Otherwise, use provided value.
     
     Returns:
         model: Loaded ROI model
@@ -185,7 +188,19 @@ def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_
         # New format with metadata
         metadata = checkpoint['metadata']
         state = checkpoint['state_dict']
-        include_coords = metadata.get('include_coords', include_coords)
+        # include_coords가 None이면 metadata에서 가져오고, 아니면 제공된 값 사용
+        if include_coords is None:
+            include_coords = metadata.get('include_coords', False)
+        else:
+            # 제공된 값이 있으면 사용 (하지만 체크포인트의 실제 설정과 다를 수 있으므로 경고)
+            detected_include_coords = metadata.get('include_coords', False)
+            if detected_include_coords != include_coords:
+                rank = 0
+                if torch.distributed.is_available() and torch.distributed.is_initialized():
+                    rank = torch.distributed.get_rank()
+                if is_main_process(rank):
+                    print(f"Warning: ROI model checkpoint has include_coords={detected_include_coords}, but provided include_coords={include_coords}. Using checkpoint value.")
+                include_coords = detected_include_coords
         use_4modalities = metadata.get('use_4modalities', True)
         coord_encoding_type = metadata.get('coord_encoding_type', 'simple')  # metadata에서 coord_encoding_type 가져오기
         # rank 확인

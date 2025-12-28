@@ -74,23 +74,20 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             error_msg += f"  Please ensure the ROI model checkpoint exists."
             raise FileNotFoundError(error_msg)
         
-        # coord_type에 따라 include_coords 결정
-        include_coords = (coord_type != 'none')
-        
-        roi_model, detected_include_coords, use_4modalities, detected_coord_encoding_type = load_roi_model_from_checkpoint(
+        # ROI 모델 로드
+        # ROI 모델은 항상 4채널(no coords) 고정으로 사용
+        roi_model, _, use_4modalities, _ = load_roi_model_from_checkpoint(
             roi_model_name,
             roi_weight_path,
             device,
-            include_coords=include_coords,
+            include_coords=False,  # ROI 모델은 항상 coords 사용 안 함
         )
-        
-        # ROI 모델의 coord_encoding_type 사용 (체크포인트에서 감지한 값)
-        # segmentation 모델의 coord_type과 일치하도록 하거나, ROI 모델이 학습된 coord_encoding_type 사용
-        coord_encoding_type = detected_coord_encoding_type
         
         real_model = model.module if hasattr(model, 'module') else model
         
         # Cascade ROI 기반 평가 수행
+        # ROI 모델은 항상 4채널(no coords) 고정
+        # Segmentation 모델만 coord_type에 따라 동작
         cascade_metrics = evaluate_segmentation_with_roi(
             seg_model=real_model,
             roi_model=roi_model,
@@ -99,8 +96,8 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             seed=seed,
             roi_resize=(64, 64, 64),
             crop_size=(96, 96, 96),
-            include_coords=include_coords,
-            coord_encoding_type=coord_encoding_type,
+            include_coords=False,  # ROI 모델은 항상 coords 사용 안 함
+            coord_encoding_type='simple',  # ROI 모델은 coords 사용 안 하므로 의미 없음
             use_5fold=use_5fold,
             fold_idx=fold_idx,
             fold_split_dir=fold_split_dir,
