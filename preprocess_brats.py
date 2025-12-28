@@ -194,7 +194,7 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
         
         # Mask 처리
         mask = seg.astype(np.int64)
-        # BRATS2024는 RC(Resection Cavity)가 라벨 3으로 존재하므로 라벨 매핑을 하지 않음
+        # BRATS2024는 ET(Enhancing Tumor)가 라벨 3, RC(Resection Cavity)가 라벨 4로 존재하므로 라벨 매핑을 하지 않음
         # 다른 BRATS 버전은 라벨 4(ET)를 3으로 매핑
         if dataset_version != 'brats2024':
             mask = np.where(mask == 4, 3, mask)
@@ -204,7 +204,7 @@ def preprocess_volume(patient_dir, use_4modalities=False, output_path=None, forc
         # BRATS2024는 5개 클래스 (0, 1, 2, 3, 4), 다른 버전은 4개 클래스 (0, 1, 2, 3)
         fg_coords_dict = {}
         if dataset_version == 'brats2024':
-            # BRATS2024: 클래스 1, 2, 3(RC), 4(ET)
+            # BRATS2024: 클래스 1(NETC), 2(SNFH), 3(ET), 4(RC)
             for cls in [1, 2, 3, 4]:
                 coords = np.argwhere(mask == cls)
                 if len(coords) > 0:

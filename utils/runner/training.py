@@ -98,7 +98,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     best_epoch = 0
     best_val_wt = best_val_tc = best_val_et = best_val_rc = 0.0
     epochs_without_improvement = 0  # Early stopping을 위한 카운터
-    early_stopping_patience = 30  # 30 epoch 동안 개선 없으면 중단
+    early_stopping_patience = 20  # 20 epoch 동안 개선 없으면 중단
     is_brats2024 = (dataset_version == 'brats2024')
     
     # 체크포인트 저장 경로 (실험 결과 폴더 내부)

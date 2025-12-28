@@ -66,8 +66,8 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_versio
         WT = 1 ∪ 2 ∪ 3, TC = 1 ∪ 3, ET = 3.
     
     For BRATS2024:
-        Assumes target labels are 0..4 with: 0=BG, 1=NCR/NET, 2=ED, 3=RC, 4=ET.
-        WT = 1 ∪ 2 ∪ 3 ∪ 4 (all tumor regions including RC), TC = 1 ∪ 4, ET = 4, RC = 3.
+        Assumes target labels are 0..4 with: 0=BG, 1=NETC, 2=SNFH, 3=ET, 4=RC.
+        WT = 1 ∪ 2 ∪ 3 ∪ 4 (all tumor regions including RC), TC = 1 ∪ 3, ET = 3, RC = 4.
 
     Returns: 
         - For BRATS2024: tensor of shape (4,) -> [WT, TC, ET, RC]
@@ -81,20 +81,20 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_versio
         return x.to(dtype=torch.bool)
 
     if dataset_version == 'brats2024':
-        # BRATS2024: 5 classes (0=BG, 1=NCR/NET, 2=ED, 3=RC, 4=ET)
+        # BRATS2024: 5 classes (0=BG, 1=NETC, 2=SNFH, 3=ET, 4=RC)
         # WT = 1 ∪ 2 ∪ 3 ∪ 4 (all tumor regions including RC)
-        # TC = 1 ∪ 4 (NCR/NET + ET, excluding RC and ED)
-        # ET = 4 (Enhancing Tumor only)
-        # RC = 3 (Resection Cavity only)
+        # TC = 1 ∪ 3 (NETC + ET, excluding RC and SNFH)
+        # ET = 3 (Enhancing Tumor only)
+        # RC = 4 (Resection Cavity only)
         pred_wt = to_bool((pred == 1) | (pred == 2) | (pred == 3) | (pred == 4))
-        pred_tc = to_bool((pred == 1) | (pred == 4))
-        pred_et = to_bool(pred == 4)
-        pred_rc = to_bool(pred == 3)
+        pred_tc = to_bool((pred == 1) | (pred == 3))
+        pred_et = to_bool(pred == 3)
+        pred_rc = to_bool(pred == 4)
 
         tgt_wt = to_bool((target == 1) | (target == 2) | (target == 3) | (target == 4))
-        tgt_tc = to_bool((target == 1) | (target == 4))
-        tgt_et = to_bool(target == 4)
-        tgt_rc = to_bool(target == 3)
+        tgt_tc = to_bool((target == 1) | (target == 3))
+        tgt_et = to_bool(target == 3)
+        tgt_rc = to_bool(target == 4)
     else:
         # Other BRATS versions: 4 classes (0=BG, 1=NCR/NET, 2=ED, 3=ET)
         # WT = 1 ∪ 2 ∪ 3, TC = 1 ∪ 3, ET = 3
