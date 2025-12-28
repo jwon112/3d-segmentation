@@ -35,41 +35,65 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
     dice_rows = []
     all_attention_weights = [] if collect_attention else None
     
+    # 진행 상황 로그를 위한 rank 확인
+    rank = 0
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        rank = torch.distributed.get_rank()
+    
+    total_samples = len(base_dataset)
+    if is_main_process(rank):
+        print(f"[Cascade Evaluation] Starting evaluation on {total_samples} samples...")
+    
     for idx in range(len(base_dataset)):
-        # base_dataset이 (image, mask) 또는 (image, mask, fg_coords_dict) 반환 가능
-        loaded_data = base_dataset[idx]
-        if len(loaded_data) == 3:
-            image, target, _ = loaded_data  # fg_coords_dict는 evaluation에서는 사용 안 함
-        else:
-            image, target = loaded_data
-        image = image.to(device)
-        target = target.to(device)
-        result = run_cascade_inference(
-            roi_model=roi_model,
-            seg_model=seg_model,
-            image=image,
-            device=device,
-            roi_resize=roi_resize,
-            crop_size=crop_size,
-            include_coords=include_coords,
-            coord_encoding_type=coord_encoding_type,
-            crops_per_center=crops_per_center,
-            crop_overlap=crop_overlap,
-            use_blending=use_blending,
-            return_attention=collect_attention,
-            roi_use_4modalities=roi_use_4modalities,
-        )
+        # 진행 상황 로그 (10개마다 또는 첫 번째/마지막 샘플)
+        if is_main_process(rank) and (idx == 0 or idx % 10 == 0 or idx == total_samples - 1):
+            print(f"[Cascade Evaluation] Processing sample {idx+1}/{total_samples}...")
+        
+        try:
+            # base_dataset이 (image, mask) 또는 (image, mask, fg_coords_dict) 반환 가능
+            loaded_data = base_dataset[idx]
+            if len(loaded_data) == 3:
+                image, target, _ = loaded_data  # fg_coords_dict는 evaluation에서는 사용 안 함
+            else:
+                image, target = loaded_data
+            image = image.to(device)
+            target = target.to(device)
+            
+            if is_main_process(rank) and idx == 0:
+                print(f"[Cascade Evaluation] Sample {idx+1}: image.shape={image.shape}, target.shape={target.shape}")
+            
+            result = run_cascade_inference(
+                roi_model=roi_model,
+                seg_model=seg_model,
+                image=image,
+                device=device,
+                roi_resize=roi_resize,
+                crop_size=crop_size,
+                include_coords=include_coords,
+                coord_encoding_type=coord_encoding_type,
+                crops_per_center=crops_per_center,
+                crop_overlap=crop_overlap,
+                use_blending=use_blending,
+                return_attention=collect_attention,
+                roi_use_4modalities=roi_use_4modalities,
+            )
+            
+            if is_main_process(rank) and idx == 0:
+                print(f"[Cascade Evaluation] Sample {idx+1}: run_cascade_inference completed")
+        except Exception as e:
+            error_msg = f"[Cascade Evaluation] Error processing sample {idx+1}/{total_samples}: {type(e).__name__}: {e}"
+            if is_main_process(rank):
+                print(error_msg)
+                import traceback
+                traceback.print_exc()
+            raise
         
         # Attention weights 수집 (dice 계산 전에 먼저 수집하여, 에러가 발생해도 보존)
         if collect_attention and all_attention_weights is not None:
             if 'attention_weights' in result and result['attention_weights']:
                 all_attention_weights.extend(result['attention_weights'])
-                if idx == 0:  # 첫 번째 샘플만 출력
-                    rank = 0
-                    if torch.distributed.is_available() and torch.distributed.is_initialized():
-                        rank = torch.distributed.get_rank()
-                    if is_main_process(rank):
-                        print(f"[Cascade Evaluation] Collected attention weights from sample {idx+1}/{len(base_dataset)}")
+                if idx == 0 and is_main_process(rank):  # 첫 번째 샘플만 출력
+                    print(f"[Cascade Evaluation] Collected attention weights from sample {idx+1}/{total_samples}")
         
         # full_logits shape 처리: run_cascade_inference는 (C, H, W, D) 형태를 반환
         full_logits_raw = result['full_logits'].to(device)
@@ -98,23 +122,44 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
         
         # Shape 확인 (디버깅용)
         if idx == 0:  # 첫 번째 샘플만 출력
-            rank = 0
-            if torch.distributed.is_available() and torch.distributed.is_initialized():
-                rank = torch.distributed.get_rank()
             if is_main_process(rank):
                 print(f"[Cascade Evaluation] full_logits.shape={full_logits.shape}, target_batch.shape={target_batch.shape}")
         
-        dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version).detach().cpu()
-        dice_rows.append(dice)
+        try:
+            dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version).detach().cpu()
+            dice_rows.append(dice)
+            if is_main_process(rank) and (idx == 0 or idx % 10 == 0 or idx == total_samples - 1):
+                if dataset_version == 'brats2024':
+                    print(f"[Cascade Evaluation] Sample {idx+1}: Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f}, RC={dice[3]:.4f}")
+                else:
+                    print(f"[Cascade Evaluation] Sample {idx+1}: Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f}")
+        except Exception as e:
+            error_msg = f"[Cascade Evaluation] Error calculating dice for sample {idx+1}/{total_samples}: {type(e).__name__}: {e}"
+            if is_main_process(rank):
+                print(error_msg)
+                import traceback
+                traceback.print_exc()
+            raise
+    
+    if is_main_process(rank):
+        print(f"[Cascade Evaluation] Completed processing all {total_samples} samples. Calculating final metrics...")
     
     is_brats2024 = (dataset_version == 'brats2024')
     if not dice_rows:
+        if is_main_process(rank):
+            print(f"[Cascade Evaluation] Warning: No dice scores calculated. Returning zero metrics.")
         if is_brats2024:
             return {'wt': 0.0, 'tc': 0.0, 'et': 0.0, 'rc': 0.0, 'mean': 0.0}
         else:
             return {'wt': 0.0, 'tc': 0.0, 'et': 0.0, 'mean': 0.0}
     dice_tensor = torch.stack(dice_rows, dim=0)
     mean_scores = dice_tensor.mean(dim=0)
+    
+    if is_main_process(rank):
+        if is_brats2024:
+            print(f"[Cascade Evaluation] Final metrics - WT={mean_scores[0]:.4f}, TC={mean_scores[1]:.4f}, ET={mean_scores[2]:.4f}, RC={mean_scores[3]:.4f}, Mean={mean_scores.mean():.4f}")
+        else:
+            print(f"[Cascade Evaluation] Final metrics - WT={mean_scores[0]:.4f}, TC={mean_scores[1]:.4f}, ET={mean_scores[2]:.4f}, Mean={mean_scores.mean():.4f}")
     
     # MobileViT attention 분석
     rank = 0
