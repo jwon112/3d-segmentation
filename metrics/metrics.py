@@ -1,6 +1,8 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
+import json
+import time
 from scipy.ndimage import distance_transform_edt, binary_erosion, generate_binary_structure
 
 
@@ -74,8 +76,6 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_versio
         - For other versions: tensor of shape (3,) -> [WT, TC, ET]
     """
     # #region agent log
-    import json
-    import time
     log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
     try:
         with open(log_path, 'a', encoding='utf-8') as log_file:

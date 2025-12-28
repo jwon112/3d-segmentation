@@ -5,6 +5,7 @@ Cascade ROI→Seg 파이프라인 평가 관련 함수
 
 import os
 import time
+import json
 import torch
 
 from utils.experiment_utils import get_roi_model, is_main_process
@@ -155,8 +156,6 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             if is_main_process(rank):
                 print(f"[Cascade Evaluation] full_logits.shape={full_logits.shape}, target_batch.shape={target_batch.shape}")
                 # #region agent log
-                import json
-                import time
                 log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
                 try:
                     with open(log_path, 'a', encoding='utf-8') as log_file:
