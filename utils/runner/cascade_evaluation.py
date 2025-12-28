@@ -6,7 +6,7 @@ Cascade ROI→Seg 파이프라인 평가 관련 함수
 import os
 import torch
 
-from utils.experiment_utils import get_roi_model
+from utils.experiment_utils import get_roi_model, is_main_process
 from utils.experiment_config import get_roi_model_config
 from utils.cascade_utils import run_cascade_inference
 from dataloaders import get_brats_base_datasets
@@ -65,7 +65,11 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             if 'attention_weights' in result and result['attention_weights']:
                 all_attention_weights.extend(result['attention_weights'])
                 if idx == 0:  # 첫 번째 샘플만 출력
-                    print(f"[Cascade Evaluation] Collected attention weights from sample {idx+1}/{len(base_dataset)}")
+                    rank = 0
+                    if torch.distributed.is_available() and torch.distributed.is_initialized():
+                        rank = torch.distributed.get_rank()
+                    if is_main_process(rank):
+                        print(f"[Cascade Evaluation] Collected attention weights from sample {idx+1}/{len(base_dataset)}")
         
         # full_logits shape 처리: run_cascade_inference는 (C, H, W, D) 형태를 반환
         full_logits_raw = result['full_logits'].to(device)
@@ -94,7 +98,11 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
         
         # Shape 확인 (디버깅용)
         if idx == 0:  # 첫 번째 샘플만 출력
-            print(f"[Cascade Evaluation] full_logits.shape={full_logits.shape}, target_batch.shape={target_batch.shape}")
+            rank = 0
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                rank = torch.distributed.get_rank()
+            if is_main_process(rank):
+                print(f"[Cascade Evaluation] full_logits.shape={full_logits.shape}, target_batch.shape={target_batch.shape}")
         
         dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version).detach().cpu()
         dice_rows.append(dice)
@@ -109,9 +117,14 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
     mean_scores = dice_tensor.mean(dim=0)
     
     # MobileViT attention 분석
+    rank = 0
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        rank = torch.distributed.get_rank()
+    
     if collect_attention:
         if all_attention_weights and len(all_attention_weights) > 0:
-            print(f"\n[Cascade Evaluation] Analyzing {len(all_attention_weights)} attention weight samples...")
+            if is_main_process(rank):
+                print(f"\n[Cascade Evaluation] Analyzing {len(all_attention_weights)} attention weight samples...")
             if results_dir:
                 try:
                     from utils.mvit_attention_utils import analyze_mvit_attention_weights, check_mvit_attention_learning
@@ -123,17 +136,21 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                     )
                     
                     is_learning, message = check_mvit_attention_learning(all_attention_weights)
-                    print(f"\nMobileViT Attention Learning Status (Cascade): {message}")
-                    if not is_learning:
-                        print(f"⚠️  Warning: MobileViT attention may not be learning properly!")
+                    if is_main_process(rank):
+                        print(f"\nMobileViT Attention Learning Status (Cascade): {message}")
+                        if not is_learning:
+                            print(f"⚠️  Warning: MobileViT attention may not be learning properly!")
                 except Exception as e:
-                    print(f"Warning: Failed to analyze/save MobileViT attention weights: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    if is_main_process(rank):
+                        print(f"Warning: Failed to analyze/save MobileViT attention weights: {e}")
+                        import traceback
+                        traceback.print_exc()
             else:
-                print(f"[Cascade Evaluation] Warning: results_dir is None, skipping attention analysis")
+                if is_main_process(rank):
+                    print(f"[Cascade Evaluation] Warning: results_dir is None, skipping attention analysis")
         else:
-            print(f"[Cascade Evaluation] Warning: No attention weights collected (collect_attention={collect_attention}, len={len(all_attention_weights) if all_attention_weights else 0})")
+            if is_main_process(rank):
+                print(f"[Cascade Evaluation] Warning: No attention weights collected (collect_attention={collect_attention}, len={len(all_attention_weights) if all_attention_weights else 0})")
     
     result = {
         'wt': float(mean_scores[0].item()),
@@ -168,7 +185,12 @@ def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_
         state = checkpoint['state_dict']
         include_coords = metadata.get('include_coords', include_coords)
         use_4modalities = metadata.get('use_4modalities', True)
-        print(f"Loaded ROI model with metadata: use_4modalities={use_4modalities}, include_coords={include_coords}")
+        # rank 확인
+        rank = 0
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            rank = torch.distributed.get_rank()
+        if is_main_process(rank):
+            print(f"Loaded ROI model with metadata: use_4modalities={use_4modalities}, include_coords={include_coords}")
     else:
         # Old format: just state_dict, detect from channels
         state = checkpoint
@@ -189,27 +211,37 @@ def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_
         # 4 channels = 4 modalities, no coords
         # 5 channels = 2 modalities + 3 simple coords
         # 7 channels = 4 modalities + 3 simple coords
+        # rank 확인
+        rank = 0
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            rank = torch.distributed.get_rank()
+        
         if detected_channels is not None:
             if detected_channels == 2:
                 use_4modalities = False
                 include_coords = False
-                print(f"Detected 2-channel ROI model (2 modalities, no CoordConv). Using use_4modalities=False, include_coords=False")
+                if is_main_process(rank):
+                    print(f"Detected 2-channel ROI model (2 modalities, no CoordConv). Using use_4modalities=False, include_coords=False")
             elif detected_channels == 4:
                 use_4modalities = True
                 include_coords = False
-                print(f"Detected 4-channel ROI model (4 modalities, no CoordConv). Using use_4modalities=True, include_coords=False")
+                if is_main_process(rank):
+                    print(f"Detected 4-channel ROI model (4 modalities, no CoordConv). Using use_4modalities=True, include_coords=False")
             elif detected_channels == 5:
                 use_4modalities = False
                 include_coords = True
-                print(f"Detected 5-channel ROI model (2 modalities + CoordConv). Using use_4modalities=False, include_coords=True")
+                if is_main_process(rank):
+                    print(f"Detected 5-channel ROI model (2 modalities + CoordConv). Using use_4modalities=False, include_coords=True")
             elif detected_channels == 7:
                 use_4modalities = True
                 include_coords = True
-                print(f"Detected 7-channel ROI model (4 modalities + CoordConv). Using use_4modalities=True, include_coords=True")
+                if is_main_process(rank):
+                    print(f"Detected 7-channel ROI model (4 modalities + CoordConv). Using use_4modalities=True, include_coords=True")
             else:
                 # 기본값 사용
                 use_4modalities = True
-                print(f"Warning: Unexpected input channels {detected_channels} in checkpoint. Using defaults: use_4modalities=True, include_coords={include_coords}")
+                if is_main_process(rank):
+                    print(f"Warning: Unexpected input channels {detected_channels} in checkpoint. Using defaults: use_4modalities=True, include_coords={include_coords}")
     
     # ROI 모델 입력 채널 수 계산
     n_modalities = 4 if use_4modalities else 2

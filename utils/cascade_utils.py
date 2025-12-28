@@ -24,6 +24,7 @@ from dataloaders import (
     paste_patch_to_volume,
     compute_tumor_center,
 )
+from utils.experiment_utils import is_main_process
 
 
 def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_coords: bool = True, coord_encoding_type: str = 'simple', use_4modalities: bool = True) -> torch.Tensor:
@@ -75,6 +76,18 @@ def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_c
         roi_input = torch.cat([image_modalities, coord_map], dim=0)
     else:
         roi_input = image_modalities
+    
+    # 최종 ROI 입력 채널 수 확인 및 검증
+    expected_channels = (4 if use_4modalities else 2) + (3 if include_coords else 0)
+    if roi_input.shape[0] != expected_channels:
+        raise ValueError(
+            f"[_prepare_roi_input] Unexpected ROI input channels: {roi_input.shape[0]}. "
+            f"Expected: {expected_channels} "
+            f"(modalities: {4 if use_4modalities else 2}, coords: {3 if include_coords else 0}). "
+            f"Input image had {n_channels} channels. "
+            f"image_modalities shape: {image_modalities.shape}, "
+            f"include_coords: {include_coords}"
+        )
     
     roi_input = resize_volume(roi_input, roi_resize, mode='trilinear')
     return roi_input
@@ -148,7 +161,7 @@ def run_roi_localization(
     coord_encoding_type: str = 'simple',
     max_instances: int = 1,
     min_component_size: int = 50,
-    use_4modalities: bool = True,
+    roi_use_4modalities: bool = True,
 ) -> Dict:
     """
     Run ROI detector to predict coarse WT center(s).
@@ -165,7 +178,20 @@ def run_roi_localization(
         }
     """
     roi_model.eval()
-    roi_input = _prepare_roi_input(image, roi_resize, include_coords=include_coords, coord_encoding_type=coord_encoding_type, use_4modalities=use_4modalities).unsqueeze(0).to(device)
+    roi_input_prepared = _prepare_roi_input(image, roi_resize, include_coords=include_coords, coord_encoding_type=coord_encoding_type, use_4modalities=roi_use_4modalities)
+    roi_input = roi_input_prepared.unsqueeze(0).to(device)
+    
+    # 최종 검증: ROI 입력 채널 수가 ROI 모델이 기대하는 채널 수와 일치하는지 확인
+    expected_roi_channels = (4 if roi_use_4modalities else 2) + (3 if include_coords else 0)
+    if roi_input.shape[1] != expected_roi_channels:
+        raise ValueError(
+            f"[run_roi_localization] ROI input channel mismatch: "
+            f"Expected {expected_roi_channels} channels (modalities: {4 if roi_use_4modalities else 2}, coords: {3 if include_coords else 0}), "
+            f"but got {roi_input.shape[1]} channels. "
+            f"Input image had {image.shape[0]} channels. "
+            f"roi_use_4modalities={roi_use_4modalities}, include_coords={include_coords}"
+        )
+    
     with torch.no_grad():
         roi_logits = roi_model(roi_input)
     roi_probs = torch.softmax(roi_logits, dim=1)
@@ -330,6 +356,7 @@ def run_cascade_inference(
         coord_encoding_type=coord_encoding_type,
         max_instances=max_instances,
         min_component_size=min_component_size,
+        roi_use_4modalities=roi_use_4modalities,
     )
 
     centers_full = roi_info.get('centers_full') or [roi_info['center_full']]
@@ -390,17 +417,33 @@ def run_cascade_inference(
                             seg_logits, attn_dict = seg_result
                             if attn_dict is not None and len(attn_dict) > 0:
                                 all_attention_weights.append(attn_dict)
-                                print(f"[Cascade] Collected MobileViT attention weights: {len(attn_dict)} layers")
+                                rank = 0
+                                if torch.distributed.is_available() and torch.distributed.is_initialized():
+                                    rank = torch.distributed.get_rank()
+                                if is_main_process(rank):
+                                    print(f"[Cascade] Collected MobileViT attention weights: {len(attn_dict)} layers")
                             else:
-                                print(f"[Cascade] Warning: seg_model returned tuple but attn_dict is None or empty")
+                                rank = 0
+                                if torch.distributed.is_available() and torch.distributed.is_initialized():
+                                    rank = torch.distributed.get_rank()
+                                if is_main_process(rank):
+                                    print(f"[Cascade] Warning: seg_model returned tuple but attn_dict is None or empty")
                                 seg_logits = seg_result[0] if len(seg_result) > 0 else seg_result
                         else:
-                            print(f"[Cascade] Warning: seg_model did not return tuple for attention. Got type: {type(seg_result)}")
+                            rank = 0
+                            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                                rank = torch.distributed.get_rank()
+                            if is_main_process(rank):
+                                print(f"[Cascade] Warning: seg_model did not return tuple for attention. Got type: {type(seg_result)}")
                             seg_logits = seg_result
                     except Exception as e:
-                        print(f"[Cascade] Warning: Failed to collect attention weights: {e}")
-                        import traceback
-                        traceback.print_exc()
+                        rank = 0
+                        if torch.distributed.is_available() and torch.distributed.is_initialized():
+                            rank = torch.distributed.get_rank()
+                        if is_main_process(rank):
+                            print(f"[Cascade] Warning: Failed to collect attention weights: {e}")
+                            import traceback
+                            traceback.print_exc()
                         seg_logits = seg_model(seg_tensor, return_attention=False)
                 else:
                     seg_logits = seg_model(seg_tensor, return_attention=False)
