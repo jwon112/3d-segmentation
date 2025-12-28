@@ -13,7 +13,7 @@ from sklearn.metrics import confusion_matrix
 from matplotlib.colors import ListedColormap
 
 from utils.experiment_utils import sliding_window_inference_3d
-from metrics import calculate_wt_tc_et_dice, calculate_wt_tc_et_hd95
+from metrics import calculate_wt_tc_et_dice  # , calculate_wt_tc_et_hd95  # HD95 계산 비활성화 (distributed timeout 방지)
 from dataloaders import get_coord_map
 from models.modules.se_modules import SEBlock3D
 from models.modules.cbam_modules import CBAM3D, ChannelAttention3D
@@ -29,8 +29,9 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     n_te = 0
     precision_scores = []
     recall_scores = []
-    hd95_wt_sum = hd95_tc_sum = hd95_et_sum = 0.0
-    hd95_wt_count = hd95_tc_count = hd95_et_count = 0
+    # HD95 계산 비활성화 (distributed timeout 방지)
+    # hd95_wt_sum = hd95_tc_sum = hd95_et_sum = 0.0
+    # hd95_wt_count = hd95_tc_count = hd95_et_count = 0
     is_brats2024 = (dataset_version == 'brats2024')
     save_examples = results_dir is not None
     rank0 = True
@@ -249,18 +250,19 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             
             # Precision, Recall 계산 (클래스별)
             pred = torch.argmax(logits, dim=1)
-            hd95_batch = calculate_wt_tc_et_hd95(pred, labels)
-            if hd95_batch.size > 0:
-                for hd_wt, hd_tc, hd_et in hd95_batch:
-                    if np.isfinite(hd_wt):
-                        hd95_wt_sum += float(hd_wt)
-                        hd95_wt_count += 1
-                    if np.isfinite(hd_tc):
-                        hd95_tc_sum += float(hd_tc)
-                        hd95_tc_count += 1
-                    if np.isfinite(hd_et):
-                        hd95_et_sum += float(hd_et)
-                        hd95_et_count += 1
+            # HD95 계산 비활성화 (distributed timeout 방지)
+            # hd95_batch = calculate_wt_tc_et_hd95(pred, labels)
+            # if hd95_batch.size > 0:
+            #     for hd_wt, hd_tc, hd_et in hd95_batch:
+            #         if np.isfinite(hd_wt):
+            #             hd95_wt_sum += float(hd_wt)
+            #             hd95_wt_count += 1
+            #         if np.isfinite(hd_tc):
+            #             hd95_tc_sum += float(hd_tc)
+            #             hd95_tc_count += 1
+            #         if np.isfinite(hd_et):
+            #             hd95_et_sum += float(hd_et)
+            #             hd95_et_count += 1
 
             if collect_se and se_blocks:
                 for block_name, block_module in se_blocks:
@@ -322,9 +324,8 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                     # 3D 볼륨인 경우: (C, H, W, D) 및 (H, W, D)
                     if input_sample.ndim == 4:  # (C, H, W, D)
                         C, H, W, D = input_sample.shape
-                        channel_idx = 0 if C >= 2 else 0  # FLAIR 채널 (2채널이면 0번, 4채널이면 3번)
-                        if C >= 4:
-                            channel_idx = 3  # FLAIR는 4채널일 때 마지막
+                        # FLAIR 채널 선택: 2채널이면 1번(T1CE, FLAIR 중 FLAIR), 4채널이면 3번(T1, T1CE, T2, FLAIR 중 FLAIR)
+                        channel_idx = C - 1  # 항상 마지막 채널이 FLAIR
                         
                         # 마스크가 있는 슬라이스 찾기 (배경이 아닌 픽셀이 있는 슬라이스)
                         valid_slices = []
@@ -435,33 +436,33 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             dist.all_reduce(td, op=dist.ReduceOp.SUM)
             td = td / world_size
             test_dice, test_wt, test_tc, test_et = td.tolist()
-        hd_tensor = torch.tensor(
-            [
-                hd95_wt_sum,
-                hd95_wt_count,
-                hd95_tc_sum,
-                hd95_tc_count,
-                hd95_et_sum,
-                hd95_et_count,
-            ],
-            device=device,
-        )
-        dist.all_reduce(hd_tensor, op=dist.ReduceOp.SUM)
-        (
-            hd95_wt_sum,
-            hd95_wt_count,
-            hd95_tc_sum,
-            hd95_tc_count,
-            hd95_et_sum,
-            hd95_et_count,
-        ) = hd_tensor.tolist()
+        # HD95 계산 비활성화 (distributed timeout 방지)
+        # hd_tensor = torch.tensor(
+        #     [
+        #         hd95_wt_sum,
+        #         hd95_wt_count,
+        #         hd95_tc_sum,
+        #         hd95_tc_count,
+        #         hd95_et_sum,
+        #         hd95_et_count,
+        #     ],
+        #     device=device,
+        # )
+        # dist.all_reduce(hd_tensor, op=dist.ReduceOp.SUM)
+        # (
+        #     hd95_wt_sum,
+        #     hd95_wt_count,
+        #     hd95_tc_sum,
+        #     hd95_tc_count,
+        #     hd95_et_sum,
+        #     hd95_et_count,
+        # ) = hd_tensor.tolist()
         # Confusion matrix reduction is non-trivial without custom gather; skip CM plot on non-main ranks
-    hd95_wt = (hd95_wt_sum / hd95_wt_count) if hd95_wt_count > 0 else None
-    hd95_tc = (hd95_tc_sum / hd95_tc_count) if hd95_tc_count > 0 else None
-    hd95_et = (hd95_et_sum / hd95_et_count) if hd95_et_count > 0 else None
-    total_sum = hd95_wt_sum + hd95_tc_sum + hd95_et_sum
-    total_count = hd95_wt_count + hd95_tc_count + hd95_et_count
-    hd95_mean = (total_sum / total_count) if total_count > 0 else None
+    # HD95 계산 비활성화 (distributed timeout 방지)
+    hd95_wt = None  # (hd95_wt_sum / hd95_wt_count) if hd95_wt_count > 0 else None
+    hd95_tc = None  # (hd95_tc_sum / hd95_tc_count) if hd95_tc_count > 0 else None
+    hd95_et = None  # (hd95_et_sum / hd95_et_count) if hd95_et_count > 0 else None
+    hd95_mean = None  # (total_sum / total_count) if total_count > 0 else None
     
     # Background 제외한 평균 (클래스 1, 2, 3만)
     avg_precision = np.mean(precision_scores[1::4])  # 클래스별로 평균
