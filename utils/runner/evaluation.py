@@ -25,12 +25,13 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     model.eval()
     real_model = model.module if hasattr(model, 'module') else model
     test_dice = 0.0
-    test_wt_sum = test_tc_sum = test_et_sum = 0.0
+    test_wt_sum = test_tc_sum = test_et_sum = test_rc_sum = 0.0
     n_te = 0
     precision_scores = []
     recall_scores = []
     hd95_wt_sum = hd95_tc_sum = hd95_et_sum = 0.0
     hd95_wt_count = hd95_tc_count = hd95_et_count = 0
+    is_brats2024 = (dataset_version == 'brats2024')
     save_examples = results_dir is not None
     rank0 = True
     if distributed and hasattr(torch, 'distributed') and torch.distributed.is_available():
@@ -234,7 +235,7 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                 else:
                     logits = model(inputs)
             
-            # Dice score 계산 (WT/TC/ET)
+            # Dice score 계산 (WT/TC/ET, RC for BRATS2024)
             dice_scores = calculate_wt_tc_et_dice(logits, labels, dataset_version=dataset_version)
             mean_dice = dice_scores.mean()
             bsz = inputs.size(0)
@@ -242,6 +243,8 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             test_wt_sum += float(dice_scores[0].item()) * bsz
             test_tc_sum += float(dice_scores[1].item()) * bsz
             test_et_sum += float(dice_scores[2].item()) * bsz
+            if is_brats2024 and len(dice_scores) >= 4:
+                test_rc_sum += float(dice_scores[3].item()) * bsz
             n_te += bsz
             
             # Precision, Recall 계산 (클래스별)
@@ -418,13 +421,20 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     test_wt = test_wt_sum / max(1, n_te)
     test_tc = test_tc_sum / max(1, n_te)
     test_et = test_et_sum / max(1, n_te)
+    test_rc = test_rc_sum / max(1, n_te) if is_brats2024 else 0.0
     # Reduce across processes if distributed
     if distributed and world_size > 1:
         import torch.distributed as dist
-        td = torch.tensor([test_dice, test_wt, test_tc, test_et], device=device)
-        dist.all_reduce(td, op=dist.ReduceOp.SUM)
-        td = td / world_size
-        test_dice, test_wt, test_tc, test_et = td.tolist()
+        if is_brats2024:
+            td = torch.tensor([test_dice, test_wt, test_tc, test_et, test_rc], device=device)
+            dist.all_reduce(td, op=dist.ReduceOp.SUM)
+            td = td / world_size
+            test_dice, test_wt, test_tc, test_et, test_rc = td.tolist()
+        else:
+            td = torch.tensor([test_dice, test_wt, test_tc, test_et], device=device)
+            dist.all_reduce(td, op=dist.ReduceOp.SUM)
+            td = td / world_size
+            test_dice, test_wt, test_tc, test_et = td.tolist()
         hd_tensor = torch.tensor(
             [
                 hd95_wt_sum,
@@ -728,7 +738,7 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             channel_attention_df.to_csv(csv_path, index=False)
             print(f"Channel Attention (inside blocks) summary saved to: {csv_path}")
 
-    return {
+    result = {
         'dice': test_dice,
         'wt': test_wt,
         'tc': test_tc,
@@ -740,4 +750,7 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
         'precision': avg_precision,
         'recall': avg_recall
     }
+    if is_brats2024:
+        result['rc'] = test_rc
+    return result
 

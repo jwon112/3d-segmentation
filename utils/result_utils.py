@@ -26,9 +26,11 @@ def create_result_dict(
     best_epoch: int,
     cascade_metrics: Optional[Dict] = None,
     roi_model_name: Optional[str] = None,
-    coord_type: str = 'none'
+    coord_type: str = 'none',
+    best_val_rc: Optional[float] = None
 ) -> Dict:
     """결과 딕셔너리 생성"""
+    is_brats2024 = (dataset_version == 'brats2024')
     result = {
         'dataset': dataset_version,
         'seed': seed,
@@ -39,11 +41,11 @@ def create_result_dict(
         'pam_train': pam_train_mean,  # bytes, batch_size=1 기준 (평균값)
         'pam_inference': pam_inference_mean,  # bytes, batch_size=1 기준 (평균값)
         'inference_latency_ms': latency_mean,  # milliseconds, batch_size=1 기준 (평균값)
-        'test_dice': metrics['dice'],  # WT/TC/ET 평균
+        'test_dice': metrics['dice'],  # WT/TC/ET 평균 (BRATS2024는 RC 포함)
         'test_wt': metrics.get('wt', None),
         'test_tc': metrics.get('tc', None),
         'test_et': metrics.get('et', None),
-        'val_dice': best_val_dice,  # WT/TC/ET 평균
+        'val_dice': best_val_dice,  # WT/TC/ET 평균 (BRATS2024는 RC 포함)
         'val_wt': best_val_wt,
         'val_tc': best_val_tc,
         'val_et': best_val_et,
@@ -51,13 +53,20 @@ def create_result_dict(
         'recall': metrics['recall'],
         'best_epoch': best_epoch
     }
+    # BRATS2024는 RC 포함
+    if is_brats2024:
+        result['test_rc'] = metrics.get('rc', None)
+        result['val_rc'] = best_val_rc if best_val_rc is not None else 0.0
     if cascade_metrics:
-        result.update({
+        cascade_dict = {
             'cascade_dice': cascade_metrics.get('mean'),
             'cascade_wt': cascade_metrics.get('wt'),
             'cascade_tc': cascade_metrics.get('tc'),
             'cascade_et': cascade_metrics.get('et'),
-        })
+        }
+        if is_brats2024 and 'rc' in cascade_metrics:
+            cascade_dict['cascade_rc'] = cascade_metrics.get('rc')
+        result.update(cascade_dict)
     if roi_model_name:
         result['roi_model_name'] = roi_model_name
     result['coord_type'] = coord_type
@@ -103,7 +112,8 @@ def create_epoch_result_dict(
     test_dice: Optional[float]
 ) -> Dict:
     """Epoch별 결과 딕셔너리 생성"""
-    return {
+    is_brats2024 = (dataset_version == 'brats2024')
+    result = {
         'dataset': dataset_version,
         'seed': seed,
         'fold': fold_idx,
@@ -118,6 +128,9 @@ def create_epoch_result_dict(
         'val_et': epoch_result.get('val_et', None),
         'test_dice': test_dice if epoch_result['epoch'] == best_epoch else None  # Best epoch에만 최종 test dice 기록
     }
+    if is_brats2024:
+        result['val_rc'] = epoch_result.get('val_rc', None)
+    return result
 
 
 def save_results_to_csv(

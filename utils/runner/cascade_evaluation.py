@@ -97,8 +97,12 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
         dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version).detach().cpu()
         dice_rows.append(dice)
     
+    is_brats2024 = (dataset_version == 'brats2024')
     if not dice_rows:
-        return {'wt': 0.0, 'tc': 0.0, 'et': 0.0, 'mean': 0.0}
+        if is_brats2024:
+            return {'wt': 0.0, 'tc': 0.0, 'et': 0.0, 'rc': 0.0, 'mean': 0.0}
+        else:
+            return {'wt': 0.0, 'tc': 0.0, 'et': 0.0, 'mean': 0.0}
     dice_tensor = torch.stack(dice_rows, dim=0)
     mean_scores = dice_tensor.mean(dim=0)
     
@@ -129,12 +133,15 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
         else:
             print(f"[Cascade Evaluation] Warning: No attention weights collected (collect_attention={collect_attention}, len={len(all_attention_weights) if all_attention_weights else 0})")
     
-    return {
+    result = {
         'wt': float(mean_scores[0].item()),
         'tc': float(mean_scores[1].item()),
         'et': float(mean_scores[2].item()),
         'mean': float(mean_scores.mean().item())
     }
+    if is_brats2024 and len(mean_scores) >= 4:
+        result['rc'] = float(mean_scores[3].item())
+    return result
 
 
 def load_roi_model_from_checkpoint(roi_model_name, weight_path, device, include_coords=True):

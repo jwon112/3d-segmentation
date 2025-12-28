@@ -403,13 +403,19 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         ckpt_path = os.path.join(results_dir, f"{model_name}_seed_{seed}_best.pth")
                     
                     # 훈련
-                    train_losses, val_dices, epoch_results, best_epoch, best_val_dice, best_val_wt, best_val_tc, best_val_et = train_model(
+                    train_result = train_model(
                         model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
                         train_sampler=train_sampler, rank=rank,
                         sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim=dim, use_nnunet_loss=use_nnunet_loss,
                         results_dir=results_dir, ckpt_path=ckpt_path, train_crops_per_center=train_crops_per_center,
                         dataset_version=dataset_version
                     )
+                    # BRATS2024는 RC 포함, 다른 버전은 RC 없음
+                    if dataset_version == 'brats2024' and len(train_result) >= 9:
+                        train_losses, val_dices, epoch_results, best_epoch, best_val_dice, best_val_wt, best_val_tc, best_val_et, best_val_rc = train_result
+                    else:
+                        train_losses, val_dices, epoch_results, best_epoch, best_val_dice, best_val_wt, best_val_tc, best_val_et = train_result
+                        best_val_rc = 0.0
                     
                     # FLOPs 계산 (모델이 device에 있는 상태에서)
                     if dim == '2d':
@@ -607,10 +613,16 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                     model_name=model_name,  # MobileViT attention 분석용
                                     preprocessed_dir=cascade_preprocessed_dir,  # 전처리된 데이터 디렉토리
                                 )
-                                print(
-                                    f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
-                                    f"(WT {cascade_metrics['wt']:.4f} | TC {cascade_metrics['tc']:.4f} | ET {cascade_metrics['et']:.4f})"
-                                )
+                                if dataset_version == 'brats2024' and 'rc' in cascade_metrics:
+                                    print(
+                                        f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
+                                        f"(WT {cascade_metrics['wt']:.4f} | TC {cascade_metrics['tc']:.4f} | ET {cascade_metrics['et']:.4f} | RC {cascade_metrics['rc']:.4f})"
+                                    )
+                                else:
+                                    print(
+                                        f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
+                                        f"(WT {cascade_metrics['wt']:.4f} | TC {cascade_metrics['tc']:.4f} | ET {cascade_metrics['et']:.4f})"
+                                    )
                             except Exception as e:
                                 print(f"Warning: Cascade evaluation failed: {e}")
                                 import traceback
@@ -643,7 +655,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             best_epoch=best_epoch,
                             cascade_metrics=cascade_metrics,
                             roi_model_name=roi_model_name_for_result,
-                            coord_type=coord_type  # 좌표 타입 추가
+                            coord_type=coord_type,  # 좌표 타입 추가
+                            best_val_rc=best_val_rc if dataset_version == 'brats2024' else None
                         )
                         all_results.append(result)
                         
@@ -691,8 +704,12 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             all_epochs_results.append(epoch_data)
                     
                     if is_main_process(rank):
-                        print(f"Final Val Dice: {best_val_dice:.4f} (WT {best_val_wt:.4f} | TC {best_val_tc:.4f} | ET {best_val_et:.4f}) (epoch {best_epoch})")
-                        print(f"Final Test Dice: {metrics['dice']:.4f} (WT {metrics['wt']:.4f} | TC {metrics['tc']:.4f} | ET {metrics['et']:.4f}) | Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
+                        if dataset_version == 'brats2024' and 'rc' in metrics:
+                            print(f"Final Val Dice: {best_val_dice:.4f} (WT {best_val_wt:.4f} | TC {best_val_tc:.4f} | ET {best_val_et:.4f} | RC {best_val_rc:.4f}) (epoch {best_epoch})")
+                            print(f"Final Test Dice: {metrics['dice']:.4f} (WT {metrics['wt']:.4f} | TC {metrics['tc']:.4f} | ET {metrics['et']:.4f} | RC {metrics['rc']:.4f}) | Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
+                        else:
+                            print(f"Final Val Dice: {best_val_dice:.4f} (WT {best_val_wt:.4f} | TC {best_val_tc:.4f} | ET {best_val_et:.4f}) (epoch {best_epoch})")
+                            print(f"Final Test Dice: {metrics['dice']:.4f} (WT {metrics['wt']:.4f} | TC {metrics['tc']:.4f} | ET {metrics['et']:.4f}) | Prec {metrics['precision']:.4f} Rec {metrics['recall']:.4f}")
                 
                 except Exception as e:
                     # 모든 프로세스에서 에러 로깅 (디버깅을 위해)

@@ -59,7 +59,7 @@ def calculate_dice_score(pred, target, smooth=1e-5, num_classes=4):
 
 
 def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_version: str = 'brats2021'):
-    """Compute BraTS composite region Dice: WT, TC, ET.
+    """Compute BraTS composite region Dice: WT, TC, ET (and RC for BRATS2024).
 
     For BRATS2021 and earlier:
         Assumes target labels are mapped to 0..3 with: 0=BG, 1=NCR/NET, 2=ED, 3=ET.
@@ -67,9 +67,11 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_versio
     
     For BRATS2024:
         Assumes target labels are 0..4 with: 0=BG, 1=NCR/NET, 2=ED, 3=RC, 4=ET.
-        WT = 1 ∪ 2 ∪ 3 ∪ 4 (all tumor regions including RC), TC = 1 ∪ 4, ET = 4.
+        WT = 1 ∪ 2 ∪ 3 ∪ 4 (all tumor regions including RC), TC = 1 ∪ 4, ET = 4, RC = 3.
 
-    Returns: tensor of shape (3,) -> [WT, TC, ET]
+    Returns: 
+        - For BRATS2024: tensor of shape (4,) -> [WT, TC, ET, RC]
+        - For other versions: tensor of shape (3,) -> [WT, TC, ET]
     """
     # Argmax predictions
     pred = torch.argmax(logits, dim=1)  # (B, H, W[, D])
@@ -83,23 +85,28 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_versio
         # WT = 1 ∪ 2 ∪ 3 ∪ 4 (all tumor regions including RC)
         # TC = 1 ∪ 4 (NCR/NET + ET, excluding RC and ED)
         # ET = 4 (Enhancing Tumor only)
+        # RC = 3 (Resection Cavity only)
         pred_wt = to_bool((pred == 1) | (pred == 2) | (pred == 3) | (pred == 4))
         pred_tc = to_bool((pred == 1) | (pred == 4))
         pred_et = to_bool(pred == 4)
+        pred_rc = to_bool(pred == 3)
 
         tgt_wt = to_bool((target == 1) | (target == 2) | (target == 3) | (target == 4))
         tgt_tc = to_bool((target == 1) | (target == 4))
         tgt_et = to_bool(target == 4)
+        tgt_rc = to_bool(target == 3)
     else:
         # Other BRATS versions: 4 classes (0=BG, 1=NCR/NET, 2=ED, 3=ET)
         # WT = 1 ∪ 2 ∪ 3, TC = 1 ∪ 3, ET = 3
         pred_wt = to_bool((pred == 1) | (pred == 2) | (pred == 3))
         pred_tc = to_bool((pred == 1) | (pred == 3))
         pred_et = to_bool(pred == 3)
+        pred_rc = None  # RC 없음
 
         tgt_wt = to_bool((target == 1) | (target == 2) | (target == 3))
         tgt_tc = to_bool((target == 1) | (target == 3))
         tgt_et = to_bool(target == 3)
+        tgt_rc = None  # RC 없음
 
     def dice_bin(pb, tb):
         # Compute per-sample dice then average over batch
@@ -155,7 +162,14 @@ def calculate_wt_tc_et_dice(logits, target, smooth: float = 1e-5, dataset_versio
     wt = dice_bin(pred_wt, tgt_wt)
     tc = dice_bin(pred_tc, tgt_tc)
     et = dice_bin(pred_et, tgt_et)
-    return torch.stack([wt, tc, et])
+    
+    if dataset_version == 'brats2024':
+        # BRATS2024: RC도 계산
+        rc = dice_bin(pred_rc, tgt_rc)
+        return torch.stack([wt, tc, et, rc])
+    else:
+        # Other BRATS versions: WT, TC, ET만 반환
+        return torch.stack([wt, tc, et])
 
 
 def _compute_surface_distances(mask_a: np.ndarray, mask_b: np.ndarray, spacing: tuple) -> np.ndarray:

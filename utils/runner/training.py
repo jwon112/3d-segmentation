@@ -96,9 +96,10 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     
     best_val_dice = 0.0
     best_epoch = 0
-    best_val_wt = best_val_tc = best_val_et = 0.0
+    best_val_wt = best_val_tc = best_val_et = best_val_rc = 0.0
     epochs_without_improvement = 0  # Early stopping을 위한 카운터
     early_stopping_patience = 30  # 30 epoch 동안 개선 없으면 중단
+    is_brats2024 = (dataset_version == 'brats2024')
     
     # 체크포인트 저장 경로 (실험 결과 폴더 내부)
     if results_dir is None:
@@ -215,9 +216,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             t_bwd = time.time()
             bwd_times.append(t_bwd - t_fwd)
             
-            # BraTS composite Dice (WT, TC, ET)
+            # BraTS composite Dice (WT, TC, ET, RC for BRATS2024)
             dice_scores = calculate_wt_tc_et_dice(logits.detach(), labels, dataset_version=dataset_version)
-            # 평균 Dice (WT/TC/ET 평균)
+            # 평균 Dice (WT/TC/ET 평균, BRATS2024는 RC 포함)
             mean_dice = dice_scores.mean()
             bsz = inputs.size(0)
             tr_loss += loss.item() * bsz
@@ -256,7 +257,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         # Validation (all ranks, simpler/robust)
         model.eval()
         va_loss = va_dice_sum = n_va = 0.0
-        va_wt_sum = va_tc_sum = va_et_sum = 0.0
+        va_wt_sum = va_tc_sum = va_et_sum = va_rc_sum = 0.0
         with torch.no_grad():
             debug_printed = False
             all_sample_dices = []  # 디버깅: 모든 샘플의 Dice 수집
@@ -284,21 +285,23 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     logits = model(inputs)
                 loss = criterion(logits, labels)
                 dice_scores = calculate_wt_tc_et_dice(logits, labels, dataset_version=dataset_version)
-                # WT/TC/ET 평균
+                # WT/TC/ET 평균 (BRATS2024는 RC 포함)
                 mean_dice = dice_scores.mean()
                 all_sample_dices.append(mean_dice.item())  # 디버깅
                 
                 if not debug_printed:
                     pred_arg = torch.argmax(logits, dim=1)
-                    pred_counts = [int((pred_arg == c).sum().item()) for c in range(4)]
-                    gt_counts = [int((labels == c).sum().item()) for c in range(4)]
+                    n_classes = 5 if is_brats2024 else 4
+                    pred_counts = [int((pred_arg == c).sum().item()) for c in range(n_classes)]
+                    gt_counts = [int((labels == c).sum().item()) for c in range(n_classes)]
                     if is_main_process(rank):
                         try:
                             dv = dice_scores.detach().cpu().tolist()
                         except Exception:
                             dv = []
+                        dice_str = "WT/TC/ET/RC" if is_brats2024 else "WT/TC/ET"
                         print(f"Val sample {idx+1} stats | pred counts: {pred_counts} | gt counts: {gt_counts}")
-                        print(f"Val sample {idx+1} WT/TC/ET dice: {dice_scores.detach().cpu().tolist()}")
+                        print(f"Val sample {idx+1} {dice_str} dice: {dice_scores.detach().cpu().tolist()}")
                         print(f"Val sample {idx+1} mean_dice (fg only): {mean_dice.item():.10f}")
                     debug_printed = True
                 bsz = inputs.size(0)
@@ -307,6 +310,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 va_wt_sum += float(dice_scores[0].item()) * bsz
                 va_tc_sum += float(dice_scores[1].item()) * bsz
                 va_et_sum += float(dice_scores[2].item()) * bsz
+                if is_brats2024 and len(dice_scores) >= 4:
+                    va_rc_sum += float(dice_scores[3].item()) * bsz
                 n_va += bsz
             
             # 디버깅: 모든 샘플의 Dice 통계 출력
@@ -325,6 +330,10 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         va_wt = va_wt_sum / max(1, n_va)
         va_tc = va_tc_sum / max(1, n_va)
         va_et = va_et_sum / max(1, n_va)
+        if is_brats2024:
+            va_rc = va_rc_sum / max(1, n_va)
+        else:
+            va_rc = 0.0
         val_dices.append(va_dice)
         
         # Learning rate scheduling (ReduceLROnPlateau는 validation metric 필요)
@@ -339,6 +348,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             best_val_wt = va_wt
             best_val_tc = va_tc
             best_val_et = va_et
+            if is_brats2024:
+                best_val_rc = va_rc
             best_epoch = epoch + 1
             epochs_without_improvement = 0  # 개선됨 - 카운터 리셋
             checkpoint_saved = True
@@ -368,7 +379,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             break
         
         # Epoch 결과 저장 (test_dice는 최종 평가 시에만 설정됨)
-        epoch_results.append({
+        epoch_result = {
             'epoch': epoch + 1,
             'train_loss': tr_loss,
             'train_dice': tr_dice,
@@ -378,13 +389,22 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             'val_tc': va_tc,
             'val_et': va_et,
             'test_dice': None  # 최종 평가 시에만 설정
-        })
+        }
+        if is_brats2024:
+            epoch_result['val_rc'] = va_rc
+        epoch_results.append(epoch_result)
         
         if is_main_process(rank):
             checkpoint_msg = " [BEST]" if checkpoint_saved else ""
-            print(f"Epoch {epoch+1}/{epochs} | Train Loss {tr_loss:.4f} Dice {tr_dice:.4f} | Val Loss {va_loss:.4f} Dice {va_dice:.4f} (WT {va_wt:.4f} | TC {va_tc:.4f} | ET {va_et:.4f}){checkpoint_msg}")
+            if is_brats2024:
+                print(f"Epoch {epoch+1}/{epochs} | Train Loss {tr_loss:.4f} Dice {tr_dice:.4f} | Val Loss {va_loss:.4f} Dice {va_dice:.4f} (WT {va_wt:.4f} | TC {va_tc:.4f} | ET {va_et:.4f} | RC {va_rc:.4f}){checkpoint_msg}")
+            else:
+                print(f"Epoch {epoch+1}/{epochs} | Train Loss {tr_loss:.4f} Dice {tr_dice:.4f} | Val Loss {va_loss:.4f} Dice {va_dice:.4f} (WT {va_wt:.4f} | TC {va_tc:.4f} | ET {va_et:.4f}){checkpoint_msg}")
         log_hybrid_stats_epoch(model, epoch + 1, rank)
     
     save_hybrid_stats_to_csv(model, results_dir, model_name, seed, rank)
-    return train_losses, val_dices, epoch_results, best_epoch, best_val_dice, best_val_wt, best_val_tc, best_val_et
+    if is_brats2024:
+        return train_losses, val_dices, epoch_results, best_epoch, best_val_dice, best_val_wt, best_val_tc, best_val_et, best_val_rc
+    else:
+        return train_losses, val_dices, epoch_results, best_epoch, best_val_dice, best_val_wt, best_val_tc, best_val_et
 
