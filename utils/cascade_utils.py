@@ -310,6 +310,8 @@ def _generate_multi_crop_centers(
     crop_size: Sequence[int],
     crops_per_center: int = 1,
     crop_overlap: float = 0.5,
+    debug_sample_idx: int = -1,
+    center_idx: int = -1,
 ) -> List[Tuple[float, float, float]]:
     """
     중심 주변에서 여러 crop 위치를 생성합니다.
@@ -319,6 +321,8 @@ def _generate_multi_crop_centers(
         crop_size: crop 크기 (h, w, d)
         crops_per_center: 중심당 crop 개수 (1, 2, 3 등)
         crop_overlap: crop 간 겹침 비율 (0.0 ~ 1.0)
+        debug_sample_idx: 디버그 로그를 출력할 샘플 인덱스 (-1이면 출력 안 함)
+        center_idx: 중심 인덱스 (디버그용)
     
     Returns:
         crop 중심 좌표 리스트
@@ -334,6 +338,32 @@ def _generate_multi_crop_centers(
     # crops_per_center=2 -> 2x2x2=8개
     # crops_per_center=3 -> 3x3x3=27개
     grid_size = crops_per_center
+    
+    # 첫 번째 샘플의 첫 번째 중심에 대해서만 로그 출력
+    if debug_sample_idx == 0 and center_idx == 0:
+        import json
+        import time
+        log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+        try:
+            with open(log_path, 'a', encoding='utf-8') as log_file:
+                log_file.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "coord-check",
+                    "hypothesisId": "H8",
+                    "location": "cascade_utils.py:_generate_multi_crop_centers",
+                    "message": "Generate multi crop centers - input center",
+                    "data": {
+                        "input_center": [float(center[0]), float(center[1]), float(center[2])],
+                        "crop_size": list(crop_size),
+                        "crops_per_center": crops_per_center,
+                        "crop_overlap": crop_overlap,
+                        "stride": stride,
+                        "grid_size": grid_size,
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
     
     centers = []
     cy, cx, cz = center
@@ -354,6 +384,29 @@ def _generate_multi_crop_centers(
                     cz + offset_z,
                 )
                 centers.append(new_center)
+                
+                # 첫 번째 샘플의 첫 번째 중심의 첫 번째 crop에 대해서만 로그 출력
+                if debug_sample_idx == 0 and center_idx == 0 and i == 0 and j == 0 and k == 0:
+                    import json
+                    import time
+                    log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+                    try:
+                        with open(log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "coord-check",
+                                "hypothesisId": "H8",
+                                "location": "cascade_utils.py:_generate_multi_crop_centers",
+                                "message": "Generate multi crop centers - first crop center",
+                                "data": {
+                                    "input_center": [float(cy), float(cx), float(cz)],
+                                    "offset": [float(offset_y), float(offset_x), float(offset_z)],
+                                    "new_center": [float(new_center[0]), float(new_center[1]), float(new_center[2])],
+                                },
+                                "timestamp": int(time.time() * 1000)
+                            }, ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass
     
     return centers
 
@@ -483,6 +536,8 @@ def run_cascade_inference(
             crop_size=crop_size,
             crops_per_center=crops_per_center,
             crop_overlap=crop_overlap,
+            debug_sample_idx=debug_sample_idx,
+            center_idx=center_idx,
         )
         
         for crop_idx, crop_center in enumerate(crop_centers):
