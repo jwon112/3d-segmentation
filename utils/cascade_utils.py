@@ -224,14 +224,16 @@ def build_segmentation_input(
     include_coords: bool = True,
     coord_encoding_type: str = 'simple',
     coord_map: Optional[torch.Tensor] = None,
+    debug_sample_idx: int = -1,
 ) -> Dict:
     """Create crop with coord channels around predicted center.
     
     Args:
         coord_encoding_type: 'simple' (3 channels) or 'hybrid' (9 channels)
         coord_map: Pre-computed coordinate map (optional). If None, will be created on-the-fly.
+        debug_sample_idx: 디버그 로그를 출력할 샘플 인덱스 (-1이면 출력 안 함)
     """
-    seg_patch, origin = crop_volume_with_center(image, center, crop_size, return_origin=True)
+    seg_patch, origin = crop_volume_with_center(image, center, crop_size, return_origin=True, debug_sample_idx=debug_sample_idx)
     inputs = seg_patch
     if include_coords:
         if coord_map is None:
@@ -244,7 +246,7 @@ def build_segmentation_input(
                 f"image.shape={image.shape}, center={center}, crop_size={crop_size}"
             )
             coord_map = get_coord_map(image.shape[1:], device=image.device, encoding_type=coord_encoding_type)
-        coord_patch = crop_volume_with_center(coord_map, center, crop_size, return_origin=False)
+        coord_patch = crop_volume_with_center(coord_map, center, crop_size, return_origin=False, debug_sample_idx=-1)  # coord는 로그 불필요
         inputs = torch.cat([seg_patch, coord_patch], dim=0)
     return {
         'inputs': inputs,
@@ -345,6 +347,7 @@ def run_cascade_inference(
     return_attention: bool = False,
     roi_use_4modalities: bool = True,
     return_timing: bool = False,
+    debug_sample_idx: int = -1,
 ) -> Dict:
     """
     Full cascade inference: ROI -> multi-crop -> segmentation -> merge & uncrop.
@@ -421,7 +424,7 @@ def run_cascade_inference(
         weight_sum = None
         blend_weights = None
 
-    for center in centers_full:
+    for center_idx, center in enumerate(centers_full):
         # 각 중심마다 여러 crop 위치 생성
         crop_centers = _generate_multi_crop_centers(
             center=center,
@@ -430,8 +433,10 @@ def run_cascade_inference(
             crop_overlap=crop_overlap,
         )
         
-        for crop_center in crop_centers:
+        for crop_idx, crop_center in enumerate(crop_centers):
             # Cascade segmentation 모델은 항상 CoordConv 포함 입력을 기대
+            # 첫 번째 샘플의 첫 번째 중심의 첫 번째 crop만 로그 출력
+            is_first_crop = (debug_sample_idx == 0 and center_idx == 0 and crop_idx == 0)
             seg_inputs = build_segmentation_input(
                 image=image,
                 center=crop_center,
@@ -439,6 +444,7 @@ def run_cascade_inference(
                 include_coords=include_coords,
                 coord_encoding_type=coord_encoding_type,
                 coord_map=coord_map_full,  # 재사용: 한 번 생성한 coord_map을 모든 crop에서 사용
+                debug_sample_idx=0 if is_first_crop else -1,
             )
             seg_tensor = seg_inputs['inputs'].unsqueeze(0).to(device)
             with torch.no_grad():
@@ -497,11 +503,13 @@ def run_cascade_inference(
                     patch_logits,
                     seg_inputs['origin'],
                     image.shape[1:],
+                    debug_sample_idx=0 if is_first_crop else -1,
                 )  # (C, H, W, D)
                 patch_weights = paste_patch_to_volume(
                     blend_weights.squeeze(0).squeeze(0),  # (h, w, d)
                     seg_inputs['origin'],
                     image.shape[1:],
+                    debug_sample_idx=-1,  # weights는 로그 불필요
                 )  # (H, W, D)
                 
                 # patch_weights를 (1, H, W, D)로 확장하여 broadcasting
@@ -513,6 +521,7 @@ def run_cascade_inference(
                     patch_logits,
                     seg_inputs['origin'],
                     image.shape[1:],
+                    debug_sample_idx=0 if is_first_crop else -1,
                 )
                 
                 if full_logits is None:

@@ -176,7 +176,7 @@ def resize_volume(volume: torch.Tensor, target_size: Sequence[int], mode: str = 
     return vol.squeeze(0)
 
 
-def crop_volume_with_center(tensor: torch.Tensor, center: Sequence[float], crop_size: Sequence[int], return_origin: bool = False):
+def crop_volume_with_center(tensor: torch.Tensor, center: Sequence[float], crop_size: Sequence[int], return_origin: bool = False, debug_sample_idx: int = -1):
     if tensor.ndim == 3:
         tensor = tensor.unsqueeze(0)
         squeeze = True
@@ -212,6 +212,34 @@ def crop_volume_with_center(tensor: torch.Tensor, center: Sequence[float], crop_
         origins.append(src_start)
         src_ranges.append((src_start, src_end))
         dst_ranges.append((dst_start, dst_end))
+    
+    # 첫 번째 샘플에 대해서만 디버그 로그 출력
+    if debug_sample_idx == 0:
+        import json
+        import time
+        log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+        try:
+            with open(log_path, 'a', encoding='utf-8') as log_file:
+                log_file.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "coord-check",
+                    "hypothesisId": "H5",
+                    "location": "cascade.py:crop_volume_with_center",
+                    "message": "Crop volume with center - coordinate mapping",
+                    "data": {
+                        "input_center": [float(cy), float(cx), float(cz)],
+                        "tensor_shape": [int(c), int(h), int(w), int(d)],
+                        "crop_size": list(size),
+                        "half_sizes": [float(half_h), float(half_w), float(half_d)],
+                        "starts": [int(start_h), int(start_w), int(start_d)],
+                        "origins": list(origins),
+                        "src_ranges": [[int(r[0]), int(r[1])] for r in src_ranges],
+                        "dst_ranges": [[int(r[0]), int(r[1])] for r in dst_ranges]
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
 
     patch = tensor.new_zeros((c, size[0], size[1], size[2]))
     if all(r[1] - r[0] > 0 for r in src_ranges):
@@ -234,7 +262,7 @@ def crop_volume_with_center(tensor: torch.Tensor, center: Sequence[float], crop_
     return patch
 
 
-def paste_patch_to_volume(tensor: torch.Tensor, origin: Sequence[int], full_shape: Sequence[int]):
+def paste_patch_to_volume(tensor: torch.Tensor, origin: Sequence[int], full_shape: Sequence[int], debug_sample_idx: int = -1):
     if tensor.ndim == 3:
         tensor = tensor.unsqueeze(0)
         squeeze = True
@@ -249,6 +277,36 @@ def paste_patch_to_volume(tensor: torch.Tensor, origin: Sequence[int], full_shap
     y1 = min(y0 + tensor.shape[1], full_shape[0])
     x1 = min(x0 + tensor.shape[2], full_shape[1])
     z1 = min(z0 + tensor.shape[3], full_shape[2])
+    
+    # 첫 번째 샘플에 대해서만 디버그 로그 출력
+    if debug_sample_idx == 0:
+        import json
+        import time
+        log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+        try:
+            with open(log_path, 'a', encoding='utf-8') as log_file:
+                log_file.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "coord-check",
+                    "hypothesisId": "H5",
+                    "location": "cascade.py:paste_patch_to_volume",
+                    "message": "Paste patch to volume - coordinate mapping",
+                    "data": {
+                        "input_origin": list(origin),
+                        "tensor_shape": list(tensor.shape),
+                        "full_shape": list(full_shape),
+                        "paste_coords": {
+                            "y0": int(y0), "y1": int(y1),
+                            "x0": int(x0), "x1": int(x1),
+                            "z0": int(z0), "z1": int(z1)
+                        },
+                        "paste_size": [int(y1-y0), int(x1-x0), int(z1-z0)]
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    
     if y1 <= y0 or x1 <= x0 or z1 <= z0:
         return full.squeeze(0) if squeeze else full
     fy = y1 - y0

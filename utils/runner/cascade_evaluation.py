@@ -96,6 +96,7 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                 return_attention=collect_attention,
                 roi_use_4modalities=roi_use_4modalities,
                 return_timing=True,
+                debug_sample_idx=idx,  # 첫 번째 샘플(idx==0)에 대해서만 로그 출력
             )
             inference_time = time.time() - inference_start
             
