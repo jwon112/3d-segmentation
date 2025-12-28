@@ -354,6 +354,21 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
             else:
                 cascade_preprocessed_dir = os.path.join(preprocessed_base_dir, dataset_version.upper())
         
+        # coord_type에 따라 include_coords와 coord_encoding_type 결정
+        if coord_type == 'none':
+            include_coords = False
+            coord_encoding_type = 'simple'  # 사용 안 하지만 기본값
+        elif coord_type == 'simple':
+            include_coords = True
+            coord_encoding_type = 'simple'
+        elif coord_type == 'hybrid':
+            include_coords = True
+            coord_encoding_type = 'hybrid'
+        else:
+            # 기본값: simple
+            include_coords = True
+            coord_encoding_type = 'simple'
+        
         # Cascade ROI 기반 평가 수행
         # ROI 모델은 항상 4채널(no coords) 고정
         # Segmentation 모델만 coord_type에 따라 동작
@@ -365,8 +380,8 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
             seed=seed,
             roi_resize=(64, 64, 64),
             crop_size=(96, 96, 96),
-            include_coords=False,  # ROI 모델은 항상 coords 사용 안 함
-            coord_encoding_type='simple',  # ROI 모델은 coords 사용 안 하므로 의미 없음
+            include_coords=include_coords,  # coord_type에 따라 결정
+            coord_encoding_type=coord_encoding_type,  # coord_type에 따라 결정
             use_5fold=use_5fold,
             fold_idx=detected_fold_idx if fold_split_dir else (fold_idx if use_5fold else None),
             fold_split_dir=fold_split_dir,
