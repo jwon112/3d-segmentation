@@ -205,42 +205,79 @@ def prepare_5fold_splits(
                     patient_path = os.path.join(lgg_dir, patient_dir)
                     if os.path.isdir(patient_path):
                         patient_dirs.append(patient_path)
+        elif dataset_version in ('brats2023', 'brats2024'):
+            # BRATS2023, BRATS2024: 전처리된 H5 파일 디렉토리에서 직접 파일 찾기
+            # 원본 데이터 디렉토리 구조가 복잡하므로 전처리된 파일을 기준으로 함
+            if preprocessed_dir is None:
+                # 기본값 시도
+                project_root = get_project_root()
+                preprocessed_dir = project_root / 'data' / f'{dataset_version.upper()}_preprocessed'
+            preprocessed_dir_path = Path(preprocessed_dir)
+            if not preprocessed_dir_path.exists():
+                raise FileNotFoundError(
+                    f"Preprocessed directory not found at {preprocessed_dir_path}\n"
+                    f"Please run preprocess_brats.py first to create preprocessed H5 files."
+                )
+            
+            # H5 파일에서 환자 이름 추출
+            h5_files = list(preprocessed_dir_path.glob("*.h5"))
+            if not h5_files:
+                raise ValueError(f"No H5 files found in {preprocessed_dir_path}")
+            
+            # H5 파일명에서 환자 이름 추출 (확장자 제거)
+            patient_names = [f.stem for f in h5_files]
+            patient_dirs = None  # BRATS2023/2024는 원본 디렉토리 사용 안 함
         else:
             raise ValueError(f"Unknown dataset_version: {dataset_version}")
         
-        if not patient_dirs:
-            raise ValueError(f"No patient data found in {brats_dir}")
-        
-        # 샘플 이름으로 정렬 (파일 시스템 순서와 무관)
-        patient_names = [os.path.basename(p) for p in patient_dirs]
-        sorted_indices = sorted(range(len(patient_names)), key=lambda i: patient_names[i])
-        sorted_patient_dirs = [patient_dirs[i] for i in sorted_indices]
-        sorted_patient_names = [patient_names[i] for i in sorted_indices]
-        
-        print(f"Found {len(sorted_patient_dirs)} patient directories")
-        
-        # 출력 디렉토리 설정
-        if output_base_dir is None:
-            project_root = get_project_root()
-            output_base_dir = project_root / 'data' / f'{dataset_version.upper()}_5fold_splits'
-        output_base_dir = Path(output_base_dir)
-        output_base_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 전처리된 파일 디렉토리
-        if preprocessed_dir is None:
-            project_root = get_project_root()
-            preprocessed_dir = project_root / 'data' / f'{dataset_version.upper()}_preprocessed'
-        preprocessed_dir = Path(preprocessed_dir)
-        
-        if not preprocessed_dir.exists():
-            raise FileNotFoundError(
-                f"Preprocessed directory not found at {preprocessed_dir}\n"
-                f"Please run preprocess_brats.py first to create preprocessed H5 files."
-            )
+        # 전처리된 파일 디렉토리 확인 및 설정
+        if dataset_version not in ('brats2023', 'brats2024'):
+            if not patient_dirs:
+                raise ValueError(f"No patient data found")
+            
+            # 샘플 이름으로 정렬 (파일 시스템 순서와 무관)
+            patient_names = [os.path.basename(p) for p in patient_dirs]
+            sorted_indices = sorted(range(len(patient_names)), key=lambda i: patient_names[i])
+            sorted_patient_dirs = [patient_dirs[i] for i in sorted_indices]
+            sorted_patient_names = [patient_names[i] for i in sorted_indices]
+            
+            print(f"Found {len(sorted_patient_dirs)} patient directories")
+            
+            # 전처리된 파일 디렉토리
+            if preprocessed_dir is None:
+                project_root = get_project_root()
+                preprocessed_dir = project_root / 'data' / f'{dataset_version.upper()}_preprocessed'
+            preprocessed_dir = Path(preprocessed_dir)
+            
+            if not preprocessed_dir.exists():
+                raise FileNotFoundError(
+                    f"Preprocessed directory not found at {preprocessed_dir}\n"
+                    f"Please run preprocess_brats.py first to create preprocessed H5 files."
+                )
+        else:
+            # BRATS2023/2024: 이미 patient_names가 설정됨
+            sorted_patient_names = sorted(patient_names)
+            sorted_patient_dirs = None
+            preprocessed_dir = preprocessed_dir_path  # 이미 Path 객체로 변환됨
+            print(f"Found {len(sorted_patient_names)} preprocessed H5 files")
         
         sorted_h5_files = None  # 단일 버전 모드에서는 사용하지 않음
         sorted_versions = None
         total_samples = len(sorted_patient_names)
+        
+        # 출력 디렉토리 설정
+        if output_base_dir is None:
+            if dataset_version in ('brats2023', 'brats2024'):
+                # BRATS2023/2024: preprocessed_dir 기준으로 설정
+                if hasattr(preprocessed_dir, 'parent'):
+                    output_base_dir = preprocessed_dir.parent / f'{dataset_version.upper()}_5fold_splits'
+                else:
+                    output_base_dir = Path(preprocessed_dir).parent / f'{dataset_version.upper()}_5fold_splits'
+            else:
+                project_root = get_project_root()
+                output_base_dir = project_root / 'data' / f'{dataset_version.upper()}_5fold_splits'
+        output_base_dir = Path(output_base_dir)
+        output_base_dir.mkdir(parents=True, exist_ok=True)
         
         print(f"Preprocessed directory: {preprocessed_dir}")
         print(f"Output directory: {output_base_dir}")
