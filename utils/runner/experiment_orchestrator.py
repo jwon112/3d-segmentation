@@ -129,6 +129,22 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     print(f"\n{'#'*80}")
     print(f"Dataset Version: {dataset_version.upper()}")
     print(f"{'#'*80}")
+    
+    # preprocessed_base_dir에서 fold 경로 감지 (use_5fold와 무관)
+    # fold_0, fold_1 등의 패턴 확인
+    detected_fold_split_dir = None
+    detected_fold_idx = None
+    if preprocessed_base_dir:
+        import re
+        fold_pattern = re.search(r'/fold_(\d+)$', preprocessed_base_dir)
+        if fold_pattern:
+            # fold 경로로 지정된 경우: fold_split_dir과 fold_idx 자동 감지
+            detected_fold_idx = int(fold_pattern.group(1))
+            # 부모 디렉토리를 fold_split_dir로 사용
+            detected_fold_split_dir = os.path.dirname(preprocessed_base_dir)
+            if is_main_process(rank):
+                print(f"[Debug] Detected fold path: {preprocessed_base_dir}")
+                print(f"[Debug] Using fold_split_dir: {detected_fold_split_dir}, fold_idx: {detected_fold_idx}")
         
     # 5-fold CV 또는 일반 실험
     if use_5fold:
@@ -137,27 +153,38 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         print(f"5-Fold Cross-Validation Mode")
         print(f"{'='*60}")
         # Fold별 디렉토리 경로 설정
-        # 1. preprocessed_base_dir 우선 사용
-        if preprocessed_base_dir:
-            search_base_dir = preprocessed_base_dir
+        # fold_split_dir이 이미 감지된 경우 사용, 아니면 기본 경로에서 찾기
+        if detected_fold_split_dir:
+            fold_split_dir = detected_fold_split_dir
         else:
-            # 2. 기본값: /home/work/3D_/processed_data
-            search_base_dir = '/home/work/3D_/processed_data'
+            # 1. preprocessed_base_dir 우선 사용
+            if preprocessed_base_dir:
+                search_base_dir = preprocessed_base_dir
+            else:
+                # 2. 기본값: /home/work/3D_/processed_data
+                search_base_dir = '/home/work/3D_/processed_data'
+            
+            # 특정 버전의 5fold_splits 디렉토리만 찾기
+            fold_split_dir = os.path.join(search_base_dir, f'{dataset_version.upper()}_5fold_splits')
+            if not os.path.exists(fold_split_dir):
+                fold_split_dir = None
+                if is_main_process(rank):
+                    print(f"Error: Fold split directory not found: {fold_split_dir}")
+                    print(f"Expected path: {os.path.join(search_base_dir, f'{dataset_version.upper()}_5fold_splits')}")
+                    print(f"Please run prepare_5fold_splits.py first to create fold directories.")
         
-        # 특정 버전의 5fold_splits 디렉토리만 찾기
-        fold_split_dir = os.path.join(search_base_dir, f'{dataset_version.upper()}_5fold_splits')
-        if not os.path.exists(fold_split_dir):
-            fold_split_dir = None
-            if is_main_process(rank):
-                print(f"Error: Fold split directory not found: {fold_split_dir}")
-                print(f"Expected path: {os.path.join(search_base_dir, f'{dataset_version.upper()}_5fold_splits')}")
-                print(f"Please run prepare_5fold_splits.py first to create fold directories.")
-        else:
-            if is_main_process(rank):
-                print(f"Using fold split directory: {fold_split_dir}")
+        if fold_split_dir and is_main_process(rank):
+            print(f"Using fold split directory: {fold_split_dir}")
     else:
-        fold_list = [None]  # 일반 모드에서는 fold 없음
-        fold_split_dir = None
+        # use_5fold=False여도 fold 경로가 감지되면 해당 fold만 사용
+        if detected_fold_split_dir:
+            fold_list = [detected_fold_idx]  # 감지된 fold만 사용
+            fold_split_dir = detected_fold_split_dir
+            if is_main_process(rank):
+                print(f"[Debug] use_5fold=False but fold path detected. Using fold {detected_fold_idx} only.")
+        else:
+            fold_list = [None]  # 일반 모드에서는 fold 없음
+            fold_split_dir = None
     
     # 각 시드별로 실험
     for seed in seeds:
