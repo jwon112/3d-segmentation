@@ -340,7 +340,7 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         # coord_type에 따라 include_coords 결정
         include_coords = (coord_type != 'none')
         
-        roi_model, detected_include_coords = load_roi_model_from_checkpoint(
+        roi_model, detected_include_coords, use_4modalities = load_roi_model_from_checkpoint(
             roi_model_name,
             roi_weight_path,
             device,
@@ -364,26 +364,27 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
             else:
                 cascade_preprocessed_dir = os.path.join(preprocessed_base_dir, dataset_version.upper())
         
-        metrics = evaluate_segmentation_with_roi(
-            seg_model=real_model,
-            roi_model=roi_model,
-            data_dir=data_path,
-            dataset_version=dataset_version,
-            seed=seed,
-            roi_resize=(64, 64, 64),
-            crop_size=(96, 96, 96),
-            include_coords=include_coords,
-            coord_encoding_type=coord_encoding_type,
-            use_5fold=use_5fold,
-            fold_idx=detected_fold_idx if fold_split_dir else (fold_idx if use_5fold else None),
-            fold_split_dir=fold_split_dir,
-            crops_per_center=1,
-            crop_overlap=0.5,
-            use_blending=True,
-            results_dir=results_dir,
-            model_name=model_name,
-            preprocessed_dir=cascade_preprocessed_dir,
-        )
+           metrics = evaluate_segmentation_with_roi(
+               seg_model=real_model,
+               roi_model=roi_model,
+               data_dir=data_path,
+               dataset_version=dataset_version,
+               seed=seed,
+               roi_resize=(64, 64, 64),
+               crop_size=(96, 96, 96),
+               include_coords=include_coords,
+               coord_encoding_type=coord_encoding_type,
+               use_5fold=use_5fold,
+               fold_idx=detected_fold_idx if fold_split_dir else (fold_idx if use_5fold else None),
+               fold_split_dir=fold_split_dir,
+               crops_per_center=1,
+               crop_overlap=0.5,
+               use_blending=True,
+               results_dir=results_dir,
+               model_name=model_name,
+               preprocessed_dir=cascade_preprocessed_dir,
+               roi_use_4modalities=use_4modalities,
+           )
     else:
         # 일반 모델은 evaluate_model 사용
         metrics = evaluate_model(

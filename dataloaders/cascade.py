@@ -790,6 +790,7 @@ def get_roi_data_loaders(
     rank: Optional[int] = None,
     use_mri_augmentation: bool = False,
     anisotropy_augment: bool = False,
+    use_4modalities: bool = True,
 ):
     """ROI-only dataloaders for training/evaluation."""
     train_base, val_base, test_base = get_brats_base_datasets(
@@ -799,7 +800,7 @@ def get_roi_data_loaders(
         seed=seed,
         use_5fold=use_5fold,
         fold_idx=fold_idx,
-        use_4modalities=True,
+        use_4modalities=use_4modalities,
     )
 
     # train_base의 base dataset은 캐시를 유지

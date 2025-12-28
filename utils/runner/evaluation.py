@@ -77,7 +77,7 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
         # coord_type에 따라 include_coords 결정
         include_coords = (coord_type != 'none')
         
-        roi_model, detected_include_coords = load_roi_model_from_checkpoint(
+        roi_model, detected_include_coords, use_4modalities = load_roi_model_from_checkpoint(
             roi_model_name,
             roi_weight_path,
             device,
@@ -114,6 +114,7 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
             results_dir=results_dir,
             model_name=model_name,
             preprocessed_dir=preprocessed_dir,
+            roi_use_4modalities=use_4modalities,
         )
         
         # cascade_metrics를 evaluate_model과 동일한 형식으로 변환

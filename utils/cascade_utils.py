@@ -26,13 +26,56 @@ from dataloaders import (
 )
 
 
-def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_coords: bool = True, coord_encoding_type: str = 'simple') -> torch.Tensor:
-    """Concatenate coord map and resize to ROI resolution."""
+def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], include_coords: bool = True, coord_encoding_type: str = 'simple', use_4modalities: bool = True) -> torch.Tensor:
+    """
+    Prepare ROI input by extracting modalities and optionally adding coordinates.
+    
+    Args:
+        image: Input image tensor (C, H, W, D) where C can be:
+               - 2: 2 modalities only (T1CE, FLAIR)
+               - 4: 4 modalities only (T1, T1CE, T2, FLAIR)
+               - 5: 2 modalities + 3 simple coords
+               - 7: 4 modalities + 3 simple coords
+               - 11: 2 modalities + 9 hybrid coords
+               - 13: 4 modalities + 9 hybrid coords
+        use_4modalities: Whether ROI model uses 4 modalities (True) or 2 modalities (False)
+    
+    입력 이미지가 이미 좌표를 포함하고 있을 수 있으므로, modalities만 추출합니다.
+    """
+    # 입력 이미지의 채널 수 확인
+    n_channels = image.shape[0]
+    
+    # ROI 모델이 사용하는 modalities 수에 따라 추출
+    if use_4modalities:
+        # 4 modalities 사용: T1, T1CE, T2, FLAIR
+        if n_channels >= 4:
+            image_modalities = image[:4]
+        else:
+            raise ValueError(
+                f"ROI model expects 4 modalities, but input image has only {n_channels} channels. "
+                f"Please ensure the input image contains all 4 modalities (T1, T1CE, T2, FLAIR)."
+            )
+    else:
+        # 2 modalities 사용: T1CE, FLAIR
+        # 입력 이미지가 4 modalities인 경우 T1CE(1)와 FLAIR(3)만 선택
+        if n_channels >= 4:
+            # 4 modalities가 있는 경우: T1CE (index 1)와 FLAIR (index 3)만 선택
+            image_modalities = image[[1, 3], :, :, :]
+        elif n_channels >= 2:
+            # 이미 2 modalities만 있는 경우
+            image_modalities = image[:2]
+        else:
+            raise ValueError(
+                f"ROI model expects 2 modalities (T1CE, FLAIR), but input image has only {n_channels} channels."
+            )
+    
+    # ROI 모델에 좌표를 추가할지 결정
     if include_coords:
         coord_map = get_coord_map(image.shape[1:], device=image.device, encoding_type=coord_encoding_type)
-        roi_input = torch.cat([image, coord_map], dim=0)
+        roi_input = torch.cat([image_modalities, coord_map], dim=0)
     else:
-        roi_input = image
+        roi_input = image_modalities
+    
     roi_input = resize_volume(roi_input, roi_resize, mode='trilinear')
     return roi_input
 
@@ -105,6 +148,7 @@ def run_roi_localization(
     coord_encoding_type: str = 'simple',
     max_instances: int = 1,
     min_component_size: int = 50,
+    use_4modalities: bool = True,
 ) -> Dict:
     """
     Run ROI detector to predict coarse WT center(s).
@@ -121,7 +165,7 @@ def run_roi_localization(
         }
     """
     roi_model.eval()
-    roi_input = _prepare_roi_input(image, roi_resize, include_coords=include_coords, coord_encoding_type=coord_encoding_type).unsqueeze(0).to(device)
+    roi_input = _prepare_roi_input(image, roi_resize, include_coords=include_coords, coord_encoding_type=coord_encoding_type, use_4modalities=use_4modalities).unsqueeze(0).to(device)
     with torch.no_grad():
         roi_logits = roi_model(roi_input)
     roi_probs = torch.softmax(roi_logits, dim=1)
@@ -262,6 +306,7 @@ def run_cascade_inference(
     crop_overlap: float = 0.5,
     use_blending: bool = True,
     return_attention: bool = False,
+    roi_use_4modalities: bool = True,
 ) -> Dict:
     """
     Full cascade inference: ROI -> multi-crop -> segmentation -> merge & uncrop.

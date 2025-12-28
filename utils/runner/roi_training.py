@@ -16,7 +16,7 @@ from metrics import calculate_dice_score
 
 def train_roi_model(model, train_loader, val_loader, epochs, device, lr=1e-3,
                     criterion=None, ckpt_path=None, results_dir=None, model_name='roi_model',
-                    train_sampler=None, rank: int = 0):
+                    train_sampler=None, rank: int = 0, include_coords: bool = True, use_4modalities: bool = True):
     """Train ROI detector on resized volumes (binary WT segmentation)."""
     if criterion is None:
         criterion = combined_loss_nnunet_style
@@ -82,7 +82,15 @@ def train_roi_model(model, train_loader, val_loader, epochs, device, lr=1e-3,
             best_val_dice = val_dice
             best_epoch = epoch + 1
             if ckpt_path and is_main_process(rank):
-                torch.save(model.state_dict(), ckpt_path)
+                # 체크포인트에 metadata 저장 (기존 체크포인트와의 호환성을 위해 state_dict도 포함)
+                checkpoint = {
+                    'state_dict': model.state_dict(),
+                    'metadata': {
+                        'use_4modalities': use_4modalities,
+                        'include_coords': include_coords,
+                    }
+                }
+                torch.save(checkpoint, ckpt_path)
         if is_main_process(rank):
             print(f"[ROI][Epoch {epoch+1}] train_loss={train_loss:.4f} val_loss={val_loss:.4f} val_dice={val_dice:.4f}")
 

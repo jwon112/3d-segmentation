@@ -60,6 +60,8 @@ def parse_args():
                         help='Apply MRI-style intensity augmentations to ROI crops')
     parser.add_argument('--anisotropy_augmentation', action='store_true', default=False,
                         help='Apply depth anisotropy resize augmentation (train only)')
+    parser.add_argument('--use_4modalities', action='store_true', default=False,
+                        help='Use 4 modalities (T1, T1CE, T2, FLAIR) instead of 2 (T1CE, FLAIR)')
     return parser.parse_args()
 
 
@@ -128,12 +130,18 @@ def main():
             rank=rank,
             use_mri_augmentation=args.use_mri_augmentation,
             anisotropy_augment=args.anisotropy_augmentation,
+            use_4modalities=args.use_4modalities,
         )
 
         roi_model_cfg = get_roi_model_config(args.roi_model_name)
+        # ROI 모델 입력 채널 수 계산
+        n_modalities = 4 if args.use_4modalities else 2
+        n_coord_channels = 3 if include_coords else 0  # simple coords만 사용 (ROI 모델은 hybrid coords 사용 안 함)
+        n_channels = n_modalities + n_coord_channels
+        
         model = get_roi_model(
             args.roi_model_name,
-            n_channels=7 if include_coords else 4,
+            n_channels=n_channels,
             n_classes=2,
             roi_model_cfg=roi_model_cfg,
         )
@@ -155,6 +163,8 @@ def main():
             model_name=args.roi_model_name,
             train_sampler=loaders.get('train_sampler'),
             rank=rank,
+            include_coords=include_coords,
+            use_4modalities=args.use_4modalities,
         )
 
         test_dice = evaluate_roi_model(
