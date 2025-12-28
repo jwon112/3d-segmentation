@@ -93,14 +93,41 @@ def _prepare_roi_input(image: torch.Tensor, roi_resize: Sequence[int], use_4moda
     return roi_input
 
 
-def _scale_center(center_roi: Tuple[float, float, float], original_shape: Sequence[int], roi_shape: Sequence[int]) -> Tuple[float, float, float]:
+def _scale_center(center_roi: Tuple[float, float, float], original_shape: Sequence[int], roi_shape: Sequence[int], debug_sample_idx: int = -1) -> Tuple[float, float, float]:
     """Map ROI-space center coordinates back to original volume space."""
     scales = [original_shape[i] / float(max(1, roi_shape[i])) for i in range(3)]
-    return (
+    scaled = (
         center_roi[0] * scales[0],
         center_roi[1] * scales[1],
         center_roi[2] * scales[2],
     )
+    
+    # 첫 번째 샘플에 대해서만 디버그 로그 출력
+    if debug_sample_idx == 0:
+        import json
+        import time
+        log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+        try:
+            with open(log_path, 'a', encoding='utf-8') as log_file:
+                log_file.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "coord-check",
+                    "hypothesisId": "H6",
+                    "location": "cascade_utils.py:_scale_center",
+                    "message": "Scale ROI center to full volume space",
+                    "data": {
+                        "center_roi": [float(center_roi[0]), float(center_roi[1]), float(center_roi[2])],
+                        "original_shape": list(original_shape),
+                        "roi_shape": list(roi_shape),
+                        "scales": [float(s) for s in scales],
+                        "scaled_center": [float(scaled[0]), float(scaled[1]), float(scaled[2])]
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    
+    return scaled
 
 
 def _extract_roi_centers(
@@ -160,6 +187,7 @@ def run_roi_localization(
     max_instances: int = 1,
     min_component_size: int = 50,
     roi_use_4modalities: bool = True,
+    debug_sample_idx: int = -1,
 ) -> Dict:
     """
     Run ROI detector to predict coarse WT center(s).
@@ -203,7 +231,7 @@ def run_roi_localization(
         min_component_size=min_component_size,
     )
     centers_full = [
-        _scale_center(c, image.shape[1:], roi_resize) for c in centers_roi
+        _scale_center(c, image.shape[1:], roi_resize, debug_sample_idx=debug_sample_idx) for c in centers_roi
     ]
 
     return {
@@ -233,6 +261,29 @@ def build_segmentation_input(
         coord_map: Pre-computed coordinate map (optional). If None, will be created on-the-fly.
         debug_sample_idx: 디버그 로그를 출력할 샘플 인덱스 (-1이면 출력 안 함)
     """
+    # 첫 번째 샘플의 첫 번째 crop에 대해서만 로그 출력
+    if debug_sample_idx == 0:
+        import json
+        import time
+        log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+        try:
+            with open(log_path, 'a', encoding='utf-8') as log_file:
+                log_file.write(json.dumps({
+                    "sessionId": "debug-session",
+                    "runId": "coord-check",
+                    "hypothesisId": "H7",
+                    "location": "cascade_utils.py:build_segmentation_input",
+                    "message": "Build segmentation input - center received",
+                    "data": {
+                        "center": [float(c) for c in center],
+                        "image_shape": list(image.shape),
+                        "crop_size": list(crop_size),
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+    
     seg_patch, origin = crop_volume_with_center(image, center, crop_size, return_origin=True, debug_sample_idx=debug_sample_idx)
     inputs = seg_patch
     if include_coords:
@@ -372,6 +423,7 @@ def run_cascade_inference(
         max_instances=max_instances,
         min_component_size=min_component_size,
         roi_use_4modalities=roi_use_4modalities,
+        debug_sample_idx=debug_sample_idx,
     )
     roi_time = time.time() - roi_start
 
