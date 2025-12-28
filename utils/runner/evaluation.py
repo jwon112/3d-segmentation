@@ -20,7 +20,7 @@ from models.modules.cbam_modules import CBAM3D, ChannelAttention3D
 
 
 def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model', distributed: bool = False, world_size: int = 1,
-                   sw_patch_size=(128, 128, 128), sw_overlap=0.25, results_dir: str = None, coord_type: str = 'none'):
+                   sw_patch_size=(128, 128, 128), sw_overlap=0.5, results_dir: str = None, coord_type: str = 'none'):
     """모델 평가 함수"""
     model.eval()
     real_model = model.module if hasattr(model, 'module') else model

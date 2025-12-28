@@ -179,14 +179,30 @@ def get_data_loaders(
         # train_dataset.dataset은 원본 전체 데이터셋을 가리키므로 사용하면 안 됨
         train_base_dataset = train_dataset
         
+        # Debug: train_base_dataset의 실제 타입과 길이 확인
+        if rank == 0 or rank is None:
+            print(f"[Debug] train_base_dataset type: {type(train_base_dataset)}")
+            print(f"[Debug] train_base_dataset length: {len(train_base_dataset)}")
+            if hasattr(train_base_dataset, 'dataset'):
+                print(f"[Debug] train_base_dataset.dataset type: {type(train_base_dataset.dataset)}")
+                print(f"[Debug] train_base_dataset.dataset length: {len(train_base_dataset.dataset)}")
+            if hasattr(train_base_dataset, 'indices'):
+                print(f"[Debug] train_base_dataset.indices length: {len(train_base_dataset.indices)}")
+        
         # Validation/Test dataset은 전체 볼륨을 로드하므로 캐시를 비활성화하여 메모리 사용량 최소화
         if hasattr(val_dataset, 'dataset'):
-            val_dataset.dataset.max_cache_size = 0
+            if hasattr(val_dataset.dataset, 'max_cache_size'):
+                val_dataset.dataset.max_cache_size = 0
         if hasattr(test_dataset, 'dataset'):
-            test_dataset.dataset.max_cache_size = 0
+            if hasattr(test_dataset.dataset, 'max_cache_size'):
+                test_dataset.dataset.max_cache_size = 0
         
         # Train dataset 캐싱 활성화: BratsPatchDataset3D의 _volume_cache만 사용 (중복 방지)
-        train_base_dataset.max_cache_size = 0  # base_dataset 캐시 비활성화 (중복 방지)
+        # Subset인 경우 내부 dataset의 max_cache_size를 설정
+        if hasattr(train_base_dataset, 'dataset') and hasattr(train_base_dataset.dataset, 'max_cache_size'):
+            train_base_dataset.dataset.max_cache_size = 0
+        elif hasattr(train_base_dataset, 'max_cache_size'):
+            train_base_dataset.max_cache_size = 0
         
         train_dataset = BratsPatchDataset3D(
             base_dataset=train_base_dataset,
@@ -196,6 +212,11 @@ def get_data_loaders(
             anisotropy_augment=anisotropy_augment,
             max_cache_size=50,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
         )
+        
+        # Debug: BratsPatchDataset3D 생성 후 길이 확인
+        if rank == 0 or rank is None:
+            print(f"[Debug] BratsPatchDataset3D length: {len(train_dataset)}")
+            print(f"[Debug] Expected length: {len(train_base_dataset)} * 16 = {len(train_base_dataset) * 16}")
 
     train_sampler = val_sampler = test_sampler = None
     if distributed and world_size is not None and rank is not None:

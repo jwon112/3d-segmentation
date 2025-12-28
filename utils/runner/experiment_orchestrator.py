@@ -355,7 +355,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     train_losses, val_dices, epoch_results, best_epoch, best_val_dice, best_val_wt, best_val_tc, best_val_et = train_model(
                         model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
                         train_sampler=train_sampler, rank=rank,
-                        sw_patch_size=(128, 128, 128), sw_overlap=0.10, dim=dim, use_nnunet_loss=use_nnunet_loss,
+                        sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim=dim, use_nnunet_loss=use_nnunet_loss,
                         results_dir=results_dir, ckpt_path=ckpt_path, train_crops_per_center=train_crops_per_center
                     )
                     
@@ -462,7 +462,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         distributed=distributed,
                         world_size=world_size,
                         sw_patch_size=(128, 128, 128),
-                        sw_overlap=0.10,
+                        sw_overlap=0.5,
                         results_dir=results_dir,
                         coord_type=coord_type,  # coord_type 전달 (cascade 모델도 포함)
                     )

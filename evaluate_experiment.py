@@ -375,7 +375,7 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
                 metrics = evaluate_model(
                     model, test_loader, device, model_name, 
                     distributed=distributed, world_size=world_size,
-                    sw_patch_size=(128, 128, 128), sw_overlap=0.10, 
+                    sw_patch_size=(128, 128, 128), sw_overlap=0.5, 
                     results_dir=results_dir,
                     coord_type=coord_type
                 )
@@ -399,7 +399,7 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         metrics = evaluate_model(
             model, test_loader, device, model_name, 
             distributed=distributed, world_size=world_size,
-            sw_patch_size=(128, 128, 128), sw_overlap=0.10, 
+            sw_patch_size=(128, 128, 128), sw_overlap=0.5, 
             results_dir=results_dir,
             coord_type=coord_type  # 체크포인트에서 감지한 coord_type 전달
         )
