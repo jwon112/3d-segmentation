@@ -23,10 +23,12 @@ Path Configuration:
 
 import os
 import argparse
+import torch
 import torch.multiprocessing as mp
 
 # Import experiment runner
 from utils.runner import run_integrated_experiment
+from utils.experiment_utils import is_main_process
 
 
 if __name__ == "__main__":
@@ -103,7 +105,12 @@ if __name__ == "__main__":
         default_path = get_default_roi_weight_path(args.roi_model_name, args.seeds[0])
         if os.path.exists(default_path):
             args.roi_weight_path = default_path
-            print(f"Using default ROI weight path: {args.roi_weight_path}")
+            # rank 확인 (distributed 환경에서만)
+            rank = 0
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                rank = torch.distributed.get_rank()
+            if is_main_process(rank):
+                print(f"Using default ROI weight path: {args.roi_weight_path}")
         else:
             raise FileNotFoundError(
                 f"ROI weight file not found. Please specify --roi_weight_path or ensure the default path exists: {default_path}"
@@ -117,33 +124,41 @@ if __name__ == "__main__":
     
     # 기본 전처리 디렉토리 설정 (이미 argparse default로 설정되어 있음)
     
-    print("Starting 3D Segmentation Integrated Experiment System")
-    print(f"Data path: {args.data_path}")
-    print(f"Preprocessed base dir: {args.preprocessed_base_dir}")
-    print(f"Epochs: {args.epochs}")
-    print(f"Batch size: {args.batch_size}")
-    print(f"Seeds: {args.seeds}")
-    print(f"Models: {args.models if args.models else 'unet3d_s,unet3d_m,unet3d_stride_s,unet3d_stride_m,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_01_unet_s,dualbranch_01_unet_m,dualbranch_02_unet_s,dualbranch_02_unet_m,dualbranch_03_unet_s,dualbranch_03_unet_m'}")
-    print(f"Datasets: {args.datasets if args.datasets else 'brats2021 (auto-detected)'}")
-    print(f"Dataset version: {args.dataset_version}")
-    print(f"Dimension: {args.dim}")
-    print(f"Loss function: {'nnU-Net style (Soft Dice Squared + Dice 70%%/CE 30%%)' if use_nnunet_loss else 'Standard (Dice 50%%/CE 50%%)'}")
-    print(f"MRI Augmentation: {'Enabled' if args.use_mri_augmentation else 'Disabled'}")
-    print(f"Anisotropy Augmentation: {'Enabled' if args.anisotropy_augmentation else 'Disabled'}")
-    print(f"Modalities: {'4 (T1, T1CE, T2, FLAIR)' if args.use_4modalities else '2 (T1CE, FLAIR)'}")
-    print(f"Coordinate encoding type: {args.coord_type} ({'no coords' if args.coord_type == 'none' else '3 channels' if args.coord_type == 'simple' else '9 channels'})")
-    print(f"Results will be saved in: experiment_result/ folder")
-    if args.use_5fold:
-        print(f"Using 5-fold cross-validation")
+    # rank 확인 (distributed 환경에서만)
+    rank = 0
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        rank = torch.distributed.get_rank()
+    
+    if is_main_process(rank):
+        print("Starting 3D Segmentation Integrated Experiment System")
+        print(f"Data path: {args.data_path}")
+        print(f"Preprocessed base dir: {args.preprocessed_base_dir}")
+        print(f"Epochs: {args.epochs}")
+        print(f"Batch size: {args.batch_size}")
+        print(f"Seeds: {args.seeds}")
+        print(f"Models: {args.models if args.models else 'unet3d_s,unet3d_m,unet3d_stride_s,unet3d_stride_m,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_01_unet_s,dualbranch_01_unet_m,dualbranch_02_unet_s,dualbranch_02_unet_m,dualbranch_03_unet_s,dualbranch_03_unet_m'}")
+        print(f"Datasets: {args.datasets if args.datasets else 'brats2021 (auto-detected)'}")
+        print(f"Dataset version: {args.dataset_version}")
+        print(f"Dimension: {args.dim}")
+        print(f"Loss function: {'nnU-Net style (Soft Dice Squared + Dice 70%%/CE 30%%)' if use_nnunet_loss else 'Standard (Dice 50%%/CE 50%%)'}")
+        print(f"MRI Augmentation: {'Enabled' if args.use_mri_augmentation else 'Disabled'}")
+        print(f"Anisotropy Augmentation: {'Enabled' if args.anisotropy_augmentation else 'Disabled'}")
+        print(f"Modalities: {'4 (T1, T1CE, T2, FLAIR)' if args.use_4modalities else '2 (T1CE, FLAIR)'}")
+        print(f"Coordinate encoding type: {args.coord_type} ({'no coords' if args.coord_type == 'none' else '3 channels' if args.coord_type == 'simple' else '9 channels'})")
+        print(f"Results will be saved in: experiment_result/ folder")
+        if args.use_5fold:
+            print(f"Using 5-fold cross-validation")
     
     # Configure PyTorch sharing strategy to avoid /dev/shm pressure if requested
     try:
         if args.sharing_strategy:
             os.environ.setdefault('PYTORCH_SHARING_STRATEGY', args.sharing_strategy)
             mp.set_sharing_strategy(args.sharing_strategy)
-            print(f"Using PyTorch sharing strategy: {mp.get_sharing_strategy()}")
+            if is_main_process(rank):
+                print(f"Using PyTorch sharing strategy: {mp.get_sharing_strategy()}")
     except Exception as _e:
-        print(f"Warning: Failed to set sharing strategy: {_e}")
+        if is_main_process(rank):
+            print(f"Warning: Failed to set sharing strategy: {_e}")
 
     # Cascade 모델 학습 시에도 ROI 모델 정보를 전달
     cascade_cfg = None
@@ -186,13 +201,23 @@ if __name__ == "__main__":
             preprocessed_base_dir=args.preprocessed_base_dir,
         )
         
-        if results_dir and results_df is not None:
-            print(f"\n3D Segmentation integrated experiment completed successfully!")
-            print(f"Results saved in: {results_dir}")
-        else:
-            print(f"\nExperiment failed.")
+        # rank 확인 (distributed 환경에서만)
+        rank = 0
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            rank = torch.distributed.get_rank()
+        
+        if is_main_process(rank):
+            if results_dir and results_df is not None:
+                print(f"\n3D Segmentation integrated experiment completed successfully!")
+                print(f"Results saved in: {results_dir}")
+            else:
+                print(f"\nExperiment failed.")
         
     except Exception as e:
-        print(f"\nExperiment failed: {e}")
-        import traceback
-        traceback.print_exc()
+        rank = 0
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            rank = torch.distributed.get_rank()
+        if is_main_process(rank):
+            print(f"\nExperiment failed: {e}")
+            import traceback
+            traceback.print_exc()

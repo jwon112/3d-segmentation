@@ -212,7 +212,20 @@ class BratsDataset3D(Dataset):
         if not samples:
             raise ValueError(f"No samples found in {split_dir}")
         
-        print(f"Loading {self.split} samples from fold {self.fold_idx}: {len(samples)} samples from {split_dir}")
+        # rank 확인 (distributed 환경에서만 rank 0에서만 출력)
+        rank = 0
+        try:
+            import torch.distributed as dist
+            if dist.is_available() and dist.is_initialized():
+                rank = dist.get_rank()
+                if rank == 0:
+                    print(f"Loading {self.split} samples from fold {self.fold_idx}: {len(samples)} samples from {split_dir}")
+            else:
+                print(f"Loading {self.split} samples from fold {self.fold_idx}: {len(samples)} samples from {split_dir}")
+        except Exception:
+            # distributed가 없거나 사용할 수 없는 경우 그냥 출력
+            print(f"Loading {self.split} samples from fold {self.fold_idx}: {len(samples)} samples from {split_dir}")
+        
         return samples
 
     def __len__(self):

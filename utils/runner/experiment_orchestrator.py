@@ -65,9 +65,14 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_dir = f"experiment_result/integrated_experiment_results_{timestamp}"
     os.makedirs(results_dir, exist_ok=True)
-    print(f"Train data augmentation: {'MRI augmentations' if use_mri_augmentation else 'None'}")
-    print(f"Anisotropy augmentation: {'On' if anisotropy_augment else 'Off'}")
-    print(f"Coordinate encoding type: {coord_type} (include_coords={include_coords}, encoding={coord_encoding_type})")
+    
+    # Distributed setup (먼저 rank 확인)
+    distributed, rank, local_rank, world_size = setup_distributed()
+    
+    if is_main_process(rank):
+        print(f"Train data augmentation: {'MRI augmentations' if use_mri_augmentation else 'None'}")
+        print(f"Anisotropy augmentation: {'On' if anisotropy_augment else 'Off'}")
+        print(f"Coordinate encoding type: {coord_type} (include_coords={include_coords}, encoding={coord_encoding_type})")
     
     # 사용 가능한 모델들 검증 및 필터링
     available_models = validate_and_filter_models(models)
@@ -76,9 +81,6 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
     all_results = []
     all_epochs_results = []
     all_stage_pam_results = []  # Stage별 PAM 결과 저장용
-    
-    # Distributed setup
-    distributed, rank, local_rank, world_size = setup_distributed()
     if distributed:
         device = torch.device(f'cuda:{local_rank}')
         if is_main_process(rank):

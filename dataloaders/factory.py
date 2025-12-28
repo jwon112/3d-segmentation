@@ -217,10 +217,12 @@ def get_data_loaders(
             max_cache_size=50,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
         )
         
-        # Debug: BratsPatchDataset3D 생성 후 길이 확인
+        # Debug: BratsPatchDataset3D 생성 후 길이 확인 (rank 0에서만)
         if rank == 0 or rank is None:
-            print(f"[Debug] BratsPatchDataset3D length: {len(train_dataset)}")
-            print(f"[Debug] Expected length: {len(train_base_dataset)} * 16 = {len(train_base_dataset) * 16}")
+            from utils.experiment_utils import is_main_process
+            if is_main_process(rank if rank is not None else 0):
+                print(f"[Debug] BratsPatchDataset3D length: {len(train_dataset)}")
+                print(f"[Debug] Expected length: {len(train_base_dataset)} * 16 = {len(train_base_dataset) * 16}")
 
     train_sampler = val_sampler = test_sampler = None
     if distributed and world_size is not None and rank is not None:
