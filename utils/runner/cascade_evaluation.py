@@ -12,6 +12,7 @@ import matplotlib
 matplotlib.use('Agg')  # GUI 없이 사용
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
+from matplotlib.patches import Rectangle
 
 from utils.experiment_utils import get_roi_model, is_main_process
 from utils.experiment_config import get_roi_model_config
@@ -212,6 +213,16 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                         # Segmentation colormap (evaluation.py와 동일)
                         seg_cmap = ListedColormap(['black', 'red', 'green', 'blue', 'yellow'])
                         
+                        # ROI 중심점과 crop 영역 정보 추출
+                        roi_info = result.get('roi', {})
+                        roi_centers = roi_info.get('centers_full', []) or []
+                        if not roi_centers and roi_info.get('center_full'):
+                            roi_centers = [roi_info.get('center_full')]
+                        
+                        # Crop 크기 정보
+                        crop_size_tuple = crop_size if isinstance(crop_size, tuple) else tuple(crop_size)
+                        crop_half_h, crop_half_w, crop_half_d = crop_size_tuple[0] // 2, crop_size_tuple[1] // 2, crop_size_tuple[2] // 2
+                        
                         for i, slice_idx in enumerate(slice_indices):
                             # 원본 이미지 (FLAIR)
                             img_slice = image_np[flair_idx, :, :, slice_idx]
@@ -222,6 +233,20 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                                 img_display = img_slice
                             
                             axes[i, 0].imshow(img_display, cmap='gray', origin='lower')
+                            # ROI 중심점 표시 (해당 슬라이스 근처에 있는 경우)
+                            for center_idx, center in enumerate(roi_centers):
+                                if center and len(center) >= 3:
+                                    center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
+                                    # 슬라이스 범위 내에 있는지 확인 (crop_size의 절반 범위)
+                                    if abs(center_d - slice_idx) <= crop_half_d:
+                                        axes[i, 0].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow', label='ROI Center' if center_idx == 0 else '')
+                                        # Crop 영역 표시 (ROI 중심점 기준)
+                                        rect = Rectangle(
+                                            (center_w - crop_half_w, center_h - crop_half_h),
+                                            crop_size_tuple[1], crop_size_tuple[0],
+                                            linewidth=1.5, edgecolor='cyan', facecolor='none', linestyle='--', alpha=0.5
+                                        )
+                                        axes[i, 0].add_patch(rect)
                             axes[i, 0].set_title(f'FLAIR - Slice {slice_idx}')
                             axes[i, 0].axis('off')
                             
@@ -231,6 +256,19 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                             mask_gt = target_slice > 0
                             if mask_gt.any():
                                 axes[i, 1].imshow(target_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=4, origin='lower')
+                            # ROI 중심점 표시
+                            for center_idx, center in enumerate(roi_centers):
+                                if center and len(center) >= 3:
+                                    center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
+                                    if abs(center_d - slice_idx) <= crop_half_d:
+                                        axes[i, 1].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow')
+                                        from matplotlib.patches import Rectangle
+                                        rect = Rectangle(
+                                            (center_w - crop_half_w, center_h - crop_half_h),
+                                            crop_size_tuple[1], crop_size_tuple[0],
+                                            linewidth=1.5, edgecolor='cyan', facecolor='none', linestyle='--', alpha=0.5
+                                        )
+                                        axes[i, 1].add_patch(rect)
                             axes[i, 1].set_title(f'Ground Truth - Slice {slice_idx}')
                             axes[i, 1].axis('off')
                             
@@ -240,6 +278,25 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                             mask_pred = pred_slice > 0
                             if mask_pred.any():
                                 axes[i, 2].imshow(pred_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=4, origin='lower')
+                            
+                            # ROI 중심점과 crop 영역 표시
+                            for center_idx, center in enumerate(roi_centers):
+                                if center and len(center) >= 3:
+                                    center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
+                                    # 슬라이스 범위 내에 있는지 확인
+                                    if abs(center_d - slice_idx) <= crop_half_d:
+                                        # ROI 중심점 표시
+                                        axes[i, 2].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow', label='ROI Center' if center_idx == 0 else '')
+                                        
+                                        # Crop 영역 표시 (ROI 중심점 기준)
+                                        from matplotlib.patches import Rectangle
+                                        rect = Rectangle(
+                                            (center_w - crop_half_w, center_h - crop_half_h),
+                                            crop_size_tuple[1], crop_size_tuple[0],
+                                            linewidth=1.5, edgecolor='cyan', facecolor='none', linestyle='--', alpha=0.7
+                                        )
+                                        axes[i, 2].add_patch(rect)
+                            
                             axes[i, 2].set_title(f'Prediction - Slice {slice_idx}')
                             axes[i, 2].axis('off')
                         
@@ -564,6 +621,16 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                         # Segmentation colormap (evaluation.py와 동일)
                         seg_cmap = ListedColormap(['black', 'red', 'green', 'blue', 'yellow'])
                         
+                        # ROI 중심점과 crop 영역 정보 추출
+                        roi_info = result.get('roi', {})
+                        roi_centers = roi_info.get('centers_full', []) or []
+                        if not roi_centers and roi_info.get('center_full'):
+                            roi_centers = [roi_info.get('center_full')]
+                        
+                        # Crop 크기 정보
+                        crop_size_tuple = crop_size if isinstance(crop_size, tuple) else tuple(crop_size)
+                        crop_half_h, crop_half_w, crop_half_d = crop_size_tuple[0] // 2, crop_size_tuple[1] // 2, crop_size_tuple[2] // 2
+                        
                         for i, slice_idx in enumerate(slice_indices):
                             # 원본 이미지 (FLAIR)
                             img_slice = image_np[flair_idx, :, :, slice_idx]
@@ -574,6 +641,20 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                                 img_display = img_slice
                             
                             axes[i, 0].imshow(img_display, cmap='gray', origin='lower')
+                            # ROI 중심점 표시 (해당 슬라이스 근처에 있는 경우)
+                            for center_idx, center in enumerate(roi_centers):
+                                if center and len(center) >= 3:
+                                    center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
+                                    # 슬라이스 범위 내에 있는지 확인 (crop_size의 절반 범위)
+                                    if abs(center_d - slice_idx) <= crop_half_d:
+                                        axes[i, 0].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow', label='ROI Center' if center_idx == 0 else '')
+                                        # Crop 영역 표시 (ROI 중심점 기준)
+                                        rect = Rectangle(
+                                            (center_w - crop_half_w, center_h - crop_half_h),
+                                            crop_size_tuple[1], crop_size_tuple[0],
+                                            linewidth=1.5, edgecolor='cyan', facecolor='none', linestyle='--', alpha=0.5
+                                        )
+                                        axes[i, 0].add_patch(rect)
                             axes[i, 0].set_title(f'FLAIR - Slice {slice_idx}')
                             axes[i, 0].axis('off')
                             
@@ -583,6 +664,19 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                             mask_gt = target_slice > 0
                             if mask_gt.any():
                                 axes[i, 1].imshow(target_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=4, origin='lower')
+                            # ROI 중심점 표시
+                            for center_idx, center in enumerate(roi_centers):
+                                if center and len(center) >= 3:
+                                    center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
+                                    if abs(center_d - slice_idx) <= crop_half_d:
+                                        axes[i, 1].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow')
+                                        from matplotlib.patches import Rectangle
+                                        rect = Rectangle(
+                                            (center_w - crop_half_w, center_h - crop_half_h),
+                                            crop_size_tuple[1], crop_size_tuple[0],
+                                            linewidth=1.5, edgecolor='cyan', facecolor='none', linestyle='--', alpha=0.5
+                                        )
+                                        axes[i, 1].add_patch(rect)
                             axes[i, 1].set_title(f'Ground Truth - Slice {slice_idx}')
                             axes[i, 1].axis('off')
                             
@@ -592,6 +686,25 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                             mask_pred = pred_slice > 0
                             if mask_pred.any():
                                 axes[i, 2].imshow(pred_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=4, origin='lower')
+                            
+                            # ROI 중심점과 crop 영역 표시
+                            for center_idx, center in enumerate(roi_centers):
+                                if center and len(center) >= 3:
+                                    center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
+                                    # 슬라이스 범위 내에 있는지 확인
+                                    if abs(center_d - slice_idx) <= crop_half_d:
+                                        # ROI 중심점 표시
+                                        axes[i, 2].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow', label='ROI Center' if center_idx == 0 else '')
+                                        
+                                        # Crop 영역 표시 (ROI 중심점 기준)
+                                        from matplotlib.patches import Rectangle
+                                        rect = Rectangle(
+                                            (center_w - crop_half_w, center_h - crop_half_h),
+                                            crop_size_tuple[1], crop_size_tuple[0],
+                                            linewidth=1.5, edgecolor='cyan', facecolor='none', linestyle='--', alpha=0.7
+                                        )
+                                        axes[i, 2].add_patch(rect)
+                            
                             axes[i, 2].set_title(f'Prediction - Slice {slice_idx}')
                             axes[i, 2].axis('off')
                         
