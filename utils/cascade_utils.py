@@ -544,18 +544,20 @@ def run_cascade_inference_batch(
     return_attention: bool = False,
     roi_use_4modalities: bool = True,
     return_timing: bool = False,
+    roi_batch_size: Optional[int] = None,
 ) -> List[Dict]:
     """
     Batch cascade inference: ROI -> multi-crop -> segmentation -> merge & uncrop.
     
     Processes multiple volumes in batch:
-    1. Batch ROI localization for all volumes
+    1. Batch ROI localization for all volumes (with optional batch size limit)
     2. Collect all crops from all volumes with metadata
     3. Batch segmentation for all crops
     4. Per-volume blending
     
     Args:
         images: List of image tensors, each with shape (C, H, W, D)
+        roi_batch_size: ROI 단계에서 한 번에 처리할 최대 볼륨 수 (None이면 모든 볼륨을 한 번에 처리)
     
     Returns:
         List of result dicts, each with the same structure as run_cascade_inference
@@ -563,17 +565,35 @@ def run_cascade_inference_batch(
     import time
     total_start = time.time()
     
-    # 1. Batch ROI localization
+    # 1. Batch ROI localization (with optional batch size limit)
     roi_start = time.time()
-    roi_infos = run_roi_localization_batch(
-        roi_model=roi_model,
-        images=images,
-        device=device,
-        roi_resize=roi_resize,
-        max_instances=max_instances,
-        min_component_size=min_component_size,
-        roi_use_4modalities=roi_use_4modalities,
-    )
+    if roi_batch_size is None or roi_batch_size >= len(images):
+        # 모든 볼륨을 한 번에 처리
+        roi_infos = run_roi_localization_batch(
+            roi_model=roi_model,
+            images=images,
+            device=device,
+            roi_resize=roi_resize,
+            max_instances=max_instances,
+            min_component_size=min_component_size,
+            roi_use_4modalities=roi_use_4modalities,
+        )
+    else:
+        # ROI 단계에서 배치 크기 제한
+        roi_infos = []
+        for roi_batch_start in range(0, len(images), roi_batch_size):
+            roi_batch_end = min(roi_batch_start + roi_batch_size, len(images))
+            roi_batch_images = images[roi_batch_start:roi_batch_end]
+            roi_batch_infos = run_roi_localization_batch(
+                roi_model=roi_model,
+                images=roi_batch_images,
+                device=device,
+                roi_resize=roi_resize,
+                max_instances=max_instances,
+                min_component_size=min_component_size,
+                roi_use_4modalities=roi_use_4modalities,
+            )
+            roi_infos.extend(roi_batch_infos)
     roi_time = time.time() - roi_start
     
     seg_model.eval()

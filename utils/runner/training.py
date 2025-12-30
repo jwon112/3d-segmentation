@@ -343,6 +343,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             eval_crops_per_center = cascade_infer_cfg.get('crops_per_center', 1) if cascade_infer_cfg else 1
             eval_crop_overlap = cascade_infer_cfg.get('crop_overlap', 0.5) if cascade_infer_cfg else 0.5
             eval_use_blending = cascade_infer_cfg.get('use_blending', True) if cascade_infer_cfg else True
+            eval_batch_size = cascade_infer_cfg.get('batch_size', 1) if cascade_infer_cfg else 1
+            eval_roi_batch_size = cascade_infer_cfg.get('roi_batch_size', None) if cascade_infer_cfg else None
             
             # coord_type에 따라 include_coords와 coord_encoding_type 결정
             if coord_type == 'none':
@@ -377,7 +379,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     model_name=model_name,
                     dataset_version=dataset_version,
                     roi_use_4modalities=True,  # val_base_dataset은 항상 4 modalities
-                    batch_size=1,  # 기본값 1 (순차 처리)
+                    batch_size=eval_batch_size,  # cascade_infer_cfg에서 가져온 값
+                    roi_batch_size=eval_roi_batch_size,  # cascade_infer_cfg에서 가져온 값
                 )
                 
                 # 결과 추출

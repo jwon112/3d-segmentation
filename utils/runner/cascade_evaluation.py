@@ -20,7 +20,7 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                               coord_encoding_type='simple',
                               crops_per_center=1, crop_overlap=0.5, use_blending=True,
                               collect_attention=False, results_dir=None, model_name='model', dataset_version='brats2021',
-                              roi_use_4modalities=True, batch_size=1):
+                              roi_use_4modalities=True, batch_size=1, roi_batch_size=None):
     """
     Run cascade inference on base dataset and compute WT/TC/ET dice.
     
@@ -33,9 +33,11 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
         model_name: 모델 이름 (attention 분석용)
         batch_size: 배치로 처리할 볼륨 수 (기본값 1, 순차 처리)
                     batch_size > 1이면 여러 볼륨을 배치로 처리:
-                    - ROI 단계: 배치 내 모든 볼륨의 ROI를 동시에 처리
+                    - ROI 단계: 배치 내 모든 볼륨의 ROI를 동시에 처리 (roi_batch_size로 제한 가능)
                     - Segmentation 단계: 모든 볼륨의 모든 crop을 모아서 배치로 처리
                     - 각 crop이 어느 볼륨에 속하는지 추적하여 볼륨별로 blending 수행
+        roi_batch_size: ROI 단계에서 한 번에 처리할 최대 볼륨 수 (None이면 batch_size와 동일하게 처리)
+                       메모리가 부족한 경우 ROI 단계만 더 작은 배치로 나눌 수 있음
     """
     roi_model.eval()
     seg_model.eval()
@@ -104,6 +106,7 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                 return_attention=collect_attention,
                 roi_use_4modalities=roi_use_4modalities,
                 return_timing=True,
+                roi_batch_size=roi_batch_size,
             )
             batch_inference_time = time.time() - batch_inference_start
             
@@ -299,7 +302,7 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                     import traceback
                     traceback.print_exc()
                 raise
-            
+        
             # Attention weights 수집 (dice 계산 전에 먼저 수집하여, 에러가 발생해도 보존)
             if collect_attention and all_attention_weights is not None:
                 if 'attention_weights' in result and result['attention_weights']:
@@ -605,6 +608,8 @@ def evaluate_segmentation_with_roi(
     model_name='model',
     preprocessed_dir=None,
     roi_use_4modalities=True,
+    batch_size=1,
+    roi_batch_size=None,
 ):
     """
     Evaluate trained segmentation model with pre-trained ROI detector.
@@ -669,6 +674,7 @@ def evaluate_segmentation_with_roi(
         model_name=model_name,
         dataset_version=dataset_version,
         roi_use_4modalities=roi_use_4modalities,
-        batch_size=1,  # 기본값 1 (순차 처리), 배치 처리를 원하면 파라미터로 전달 가능
+        batch_size=batch_size,
+        roi_batch_size=roi_batch_size,
     )
 

@@ -525,10 +525,12 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
 
                     # Test set 평가
                     # evaluate_model이 cascade 모델을 자동으로 감지하여 ROI 기반 평가 수행
-                    # cascade_infer_cfg에서 crops_per_center, crop_overlap, use_blending 가져오기
+                    # cascade_infer_cfg에서 crops_per_center, crop_overlap, use_blending, batch_size, roi_batch_size 가져오기
                     eval_crops_per_center = cascade_infer_cfg.get('crops_per_center', 1) if cascade_infer_cfg else 1
                     eval_crop_overlap = cascade_infer_cfg.get('crop_overlap', 0.5) if cascade_infer_cfg else 0.5
                     eval_use_blending = cascade_infer_cfg.get('use_blending', True) if cascade_infer_cfg else True
+                    eval_batch_size = cascade_infer_cfg.get('batch_size', 1) if cascade_infer_cfg else 1
+                    eval_roi_batch_size = cascade_infer_cfg.get('roi_batch_size', None) if cascade_infer_cfg else None
                     
                     metrics = evaluate_model(
                         model,
@@ -551,6 +553,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         crops_per_center=eval_crops_per_center,  # cascade_infer_cfg에서 가져온 값
                         crop_overlap=eval_crop_overlap,  # cascade_infer_cfg에서 가져온 값
                         use_blending=eval_use_blending,  # cascade_infer_cfg에서 가져온 값
+                        batch_size=eval_batch_size,  # cascade_infer_cfg에서 가져온 값
+                        roi_batch_size=eval_roi_batch_size,  # cascade_infer_cfg에서 가져온 값
                     )
                     
                     cascade_metrics = None
