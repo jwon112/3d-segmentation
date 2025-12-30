@@ -271,7 +271,11 @@ class BratsDataset3D(Dataset):
                     # #region agent log
                     import json
                     import time
-                    log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+                    import os
+                    # 현재 작업 디렉토리 기준으로 로그 파일 경로 설정
+                    log_dir = os.path.join(os.getcwd(), '.cursor')
+                    os.makedirs(log_dir, exist_ok=True)
+                    log_path = os.path.join(log_dir, 'debug.log')
                     h5_image_shape = f['image'].shape
                     h5_mask_shape = f['mask'].shape
                     try:
@@ -286,12 +290,21 @@ class BratsDataset3D(Dataset):
                                     "patient_dir": os.path.basename(patient_dir) if not str(patient_dir).endswith('.h5') else os.path.basename(patient_dir),
                                     "h5_image_shape": list(h5_image_shape),
                                     "h5_mask_shape": list(h5_mask_shape),
-                                    "preprocessed_path": preprocessed_path
+                                    "preprocessed_path": preprocessed_path,
+                                    "log_path": log_path,
+                                    "cwd": os.getcwd()
                                 },
                                 "timestamp": int(time.time() * 1000)
                             }, ensure_ascii=False) + "\n")
-                    except Exception:
-                        pass
+                            log_file.flush()  # 즉시 디스크에 쓰기
+                    except Exception as e:
+                        # 예외 발생 시에도 로그 기록 시도 (디버깅용)
+                        try:
+                            error_log_path = os.path.join(os.getcwd(), 'debug_error.log')
+                            with open(error_log_path, 'a', encoding='utf-8') as error_file:
+                                error_file.write(f"[H3 Error] {str(e)}\n")
+                        except:
+                            pass
                     # #endregion
                     
                     image = torch.from_numpy(f['image'][:]).float()
@@ -310,12 +323,21 @@ class BratsDataset3D(Dataset):
                                     "patient_dir": os.path.basename(patient_dir) if not str(patient_dir).endswith('.h5') else os.path.basename(patient_dir),
                                     "image_shape": list(image.shape),
                                     "mask_shape": list(mask.shape),
-                                    "split": self.split
+                                    "split": self.split,
+                                    "log_path": log_path,
+                                    "cwd": os.getcwd()
                                 },
                                 "timestamp": int(time.time() * 1000)
                             }, ensure_ascii=False) + "\n")
-                    except Exception:
-                        pass
+                            log_file.flush()  # 즉시 디스크에 쓰기
+                    except Exception as e:
+                        # 예외 발생 시에도 로그 기록 시도 (디버깅용)
+                        try:
+                            error_log_path = os.path.join(os.getcwd(), 'debug_error.log')
+                            with open(error_log_path, 'a', encoding='utf-8') as error_file:
+                                error_file.write(f"[H3 Error] {str(e)}\n")
+                        except:
+                            pass
                     # #endregion
                     
                     # 포그라운드 좌표 로드 (있으면 사용, 없으면 None)

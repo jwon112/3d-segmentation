@@ -124,15 +124,24 @@ def _scale_center(center_roi: Tuple[float, float, float], original_shape: Sequen
                         "original_shape": list(original_shape),
                         "roi_shape": list(roi_shape),
                         "scales": [float(s) for s in scales],
-                        "scaled_center": [float(scaled[0]), float(scaled[1]), float(scaled[2])]
+                        "scaled_center": [float(scaled[0]), float(scaled[1]), float(scaled[2])],
+                        "log_path": log_path,
+                        "cwd": os.getcwd()
                     },
                     "timestamp": int(time.time() * 1000)
                 }, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
+                log_file.flush()  # 즉시 디스크에 쓰기
+        except Exception as e:
+            # 예외 발생 시에도 로그 기록 시도 (디버깅용)
+            try:
+                error_log_path = os.path.join(os.getcwd(), 'debug_error.log')
+                with open(error_log_path, 'a', encoding='utf-8') as error_file:
+                    error_file.write(f"[H6 Error] {str(e)}\n")
+            except:
+                pass
     
     return scaled
-
+3
 
 def _extract_roi_centers(
     roi_mask: torch.Tensor,
@@ -371,11 +380,20 @@ def _generate_multi_crop_centers(
                         "crop_overlap": crop_overlap,
                         "stride": stride,
                         "grid_size": grid_size,
+                        "log_path": log_path,
+                        "cwd": os.getcwd()
                     },
                     "timestamp": int(time.time() * 1000)
                 }, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
+                log_file.flush()  # 즉시 디스크에 쓰기
+        except Exception as e:
+            # 예외 발생 시에도 로그 기록 시도 (디버깅용)
+            try:
+                error_log_path = os.path.join(os.getcwd(), 'debug_error.log')
+                with open(error_log_path, 'a', encoding='utf-8') as error_file:
+                    error_file.write(f"[H8 Error] {str(e)}\n")
+            except:
+                pass
     
     centers = []
     cy, cx, cz = center
