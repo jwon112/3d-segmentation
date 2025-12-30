@@ -271,7 +271,7 @@ class BratsDataset3D(Dataset):
                     # #region agent log
                     import json
                     import time
-                    import os
+                    # os는 이미 파일 상단에서 import됨
                     # 현재 작업 디렉토리 기준으로 로그 파일 경로 설정
                     log_dir = os.path.join(os.getcwd(), '.cursor')
                     os.makedirs(log_dir, exist_ok=True)
