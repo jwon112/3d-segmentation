@@ -157,7 +157,10 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             if is_main_process(rank):
                 print(f"[Cascade Evaluation] full_logits.shape={full_logits.shape}, target_batch.shape={target_batch.shape}")
                 # #region agent log
-                log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+                import os
+                log_dir = os.path.join(os.getcwd(), '.cursor')
+                os.makedirs(log_dir, exist_ok=True)
+                log_path = os.path.join(log_dir, 'debug.log')
                 try:
                     with open(log_path, 'a', encoding='utf-8') as log_file:
                         log_file.write(json.dumps({
@@ -200,6 +203,10 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             # #region agent log
             if idx == 0:
                 try:
+                    import os
+                    log_dir = os.path.join(os.getcwd(), '.cursor')
+                    os.makedirs(log_dir, exist_ok=True)
+                    log_path = os.path.join(log_dir, 'debug.log')
                     with open(log_path, 'a', encoding='utf-8') as log_file:
                         log_file.write(json.dumps({
                             "sessionId": "debug-session",
@@ -214,6 +221,7 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                             },
                             "timestamp": int(time.time() * 1000)
                         }, ensure_ascii=False) + "\n")
+                        log_file.flush()
                 except Exception:
                     pass
             # #endregion

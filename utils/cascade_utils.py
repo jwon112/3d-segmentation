@@ -677,7 +677,97 @@ def run_cascade_inference(
     elif use_blending and weight_sum is not None:
         # Blending 가중치로 정규화
         # full_logits: (C, H, W, D), weight_sum: (H, W, D)
+        
+        # 디버깅: weight_sum 분포 확인 (첫 번째 샘플만)
+        if debug_sample_idx == 0:
+            import json
+            import time
+            import os
+            log_dir = os.path.join(os.getcwd(), '.cursor')
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, 'debug.log')
+            try:
+                weight_sum_min = float(weight_sum.min().item())
+                weight_sum_max = float(weight_sum.max().item())
+                weight_sum_mean = float(weight_sum.mean().item())
+                weight_sum_zero_count = int((weight_sum == 0).sum().item())
+                weight_sum_total = int(weight_sum.numel())
+                weight_sum_zero_ratio = weight_sum_zero_count / weight_sum_total if weight_sum_total > 0 else 0.0
+                
+                full_logits_before_norm_min = float(full_logits.min().item())
+                full_logits_before_norm_max = float(full_logits.max().item())
+                full_logits_before_norm_mean = float(full_logits.mean().item())
+                
+                with open(log_path, 'a', encoding='utf-8') as log_file:
+                    log_file.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "blending-check",
+                        "hypothesisId": "H9",
+                        "location": "cascade_utils.py:run_cascade_inference",
+                        "message": "Blending normalization - weight_sum and full_logits stats",
+                        "data": {
+                            "weight_sum_stats": {
+                                "min": weight_sum_min,
+                                "max": weight_sum_max,
+                                "mean": weight_sum_mean,
+                                "zero_count": weight_sum_zero_count,
+                                "total_voxels": weight_sum_total,
+                                "zero_ratio": weight_sum_zero_ratio
+                            },
+                            "full_logits_before_norm": {
+                                "min": full_logits_before_norm_min,
+                                "max": full_logits_before_norm_max,
+                                "mean": full_logits_before_norm_mean,
+                                "shape": list(full_logits.shape)
+                            },
+                            "num_centers": len(centers_full),
+                            "num_crops": num_seg_calls,
+                            "use_blending": use_blending
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }, ensure_ascii=False) + "\n")
+                    log_file.flush()
+            except Exception as e:
+                pass
+        
         full_logits = full_logits / weight_sum.unsqueeze(0).clamp_min(1e-6)  # (C, H, W, D) / (1, H, W, D) -> (C, H, W, D)
+        
+        # 디버깅: 정규화 후 full_logits 분포 확인 (첫 번째 샘플만)
+        if debug_sample_idx == 0:
+            try:
+                full_logits_after_norm_min = float(full_logits.min().item())
+                full_logits_after_norm_max = float(full_logits.max().item())
+                full_logits_after_norm_mean = float(full_logits.mean().item())
+                
+                pred_argmax = torch.argmax(full_logits, dim=0)
+                pred_unique = torch.unique(pred_argmax).cpu().tolist()
+                pred_class_counts = {int(k): int(v) for k, v in zip(*torch.unique(pred_argmax, return_counts=True))}
+                
+                with open(log_path, 'a', encoding='utf-8') as log_file:
+                    log_file.write(json.dumps({
+                        "sessionId": "debug-session",
+                        "runId": "blending-check",
+                        "hypothesisId": "H10",
+                        "location": "cascade_utils.py:run_cascade_inference",
+                        "message": "After blending normalization - full_logits stats and prediction",
+                        "data": {
+                            "full_logits_after_norm": {
+                                "min": full_logits_after_norm_min,
+                                "max": full_logits_after_norm_max,
+                                "mean": full_logits_after_norm_mean,
+                                "shape": list(full_logits.shape)
+                            },
+                            "prediction_stats": {
+                                "unique_classes": pred_unique,
+                                "class_counts": pred_class_counts,
+                                "total_voxels": int(pred_argmax.numel())
+                            }
+                        },
+                        "timestamp": int(time.time() * 1000)
+                    }, ensure_ascii=False) + "\n")
+                    log_file.flush()
+            except Exception as e:
+                pass
     
     # full_logits는 항상 (C, H, W, D) 형태여야 함 (배치 차원 없음)
     assert full_logits.dim() == 4, f"full_logits should be 4D (C, H, W, D), got {full_logits.shape}"
