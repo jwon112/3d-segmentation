@@ -192,6 +192,82 @@ def _extract_roi_centers(
     return centers_sorted
 
 
+def run_roi_localization_batch(
+    roi_model: torch.nn.Module,
+    images: List[torch.Tensor],
+    device: torch.device,
+    roi_resize: Sequence[int] = (64, 64, 64),
+    max_instances: int = 3,
+    min_component_size: int = 50,
+    roi_use_4modalities: bool = True,
+) -> List[Dict]:
+    """
+    Run ROI detector on multiple volumes in batch.
+    
+    Args:
+        images: List of image tensors, each with shape (C, H, W, D)
+    
+    Returns:
+        List of ROI info dicts, each with the same structure as run_roi_localization
+    """
+    roi_model.eval()
+    
+    # Prepare ROI inputs for all volumes
+    roi_inputs = []
+    original_shapes = []
+    for image in images:
+        roi_input_prepared = _prepare_roi_input(image, roi_resize, use_4modalities=roi_use_4modalities)
+        roi_inputs.append(roi_input_prepared)
+        original_shapes.append(image.shape[1:])
+    
+    # Stack into batch: (B, C, H, W, D)
+    roi_batch = torch.stack(roi_inputs, dim=0).to(device)
+    
+    # Validate batch input channels
+    expected_roi_channels = 4 if roi_use_4modalities else 2
+    if roi_batch.shape[1] != expected_roi_channels:
+        raise ValueError(
+            f"[run_roi_localization_batch] ROI batch channel mismatch: "
+            f"Expected {expected_roi_channels} channels, but got {roi_batch.shape[1]} channels."
+        )
+    
+    # Batch ROI inference
+    with torch.no_grad():
+        roi_logits_batch = roi_model(roi_batch)
+    roi_probs_batch = torch.softmax(roi_logits_batch, dim=1)
+    roi_masks_batch = torch.argmax(roi_probs_batch, dim=1).cpu()  # (B, H, W, D)
+    
+    # GPU memory cleanup
+    roi_logits_cpu_batch = roi_logits_batch.detach().cpu()
+    del roi_batch, roi_logits_batch, roi_probs_batch
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    # Process each volume's ROI results
+    results = []
+    for i, (roi_mask, original_shape) in enumerate(zip(roi_masks_batch, original_shapes)):
+        centers_roi = _extract_roi_centers(
+            roi_mask=roi_mask,
+            max_instances=max_instances,
+            min_component_size=min_component_size,
+        )
+        centers_full = [
+            _scale_center(c, original_shape, roi_resize, debug_sample_idx=-1) for c in centers_roi
+        ]
+        
+        results.append({
+            'centers_full': centers_full,
+            'centers_roi': centers_roi,
+            'roi_mask': roi_mask,
+            'roi_logits': roi_logits_cpu_batch[i],
+            # backward compatibility
+            'center_full': centers_full[0] if centers_full else None,
+            'center_roi': centers_roi[0] if centers_roi else None,
+        })
+    
+    return results
+
+
 def run_roi_localization(
     roi_model: torch.nn.Module,
     image: torch.Tensor,
@@ -449,6 +525,253 @@ def _generate_multi_crop_centers(
                         pass
     
     return centers
+
+
+def run_cascade_inference_batch(
+    roi_model: torch.nn.Module,
+    seg_model: torch.nn.Module,
+    images: List[torch.Tensor],
+    device: torch.device,
+    roi_resize: Sequence[int] = (64, 64, 64),
+    crop_size: Sequence[int] = (96, 96, 96),
+    include_coords: bool = True,
+    coord_encoding_type: str = 'simple',
+    max_instances: int = 3,
+    min_component_size: int = 50,
+    crops_per_center: int = 1,
+    crop_overlap: float = 0.5,
+    use_blending: bool = True,
+    return_attention: bool = False,
+    roi_use_4modalities: bool = True,
+    return_timing: bool = False,
+) -> List[Dict]:
+    """
+    Batch cascade inference: ROI -> multi-crop -> segmentation -> merge & uncrop.
+    
+    Processes multiple volumes in batch:
+    1. Batch ROI localization for all volumes
+    2. Collect all crops from all volumes with metadata
+    3. Batch segmentation for all crops
+    4. Per-volume blending
+    
+    Args:
+        images: List of image tensors, each with shape (C, H, W, D)
+    
+    Returns:
+        List of result dicts, each with the same structure as run_cascade_inference
+    """
+    import time
+    total_start = time.time()
+    
+    # 1. Batch ROI localization
+    roi_start = time.time()
+    roi_infos = run_roi_localization_batch(
+        roi_model=roi_model,
+        images=images,
+        device=device,
+        roi_resize=roi_resize,
+        max_instances=max_instances,
+        min_component_size=min_component_size,
+        roi_use_4modalities=roi_use_4modalities,
+    )
+    roi_time = time.time() - roi_start
+    
+    seg_model.eval()
+    
+    # 2. Collect all crops from all volumes with metadata
+    crop_metadata = []  # List of (volume_idx, center, origin, image_shape)
+    volume_coord_maps = {}  # volume_idx -> coord_map
+    
+    for volume_idx, (image, roi_info) in enumerate(zip(images, roi_infos)):
+        centers_full = roi_info.get('centers_full') or [roi_info.get('center_full')]
+        if not centers_full or centers_full[0] is None:
+            # No centers found, skip this volume
+            continue
+        
+        # Generate coord_map for this volume (reused for all crops)
+        if include_coords:
+            if volume_idx not in volume_coord_maps:
+                coord_map_full = get_coord_map(image.shape[1:], device=image.device, encoding_type=coord_encoding_type)
+                volume_coord_maps[volume_idx] = coord_map_full
+        
+        # Generate crop centers for all ROI centers
+        for center_idx, center in enumerate(centers_full):
+            crop_centers = _generate_multi_crop_centers(
+                center=center,
+                crop_size=crop_size,
+                crops_per_center=crops_per_center,
+                crop_overlap=crop_overlap,
+                debug_sample_idx=-1,  # No debug logs in batch mode
+                center_idx=center_idx,
+            )
+            
+            # Prepare crop inputs and collect metadata
+            for crop_center in crop_centers:
+                seg_inputs = build_segmentation_input(
+                    image=image,
+                    center=crop_center,
+                    crop_size=crop_size,
+                    include_coords=include_coords,
+                    coord_encoding_type=coord_encoding_type,
+                    coord_map=volume_coord_maps.get(volume_idx),
+                    debug_sample_idx=-1,
+                )
+                crop_metadata.append({
+                    'volume_idx': volume_idx,
+                    'center': crop_center,
+                    'origin': seg_inputs['origin'],
+                    'image_shape': image.shape[1:],
+                    'seg_input': seg_inputs['inputs'],  # (C, h, w, d)
+                })
+    
+    if not crop_metadata:
+        # No crops found, return empty results
+        return [{'full_logits': None, 'roi': roi_info, 'timing': {'roi_time': roi_time, 'seg_time': 0.0}} for roi_info in roi_infos]
+    
+    # 3. Batch segmentation for all crops
+    seg_start = time.time()
+    seg_inputs_batch = torch.stack([meta['seg_input'] for meta in crop_metadata], dim=0).to(device)  # (B, C, h, w, d)
+    
+    # Check if model supports return_attention
+    import inspect
+    real_seg_model = seg_model.module if hasattr(seg_model, 'module') else seg_model
+    sig = inspect.signature(real_seg_model.forward)
+    supports_return_attention = 'return_attention' in sig.parameters
+    
+    with torch.no_grad():
+        if return_attention and supports_return_attention:
+            # Only collect attention from first crop
+            seg_result = seg_model(seg_inputs_batch[:1], return_attention=True)
+            if isinstance(seg_result, tuple):
+                seg_logits_batch_first, attn_dict = seg_result
+                # Process remaining crops without attention
+                if seg_inputs_batch.shape[0] > 1:
+                    seg_logits_batch_rest = seg_model(seg_inputs_batch[1:], return_attention=False)
+                    seg_logits_batch = torch.cat([seg_logits_batch_first, seg_logits_batch_rest], dim=0)
+                else:
+                    seg_logits_batch = seg_logits_batch_first
+            else:
+                seg_logits_batch = seg_result
+        else:
+            seg_logits_batch = seg_model(seg_inputs_batch, return_attention=False)
+    
+    seg_time = time.time() - seg_start
+    
+    # GPU memory cleanup
+    del seg_inputs_batch
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    # 4. Per-volume blending
+    seg_logits_list = seg_logits_batch.cpu().unbind(0)  # List of (C, h, w, d)
+    
+    # Group crops by volume
+    volume_crops = {}  # volume_idx -> List of (logits, origin, image_shape)
+    for meta, logits in zip(crop_metadata, seg_logits_list):
+        vol_idx = meta['volume_idx']
+        if vol_idx not in volume_crops:
+            volume_crops[vol_idx] = []
+        volume_crops[vol_idx].append({
+            'logits': logits,
+            'origin': meta['origin'],
+            'image_shape': meta['image_shape'],
+        })
+    
+    # Determine number of classes from first logits
+    n_classes = seg_logits_list[0].shape[0] if seg_logits_list else 5
+    
+    # Blend per volume
+    results = []
+    blend_weights = _make_blend_weights_3d(crop_size) if use_blending else None
+    
+    for volume_idx, image in enumerate(images):
+        roi_info = roi_infos[volume_idx]
+        
+        if volume_idx not in volume_crops:
+            # No crops for this volume
+            results.append({
+                'full_logits': torch.zeros((n_classes,) + image.shape[1:], dtype=torch.float32),
+                'roi': roi_info,
+                'timing': {'roi_time': roi_time, 'seg_time': 0.0},
+            })
+            continue
+        
+        crops = volume_crops[volume_idx]
+        image_shape = image.shape[1:]
+        
+        # Initialize accumulators for this volume
+        if use_blending and blend_weights is not None:
+            full_logits = torch.zeros((n_classes,) + image_shape, dtype=torch.float32)
+            weight_sum = torch.zeros(image_shape, dtype=torch.float32)
+        else:
+            full_logits = None
+            weight_sum = None
+        
+        # Blend all crops for this volume
+        for crop_info in crops:
+            patch_logits = crop_info['logits']  # (C, h, w, d)
+            origin = crop_info['origin']
+            
+            if use_blending and blend_weights is not None:
+                # Cosine blending
+                patch_full_logits = paste_patch_to_volume(
+                    patch_logits,
+                    origin,
+                    image_shape,
+                    debug_sample_idx=-1,
+                )  # (C, H, W, D)
+                patch_weights = paste_patch_to_volume(
+                    blend_weights.squeeze(0).squeeze(0),  # (h, w, d)
+                    origin,
+                    image_shape,
+                    debug_sample_idx=-1,
+                )  # (H, W, D)
+                
+                full_logits += patch_full_logits * patch_weights.unsqueeze(0)
+                weight_sum += patch_weights
+                
+                del patch_full_logits, patch_weights
+            else:
+                # Voxel-wise max
+                patch_full_logits = paste_patch_to_volume(
+                    patch_logits,
+                    origin,
+                    image_shape,
+                    debug_sample_idx=-1,
+                )
+                
+                if full_logits is None:
+                    full_logits = patch_full_logits
+                else:
+                    full_logits = torch.maximum(full_logits, patch_full_logits)
+                
+                del patch_full_logits
+            
+            del patch_logits
+        
+        # Normalize blending weights
+        if use_blending and weight_sum is not None:
+            weight_sum = weight_sum.clamp_min(1e-8)
+            full_logits = full_logits / weight_sum.unsqueeze(0)
+        
+        if full_logits is None:
+            full_logits = torch.zeros((n_classes,) + image_shape, dtype=torch.float32)
+        
+        num_centers = len(roi_info.get('centers_full', [roi_info.get('center_full')]))
+        num_crops = len(crops)
+        
+        results.append({
+            'full_logits': full_logits,
+            'roi': roi_info,
+            'timing': {
+                'roi_time': roi_time,
+                'seg_time': seg_time,
+                'num_centers': num_centers,
+                'num_crops': num_crops,
+            },
+        })
+    
+    return results
 
 
 def _make_blend_weights_3d(patch_size: Sequence[int]) -> torch.Tensor:

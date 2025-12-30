@@ -10,7 +10,7 @@ import torch
 
 from utils.experiment_utils import get_roi_model, is_main_process
 from utils.experiment_config import get_roi_model_config
-from utils.cascade_utils import run_cascade_inference
+from utils.cascade_utils import run_cascade_inference, run_cascade_inference_batch
 from dataloaders import get_brats_base_datasets
 from metrics import calculate_wt_tc_et_dice
 
@@ -20,7 +20,7 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                               coord_encoding_type='simple',
                               crops_per_center=1, crop_overlap=0.5, use_blending=True,
                               collect_attention=False, results_dir=None, model_name='model', dataset_version='brats2021',
-                              roi_use_4modalities=True):
+                              roi_use_4modalities=True, batch_size=1):
     """
     Run cascade inference on base dataset and compute WT/TC/ET dice.
     
@@ -31,6 +31,11 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
         collect_attention: True면 MobileViT attention weights 수집 및 분석
         results_dir: 결과 저장 디렉토리 (attention 분석용)
         model_name: 모델 이름 (attention 분석용)
+        batch_size: 배치로 처리할 볼륨 수 (기본값 1, 순차 처리)
+                    batch_size > 1이면 여러 볼륨을 배치로 처리:
+                    - ROI 단계: 배치 내 모든 볼륨의 ROI를 동시에 처리
+                    - Segmentation 단계: 모든 볼륨의 모든 crop을 모아서 배치로 처리
+                    - 각 crop이 어느 볼륨에 속하는지 추적하여 볼륨별로 blending 수행
     """
     roi_model.eval()
     seg_model.eval()
@@ -52,39 +57,42 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
     total_seg_time = 0.0
     total_dice_time = 0.0
     
-    for idx in range(len(base_dataset)):
-        sample_start_time = time.time()
-        
-        # 진행 상황 로그 (10개마다 또는 첫 번째/마지막 샘플)
-        if is_main_process(rank) and (idx == 0 or idx % 10 == 0 or idx == total_samples - 1):
-            print(f"[Cascade Evaluation] Processing sample {idx+1}/{total_samples}...")
-        
-        try:
-            # 데이터 로드 시간 측정
-            data_load_start = time.time()
-            # base_dataset이 (image, mask) 또는 (image, mask, fg_coords_dict) 반환 가능
-            loaded_data = base_dataset[idx]
-            if len(loaded_data) == 3:
-                image, target, _ = loaded_data  # fg_coords_dict는 evaluation에서는 사용 안 함
-            else:
-                image, target = loaded_data
-            image = image.to(device)
-            target = target.to(device)
-            data_load_time = time.time() - data_load_start
-            total_data_load_time += data_load_time
+    # 배치 처리 로직
+    if batch_size > 1:
+        # 배치 단위로 처리
+        for batch_start in range(0, total_samples, batch_size):
+            batch_end = min(batch_start + batch_size, total_samples)
+            batch_images = []
+            batch_targets = []
+            batch_indices = []
             
-            if is_main_process(rank) and idx == 0:
-                print(f"[Cascade Evaluation] Sample {idx+1}: image.shape={image.shape}, target.shape={target.shape}")
-                print(f"[Cascade Evaluation] Sample {idx+1}: Data load time: {data_load_time:.3f}s")
-                # 볼륨 크기 확인 (디버깅용)
-                print(f"[Cascade Evaluation] Sample {idx+1}: Volume size (H, W, D) = {image.shape[1:]}")
+            # 배치 데이터 로드
+            batch_data_load_start = time.time()
+            for idx in range(batch_start, batch_end):
+                loaded_data = base_dataset[idx]
+                if len(loaded_data) == 3:
+                    image, target, _ = loaded_data
+                else:
+                    image, target = loaded_data
+                image = image.to(device)
+                target = target.to(device)
+                batch_images.append(image)
+                batch_targets.append(target)
+                batch_indices.append(idx)
             
-            # Cascade inference 시간 측정
-            inference_start = time.time()
-            result = run_cascade_inference(
+            batch_data_load_time = time.time() - batch_data_load_start
+            total_data_load_time += batch_data_load_time
+            
+            if is_main_process(rank) and batch_start == 0:
+                print(f"[Cascade Evaluation] Batch {batch_start//batch_size + 1}: Loaded {len(batch_images)} samples")
+                print(f"[Cascade Evaluation] Sample 1: image.shape={batch_images[0].shape}, target.shape={batch_targets[0].shape}")
+            
+            # 배치 cascade inference
+            batch_inference_start = time.time()
+            batch_results = run_cascade_inference_batch(
                 roi_model=roi_model,
                 seg_model=seg_model,
-                image=image,
+                images=batch_images,
                 device=device,
                 roi_resize=roi_resize,
                 crop_size=crop_size,
@@ -96,219 +104,323 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                 return_attention=collect_attention,
                 roi_use_4modalities=roi_use_4modalities,
                 return_timing=True,
-                debug_sample_idx=idx,  # 첫 번째 샘플(idx==0)에 대해서만 로그 출력
             )
-            inference_time = time.time() - inference_start
+            batch_inference_time = time.time() - batch_inference_start
             
-            # GPU 메모리 정리 (각 샘플 처리 후)
+            # GPU 메모리 정리
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             
-            # ROI와 Segmentation 시간 분리
-            timing_info = result.get('timing', {})
-            roi_time = timing_info.get('roi_time', 0.0)
-            seg_time = timing_info.get('seg_time', 0.0)
-            num_centers = timing_info.get('num_centers', 1)
-            num_crops = timing_info.get('num_crops', 1)
+            # 각 샘플별로 결과 처리
+            for batch_idx, (idx, result, target) in enumerate(zip(batch_indices, batch_results, batch_targets)):
+                timing_info = result.get('timing', {})
+                roi_time = timing_info.get('roi_time', 0.0)
+                seg_time = timing_info.get('seg_time', 0.0)
+                num_centers = timing_info.get('num_centers', 1)
+                num_crops = timing_info.get('num_crops', 1)
+                
+                # 배치 처리에서는 ROI와 seg 시간이 배치 전체에 대한 것이므로, 샘플당 평균으로 계산
+                total_roi_time += roi_time / len(batch_images)
+                total_seg_time += seg_time / len(batch_images)
+                
+                if is_main_process(rank) and (idx == 0 or idx % 10 == 0):
+                    print(f"[Cascade Evaluation] Sample {idx+1}: ROI={roi_time/len(batch_images):.3f}s, Seg={seg_time/len(batch_images):.3f}s (centers={num_centers}, crops={num_crops})")
+                
+                # full_logits 처리
+                full_logits_raw = result['full_logits'].to(device)
+                if full_logits_raw.dim() == 4:
+                    full_logits = full_logits_raw.unsqueeze(0)
+                elif full_logits_raw.dim() == 5:
+                    full_logits = full_logits_raw
+                else:
+                    full_logits = full_logits_raw.unsqueeze(0)
+                
+                # target 처리
+                if target.dim() == 3:
+                    target_batch = target.unsqueeze(0)
+                elif target.dim() == 4:
+                    target_batch = target
+                else:
+                    target_batch = target.unsqueeze(0)
+                
+                # Dice 계산
+                dice_start = time.time()
+                dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version, sample_idx=idx).detach().cpu()
+                dice_time = time.time() - dice_start
+                total_dice_time += dice_time
+                
+                dice_rows.append(dice)
+                
+                if is_main_process(rank) and (idx == 0 or idx % 10 == 0 or idx == total_samples - 1):
+                    if dataset_version == 'brats2024':
+                        print(f"[Cascade Evaluation] Sample {idx+1}: Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f}, RC={dice[3]:.4f}")
+                    else:
+                        print(f"[Cascade Evaluation] Sample {idx+1}: Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f}")
             
-            total_roi_time += roi_time
-            total_seg_time += seg_time
+            # 배치 처리 완료 후 메모리 정리
+            del batch_images, batch_targets, batch_results
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+    
+    # 기존 순차 처리 (batch_size == 1 또는 호환성)
+    else:
+        for idx in range(len(base_dataset)):
+            sample_start_time = time.time()
             
-            # 첫 번째 샘플: 실제 종양 위치와 ROI 중심의 거리 계산
-            if idx == 0 and is_main_process(rank):
-                try:
-                    import numpy as np
+            # 진행 상황 로그 (10개마다 또는 첫 번째/마지막 샘플)
+            if is_main_process(rank) and (idx == 0 or idx % 10 == 0 or idx == total_samples - 1):
+                print(f"[Cascade Evaluation] Processing sample {idx+1}/{total_samples}...")
+            
+            try:
+                # 데이터 로드 시간 측정
+                data_load_start = time.time()
+                # base_dataset이 (image, mask) 또는 (image, mask, fg_coords_dict) 반환 가능
+                loaded_data = base_dataset[idx]
+                if len(loaded_data) == 3:
+                    image, target, _ = loaded_data  # fg_coords_dict는 evaluation에서는 사용 안 함
+                else:
+                    image, target = loaded_data
+                image = image.to(device)
+                target = target.to(device)
+                data_load_time = time.time() - data_load_start
+                total_data_load_time += data_load_time
+                
+                if is_main_process(rank) and idx == 0:
+                    print(f"[Cascade Evaluation] Sample {idx+1}: image.shape={image.shape}, target.shape={target.shape}")
+                    print(f"[Cascade Evaluation] Sample {idx+1}: Data load time: {data_load_time:.3f}s")
+                    # 볼륨 크기 확인 (디버깅용)
+                    print(f"[Cascade Evaluation] Sample {idx+1}: Volume size (H, W, D) = {image.shape[1:]}")
+                
+                # Cascade inference 시간 측정
+                inference_start = time.time()
+                result = run_cascade_inference(
+                    roi_model=roi_model,
+                    seg_model=seg_model,
+                    image=image,
+                    device=device,
+                    roi_resize=roi_resize,
+                    crop_size=crop_size,
+                    include_coords=include_coords,
+                    coord_encoding_type=coord_encoding_type,
+                    crops_per_center=crops_per_center,
+                    crop_overlap=crop_overlap,
+                    use_blending=use_blending,
+                    return_attention=collect_attention,
+                    roi_use_4modalities=roi_use_4modalities,
+                    return_timing=True,
+                    debug_sample_idx=idx,  # 첫 번째 샘플(idx==0)에 대해서만 로그 출력
+                )
+                inference_time = time.time() - inference_start
+                
+                # GPU 메모리 정리 (각 샘플 처리 후)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
+                # ROI와 Segmentation 시간 분리
+                timing_info = result.get('timing', {})
+                roi_time = timing_info.get('roi_time', 0.0)
+                seg_time = timing_info.get('seg_time', 0.0)
+                num_centers = timing_info.get('num_centers', 1)
+                num_crops = timing_info.get('num_crops', 1)
+                
+                total_roi_time += roi_time
+                total_seg_time += seg_time
+                
+                # 첫 번째 샘플: 실제 종양 위치와 ROI 중심의 거리 계산
+                if idx == 0 and is_main_process(rank):
+                    try:
+                        import numpy as np
+                        import os
+                        log_dir = os.path.join(os.getcwd(), '.cursor')
+                        os.makedirs(log_dir, exist_ok=True)
+                        log_path = os.path.join(log_dir, 'debug.log')
+                        
+                        # 실제 종양 중심 계산
+                        target_np = target.cpu().numpy()  # (H, W, D)
+                        
+                        # WT 마스크 (class > 0)
+                        wt_mask = (target_np > 0).astype(np.float32)
+                        
+                        # 종양 중심 계산 (voxel 좌표)
+                        tumor_center = None
+                        tumor_volume = int(wt_mask.sum())
+                        if tumor_volume > 0:
+                            h_coords, w_coords, d_coords = np.where(wt_mask > 0)
+                            tumor_center = (
+                                float(h_coords.mean()),
+                                float(w_coords.mean()),
+                                float(d_coords.mean())
+                            )
+                            
+                            # ROI 중심들과의 거리 계산
+                            roi_info = result.get('roi', {})
+                            roi_centers = roi_info.get('centers_full', [])
+                            if not roi_centers:
+                                # backward compatibility
+                                center_full = roi_info.get('center_full')
+                                if center_full:
+                                    roi_centers = [center_full]
+                            
+                            distances = []
+                            for roi_center in roi_centers:
+                                dist = np.sqrt(
+                                    (tumor_center[0] - roi_center[0])**2 +
+                                    (tumor_center[1] - roi_center[1])**2 +
+                                    (tumor_center[2] - roi_center[2])**2
+                                )
+                                distances.append(float(dist))
+                            
+                            with open(log_path, 'a', encoding='utf-8') as log_file:
+                                log_file.write(json.dumps({
+                                    "sessionId": "debug-session",
+                                    "runId": "tumor-center-check",
+                                    "hypothesisId": "H11",
+                                    "location": "cascade_evaluation.py:103",
+                                    "message": "Tumor center vs ROI centers distance",
+                                    "data": {
+                                        "tumor_center": list(tumor_center),
+                                        "tumor_volume": tumor_volume,
+                                        "roi_centers": [[float(c) for c in center] for center in roi_centers],
+                                        "distances": distances,
+                                        "volume_shape": list(target_np.shape)
+                                    },
+                                    "timestamp": int(time.time() * 1000)
+                                }, ensure_ascii=False) + "\n")
+                                log_file.flush()
+                    except Exception as e:
+                        pass
+                
+                if is_main_process(rank) and (idx == 0 or idx % 10 == 0):
+                    print(f"[Cascade Evaluation] Sample {idx+1}: ROI={roi_time:.3f}s, Seg={seg_time:.3f}s (centers={num_centers}, crops={num_crops}), Total={inference_time:.3f}s")
+            except Exception as e:
+                error_msg = f"[Cascade Evaluation] Error processing sample {idx+1}/{total_samples}: {type(e).__name__}: {e}"
+                if is_main_process(rank):
+                    print(error_msg)
+                    import traceback
+                    traceback.print_exc()
+                raise
+            
+            # Attention weights 수집 (dice 계산 전에 먼저 수집하여, 에러가 발생해도 보존)
+            if collect_attention and all_attention_weights is not None:
+                if 'attention_weights' in result and result['attention_weights']:
+                    all_attention_weights.extend(result['attention_weights'])
+                    if idx == 0 and is_main_process(rank):  # 첫 번째 샘플만 출력
+                        print(f"[Cascade Evaluation] Collected attention weights from sample {idx+1}/{total_samples}")
+            
+            # full_logits shape 처리: run_cascade_inference는 (C, H, W, D) 형태를 반환
+            full_logits_raw = result['full_logits'].to(device)
+            if full_logits_raw.dim() == 4:  # (C, H, W, D) - 정상
+                full_logits = full_logits_raw.unsqueeze(0)  # (1, C, H, W, D)
+            elif full_logits_raw.dim() == 5:  # 이미 (1, C, H, W, D) - 이미 배치 차원 있음
+                full_logits = full_logits_raw
+            elif full_logits_raw.dim() == 6:  # (1, 1, C, H, W, D) - 배치 차원 중복
+                # 첫 번째 배치 차원 제거
+                full_logits = full_logits_raw.squeeze(0)  # (1, C, H, W, D)
+                if full_logits.dim() == 6:
+                    # 여전히 6차원이면 다시 squeeze
+                    full_logits = full_logits.squeeze(0)  # (C, H, W, D)
+                    full_logits = full_logits.unsqueeze(0)  # (1, C, H, W, D)
+            else:
+                # 예상치 못한 shape인 경우 처리
+                raise ValueError(f"Unexpected full_logits shape: {full_logits_raw.shape}, expected (C, H, W, D), (1, C, H, W, D), or (1, 1, C, H, W, D)")
+            
+            # target이 배치 차원이 없으면 추가, 있으면 그대로 사용
+            if target.dim() == 3:  # (H, W, D)
+                target_batch = target.unsqueeze(0)  # (1, H, W, D)
+            elif target.dim() == 4:  # 이미 (1, H, W, D)
+                target_batch = target
+            else:
+                target_batch = target.unsqueeze(0)  # 안전장치
+            
+            # Shape 확인 및 디버깅 정보 (첫 번째 샘플)
+            if idx == 0:  # 첫 번째 샘플만 출력
+                if is_main_process(rank):
+                    print(f"[Cascade Evaluation] full_logits.shape={full_logits.shape}, target_batch.shape={target_batch.shape}")
+                    # #region agent log
                     import os
                     log_dir = os.path.join(os.getcwd(), '.cursor')
                     os.makedirs(log_dir, exist_ok=True)
                     log_path = os.path.join(log_dir, 'debug.log')
-                    
-                    # 실제 종양 중심 계산
-                    target_np = target.cpu().numpy()  # (H, W, D)
-                    
-                    # WT 마스크 (class > 0)
-                    wt_mask = (target_np > 0).astype(np.float32)
-                    
-                    # 종양 중심 계산 (voxel 좌표)
-                    tumor_center = None
-                    tumor_volume = int(wt_mask.sum())
-                    if tumor_volume > 0:
-                        h_coords, w_coords, d_coords = np.where(wt_mask > 0)
-                        tumor_center = (
-                            float(h_coords.mean()),
-                            float(w_coords.mean()),
-                            float(d_coords.mean())
-                        )
-                        
-                        # ROI 중심들과의 거리 계산
-                        roi_info = result.get('roi', {})
-                        roi_centers = roi_info.get('centers_full', [])
-                        if not roi_centers:
-                            # backward compatibility
-                            center_full = roi_info.get('center_full')
-                            if center_full:
-                                roi_centers = [center_full]
-                        
-                        distances = []
-                        for roi_center in roi_centers:
-                            dist = np.sqrt(
-                                (tumor_center[0] - roi_center[0])**2 +
-                                (tumor_center[1] - roi_center[1])**2 +
-                                (tumor_center[2] - roi_center[2])**2
-                            )
-                            distances.append(float(dist))
-                        
+                    try:
                         with open(log_path, 'a', encoding='utf-8') as log_file:
                             log_file.write(json.dumps({
                                 "sessionId": "debug-session",
-                                "runId": "tumor-center-check",
-                                "hypothesisId": "H11",
-                                "location": "cascade_evaluation.py:103",
-                                "message": "Tumor center vs ROI centers distance",
+                                "runId": "eval-check",
+                                "hypothesisId": "H1",
+                                "location": "cascade_evaluation.py:156",
+                                "message": "Before Dice calculation - shapes and value ranges",
                                 "data": {
-                                    "tumor_center": list(tumor_center),
-                                    "tumor_volume": tumor_volume,
-                                    "roi_centers": [[float(c) for c in center] for center in roi_centers],
-                                    "distances": distances,
-                                    "volume_shape": list(target_np.shape)
+                                    "full_logits_shape": list(full_logits.shape),
+                                    "target_batch_shape": list(target_batch.shape),
+                                    "full_logits_min": float(full_logits.min().item()),
+                                    "full_logits_max": float(full_logits.max().item()),
+                                    "full_logits_mean": float(full_logits.mean().item()),
+                                    "target_batch_min": int(target_batch.min().item()),
+                                    "target_batch_max": int(target_batch.max().item()),
+                                    "target_batch_unique": [int(x) for x in torch.unique(target_batch).cpu().tolist()],
+                                    "dataset_version": dataset_version
+                                },
+                                "timestamp": int(time.time() * 1000)
+                            }, ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass
+                    # #endregion
+                    
+                    # Prediction 확인
+                    pred_argmax = torch.argmax(full_logits, dim=1)
+                    pred_unique = torch.unique(pred_argmax).cpu().tolist()
+                    target_unique = torch.unique(target_batch).cpu().tolist()
+                    print(f"[Cascade Evaluation] Sample {idx+1}: pred unique classes={pred_unique}, target unique classes={target_unique}")
+                    print(f"[Cascade Evaluation] Sample {idx+1}: pred class counts={dict(zip(*torch.unique(pred_argmax, return_counts=True)))}")
+                    print(f"[Cascade Evaluation] Sample {idx+1}: target class counts={dict(zip(*torch.unique(target_batch, return_counts=True)))}")
+            
+            try:
+                dice_start = time.time()
+                dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version, sample_idx=idx).detach().cpu()
+                dice_time = time.time() - dice_start
+                total_dice_time += dice_time
+                
+                # #region agent log
+                if idx == 0:
+                    try:
+                        import os
+                        log_dir = os.path.join(os.getcwd(), '.cursor')
+                        os.makedirs(log_dir, exist_ok=True)
+                        log_path = os.path.join(log_dir, 'debug.log')
+                        with open(log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "eval-check",
+                                "hypothesisId": "H2",
+                                "location": "cascade_evaluation.py:160",
+                                "message": "After Dice calculation",
+                                "data": {
+                                    "dice_values": [float(x) for x in dice.tolist()],
+                                    "dice_shape": list(dice.shape),
+                                    "dataset_version": dataset_version
                                 },
                                 "timestamp": int(time.time() * 1000)
                             }, ensure_ascii=False) + "\n")
                             log_file.flush()
-                except Exception as e:
-                    pass
-            
-            if is_main_process(rank) and (idx == 0 or idx % 10 == 0):
-                print(f"[Cascade Evaluation] Sample {idx+1}: ROI={roi_time:.3f}s, Seg={seg_time:.3f}s (centers={num_centers}, crops={num_crops}), Total={inference_time:.3f}s")
-        except Exception as e:
-            error_msg = f"[Cascade Evaluation] Error processing sample {idx+1}/{total_samples}: {type(e).__name__}: {e}"
-            if is_main_process(rank):
-                print(error_msg)
-                import traceback
-                traceback.print_exc()
-            raise
-        
-        # Attention weights 수집 (dice 계산 전에 먼저 수집하여, 에러가 발생해도 보존)
-        if collect_attention and all_attention_weights is not None:
-            if 'attention_weights' in result and result['attention_weights']:
-                all_attention_weights.extend(result['attention_weights'])
-                if idx == 0 and is_main_process(rank):  # 첫 번째 샘플만 출력
-                    print(f"[Cascade Evaluation] Collected attention weights from sample {idx+1}/{total_samples}")
-        
-        # full_logits shape 처리: run_cascade_inference는 (C, H, W, D) 형태를 반환
-        full_logits_raw = result['full_logits'].to(device)
-        if full_logits_raw.dim() == 4:  # (C, H, W, D) - 정상
-            full_logits = full_logits_raw.unsqueeze(0)  # (1, C, H, W, D)
-        elif full_logits_raw.dim() == 5:  # 이미 (1, C, H, W, D) - 이미 배치 차원 있음
-            full_logits = full_logits_raw
-        elif full_logits_raw.dim() == 6:  # (1, 1, C, H, W, D) - 배치 차원 중복
-            # 첫 번째 배치 차원 제거
-            full_logits = full_logits_raw.squeeze(0)  # (1, C, H, W, D)
-            if full_logits.dim() == 6:
-                # 여전히 6차원이면 다시 squeeze
-                full_logits = full_logits.squeeze(0)  # (C, H, W, D)
-                full_logits = full_logits.unsqueeze(0)  # (1, C, H, W, D)
-        else:
-            # 예상치 못한 shape인 경우 처리
-            raise ValueError(f"Unexpected full_logits shape: {full_logits_raw.shape}, expected (C, H, W, D), (1, C, H, W, D), or (1, 1, C, H, W, D)")
-        
-        # target이 배치 차원이 없으면 추가, 있으면 그대로 사용
-        if target.dim() == 3:  # (H, W, D)
-            target_batch = target.unsqueeze(0)  # (1, H, W, D)
-        elif target.dim() == 4:  # 이미 (1, H, W, D)
-            target_batch = target
-        else:
-            target_batch = target.unsqueeze(0)  # 안전장치
-        
-        # Shape 확인 및 디버깅 정보 (첫 번째 샘플)
-        if idx == 0:  # 첫 번째 샘플만 출력
-            if is_main_process(rank):
-                print(f"[Cascade Evaluation] full_logits.shape={full_logits.shape}, target_batch.shape={target_batch.shape}")
-                # #region agent log
-                import os
-                log_dir = os.path.join(os.getcwd(), '.cursor')
-                os.makedirs(log_dir, exist_ok=True)
-                log_path = os.path.join(log_dir, 'debug.log')
-                try:
-                    with open(log_path, 'a', encoding='utf-8') as log_file:
-                        log_file.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "eval-check",
-                            "hypothesisId": "H1",
-                            "location": "cascade_evaluation.py:156",
-                            "message": "Before Dice calculation - shapes and value ranges",
-                            "data": {
-                                "full_logits_shape": list(full_logits.shape),
-                                "target_batch_shape": list(target_batch.shape),
-                                "full_logits_min": float(full_logits.min().item()),
-                                "full_logits_max": float(full_logits.max().item()),
-                                "full_logits_mean": float(full_logits.mean().item()),
-                                "target_batch_min": int(target_batch.min().item()),
-                                "target_batch_max": int(target_batch.max().item()),
-                                "target_batch_unique": [int(x) for x in torch.unique(target_batch).cpu().tolist()],
-                                "dataset_version": dataset_version
-                            },
-                            "timestamp": int(time.time() * 1000)
-                        }, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
                 # #endregion
                 
-                # Prediction 확인
-                pred_argmax = torch.argmax(full_logits, dim=1)
-                pred_unique = torch.unique(pred_argmax).cpu().tolist()
-                target_unique = torch.unique(target_batch).cpu().tolist()
-                print(f"[Cascade Evaluation] Sample {idx+1}: pred unique classes={pred_unique}, target unique classes={target_unique}")
-                print(f"[Cascade Evaluation] Sample {idx+1}: pred class counts={dict(zip(*torch.unique(pred_argmax, return_counts=True)))}")
-                print(f"[Cascade Evaluation] Sample {idx+1}: target class counts={dict(zip(*torch.unique(target_batch, return_counts=True)))}")
-        
-        try:
-            dice_start = time.time()
-            dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version, sample_idx=idx).detach().cpu()
-            dice_time = time.time() - dice_start
-            total_dice_time += dice_time
-            
-            # #region agent log
-            if idx == 0:
-                try:
-                    import os
-                    log_dir = os.path.join(os.getcwd(), '.cursor')
-                    os.makedirs(log_dir, exist_ok=True)
-                    log_path = os.path.join(log_dir, 'debug.log')
-                    with open(log_path, 'a', encoding='utf-8') as log_file:
-                        log_file.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "eval-check",
-                            "hypothesisId": "H2",
-                            "location": "cascade_evaluation.py:160",
-                            "message": "After Dice calculation",
-                            "data": {
-                                "dice_values": [float(x) for x in dice.tolist()],
-                                "dice_shape": list(dice.shape),
-                                "dataset_version": dataset_version
-                            },
-                            "timestamp": int(time.time() * 1000)
-                        }, ensure_ascii=False) + "\n")
-                        log_file.flush()
-                except Exception:
-                    pass
-            # #endregion
-            
-            dice_rows.append(dice)
-            
-            sample_total_time = time.time() - sample_start_time
-            if is_main_process(rank) and (idx == 0 or idx % 10 == 0 or idx == total_samples - 1):
-                if dataset_version == 'brats2024':
-                    print(f"[Cascade Evaluation] Sample {idx+1}: Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f}, RC={dice[3]:.4f} | Total: {sample_total_time:.3f}s")
-                else:
-                    print(f"[Cascade Evaluation] Sample {idx+1}: Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f} | Total: {sample_total_time:.3f}s")
-        except Exception as e:
-            error_msg = f"[Cascade Evaluation] Error calculating dice for sample {idx+1}/{total_samples}: {type(e).__name__}: {e}"
-            if is_main_process(rank):
-                print(error_msg)
-                import traceback
-                traceback.print_exc()
-            raise
+                dice_rows.append(dice)
+                
+                sample_total_time = time.time() - sample_start_time
+                if is_main_process(rank) and (idx == 0 or idx % 10 == 0 or idx == total_samples - 1):
+                    if dataset_version == 'brats2024':
+                        print(f"[Cascade Evaluation] Sample {idx+1}: Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f}, RC={dice[3]:.4f} | Total: {sample_total_time:.3f}s")
+                    else:
+                        print(f"[Cascade Evaluation] Sample {idx+1}: Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f} | Total: {sample_total_time:.3f}s")
+            except Exception as e:
+                error_msg = f"[Cascade Evaluation] Error calculating dice for sample {idx+1}/{total_samples}: {type(e).__name__}: {e}"
+                if is_main_process(rank):
+                    print(error_msg)
+                    import traceback
+                    traceback.print_exc()
+                raise
     
     if is_main_process(rank):
         total_eval_time = total_data_load_time + total_seg_time + total_dice_time
@@ -557,5 +669,6 @@ def evaluate_segmentation_with_roi(
         model_name=model_name,
         dataset_version=dataset_version,
         roi_use_4modalities=roi_use_4modalities,
+        batch_size=1,  # 기본값 1 (순차 처리), 배치 처리를 원하면 파라미터로 전달 가능
     )
 

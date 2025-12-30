@@ -377,6 +377,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     model_name=model_name,
                     dataset_version=dataset_version,
                     roi_use_4modalities=True,  # val_base_dataset은 항상 4 modalities
+                    batch_size=1,  # 기본값 1 (순차 처리)
                 )
                 
                 # 결과 추출
