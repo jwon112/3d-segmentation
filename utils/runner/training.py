@@ -380,7 +380,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 )
                 
                 # 결과 추출
-                va_dice = cascade_result.get('dice', 0.0)
+                va_dice = cascade_result.get('mean', 0.0)  # 'mean' 키 사용 (evaluate_cascade_pipeline이 반환하는 키)
                 va_wt = cascade_result.get('wt', 0.0)
                 va_tc = cascade_result.get('tc', 0.0)
                 va_et = cascade_result.get('et', 0.0)

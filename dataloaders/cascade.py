@@ -805,16 +805,16 @@ def get_cascade_data_loaders(
         )
     
     def _build_val_test_loader(dataset, batch_size, sampler=None):
-        """Validation/Test loader: num_workers=3 사용"""
+        """Validation/Test loader: train과 동일한 num_workers 사용"""
         return DataLoader(
             dataset,
             batch_size=batch_size,
             shuffle=False,
             sampler=sampler,
-            num_workers=3,  # val/test 데이터로더에 num_workers 사용
+            num_workers=num_workers,  # train과 동일한 num_workers 사용
             pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2,
+            persistent_workers=(num_workers > 0),
+            prefetch_factor=(8 if num_workers > 0 else None),  # train과 동일
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )
@@ -940,16 +940,16 @@ def get_roi_data_loaders(
         )
     
     def _build_val_test_loader(dataset, sampler=None):
-        """Validation/Test loader: num_workers=3 사용"""
+        """Validation/Test loader: train과 동일한 num_workers 사용"""
         return DataLoader(
             dataset,
             batch_size=batch_size,
             shuffle=False,
             sampler=sampler,
-            num_workers=3,  # val/test 데이터로더에 num_workers 사용
+            num_workers=num_workers,  # train과 동일한 num_workers 사용
             pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2,
+            persistent_workers=(num_workers > 0),
+            prefetch_factor=(8 if num_workers > 0 else None),  # train과 동일
             worker_init_fn=_worker_init_fn,
             generator=_generator,
         )

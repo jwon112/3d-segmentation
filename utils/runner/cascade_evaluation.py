@@ -100,6 +100,10 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             )
             inference_time = time.time() - inference_start
             
+            # GPU 메모리 정리 (각 샘플 처리 후)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
             # ROI와 Segmentation 시간 분리
             timing_info = result.get('timing', {})
             roi_time = timing_info.get('roi_time', 0.0)

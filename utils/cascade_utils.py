@@ -237,6 +237,12 @@ def run_roi_localization(
         roi_logits = roi_model(roi_input)
     roi_probs = torch.softmax(roi_logits, dim=1)
     roi_mask = torch.argmax(roi_probs, dim=1).squeeze(0).cpu()  # (H, W, D) with 0/1
+    
+    # GPU 메모리 정리 (ROI inference 후)
+    roi_logits_cpu = roi_logits.detach().cpu()
+    del roi_input, roi_logits, roi_probs
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     centers_roi = _extract_roi_centers(
         roi_mask=roi_mask,
@@ -251,7 +257,7 @@ def run_roi_localization(
         'centers_full': centers_full,
         'centers_roi': centers_roi,
         'roi_mask': roi_mask,
-        'roi_logits': roi_logits.detach().cpu(),
+        'roi_logits': roi_logits_cpu,
         # backward compatibility (단일 중심만 사용하던 코드 대비)
         'center_full': centers_full[0],
         'center_roi': centers_roi[0],
@@ -645,6 +651,11 @@ def run_cascade_inference(
                 num_seg_calls += 1
             patch_logits = seg_logits.squeeze(0).cpu()  # (C, h, w, d)
             
+            # GPU 메모리 정리: 중간 텐서 즉시 삭제
+            del seg_tensor, seg_logits
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
             if use_blending and crops_per_center > 1 and blend_weights is not None:
                 # Cosine blending 사용
                 patch_full_logits = paste_patch_to_volume(
@@ -663,6 +674,9 @@ def run_cascade_inference(
                 # patch_weights를 (1, H, W, D)로 확장하여 broadcasting
                 full_logits += patch_full_logits * patch_weights.unsqueeze(0)  # (C, H, W, D) * (1, H, W, D) -> (C, H, W, D)
                 weight_sum += patch_weights  # (H, W, D)
+                
+                # 중간 텐서 삭제 (메모리 절약)
+                del patch_full_logits, patch_weights
             else:
                 # Voxel-wise max 사용 (기존 방식)
                 patch_full_logits = paste_patch_to_volume(
@@ -676,6 +690,12 @@ def run_cascade_inference(
                     full_logits = patch_full_logits
                 else:
                     full_logits = torch.maximum(full_logits, patch_full_logits)
+                
+                # 중간 텐서 삭제 (메모리 절약)
+                del patch_full_logits
+            
+            # patch_logits도 더 이상 필요 없으므로 삭제
+            del patch_logits
 
     if full_logits is None:
         # 안전장치: ROI가 완전히 비었을 경우, 전부 background로 설정
