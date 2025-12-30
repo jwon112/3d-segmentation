@@ -419,6 +419,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         cascade_infer_cfg=cascade_infer_cfg,  # Cascade 모델 validation용
                         coord_type=coord_type,  # Cascade 모델 validation용
                         preprocessed_dir=os.path.join(preprocessed_base_dir, dataset_version.upper()) if preprocessed_base_dir else None,  # Cascade 모델 validation용
+                        use_5fold=use_5fold,  # Cascade 모델 validation용
+                        fold_idx=fold_idx,  # Cascade 모델 validation용
+                        fold_split_dir=fold_split_dir,  # Cascade 모델 validation용
                     )
                     # BRATS2024는 RC 포함, 다른 버전은 RC 없음
                     if dataset_version == 'brats2024' and len(train_result) >= 9:

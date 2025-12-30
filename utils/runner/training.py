@@ -69,7 +69,7 @@ def save_hybrid_stats_to_csv(model, results_dir: str, model_name: str, seed: int
 
 def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
                 sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True, results_dir=None, ckpt_path=None, train_crops_per_center=1, dataset_version='brats2021',
-                data_dir=None, cascade_infer_cfg=None, coord_type='none', preprocessed_dir=None):
+                data_dir=None, cascade_infer_cfg=None, coord_type='none', preprocessed_dir=None, use_5fold=False, fold_idx=None, fold_split_dir=None):
     """모델 훈련 함수
     
     Args:
@@ -166,6 +166,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     seed=seed,
                     use_4modalities=True,
                     preprocessed_dir=preprocessed_dir,
+                    use_5fold=use_5fold,
+                    fold_idx=fold_idx,
+                    fold_split_dir=fold_split_dir,
                 )
             except Exception as e:
                 if is_main_process(rank):
