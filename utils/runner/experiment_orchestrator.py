@@ -414,7 +414,11 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         train_sampler=train_sampler, rank=rank,
                         sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim=dim, use_nnunet_loss=use_nnunet_loss,
                         results_dir=results_dir, ckpt_path=ckpt_path, train_crops_per_center=train_crops_per_center,
-                        dataset_version=dataset_version
+                        dataset_version=dataset_version,
+                        data_dir=data_path,  # Cascade 모델 validation용
+                        cascade_infer_cfg=cascade_infer_cfg,  # Cascade 모델 validation용
+                        coord_type=coord_type,  # Cascade 모델 validation용
+                        preprocessed_dir=os.path.join(preprocessed_base_dir, dataset_version.upper()) if preprocessed_base_dir else None,  # Cascade 모델 validation용
                     )
                     # BRATS2024는 RC 포함, 다른 버전은 RC 없음
                     if dataset_version == 'brats2024' and len(train_result) >= 9:

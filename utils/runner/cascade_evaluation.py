@@ -110,6 +110,70 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             total_roi_time += roi_time
             total_seg_time += seg_time
             
+            # 첫 번째 샘플: 실제 종양 위치와 ROI 중심의 거리 계산
+            if idx == 0 and is_main_process(rank):
+                try:
+                    import numpy as np
+                    import os
+                    log_dir = os.path.join(os.getcwd(), '.cursor')
+                    os.makedirs(log_dir, exist_ok=True)
+                    log_path = os.path.join(log_dir, 'debug.log')
+                    
+                    # 실제 종양 중심 계산
+                    target_np = target.cpu().numpy()  # (H, W, D)
+                    
+                    # WT 마스크 (class > 0)
+                    wt_mask = (target_np > 0).astype(np.float32)
+                    
+                    # 종양 중심 계산 (voxel 좌표)
+                    tumor_center = None
+                    tumor_volume = int(wt_mask.sum())
+                    if tumor_volume > 0:
+                        h_coords, w_coords, d_coords = np.where(wt_mask > 0)
+                        tumor_center = (
+                            float(h_coords.mean()),
+                            float(w_coords.mean()),
+                            float(d_coords.mean())
+                        )
+                        
+                        # ROI 중심들과의 거리 계산
+                        roi_info = result.get('roi', {})
+                        roi_centers = roi_info.get('centers_full', [])
+                        if not roi_centers:
+                            # backward compatibility
+                            center_full = roi_info.get('center_full')
+                            if center_full:
+                                roi_centers = [center_full]
+                        
+                        distances = []
+                        for roi_center in roi_centers:
+                            dist = np.sqrt(
+                                (tumor_center[0] - roi_center[0])**2 +
+                                (tumor_center[1] - roi_center[1])**2 +
+                                (tumor_center[2] - roi_center[2])**2
+                            )
+                            distances.append(float(dist))
+                        
+                        with open(log_path, 'a', encoding='utf-8') as log_file:
+                            log_file.write(json.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "tumor-center-check",
+                                "hypothesisId": "H11",
+                                "location": "cascade_evaluation.py:103",
+                                "message": "Tumor center vs ROI centers distance",
+                                "data": {
+                                    "tumor_center": list(tumor_center),
+                                    "tumor_volume": tumor_volume,
+                                    "roi_centers": [[float(c) for c in center] for center in roi_centers],
+                                    "distances": distances,
+                                    "volume_shape": list(target_np.shape)
+                                },
+                                "timestamp": int(time.time() * 1000)
+                            }, ensure_ascii=False) + "\n")
+                            log_file.flush()
+                except Exception as e:
+                    pass
+            
             if is_main_process(rank) and (idx == 0 or idx % 10 == 0):
                 print(f"[Cascade Evaluation] Sample {idx+1}: ROI={roi_time:.3f}s, Seg={seg_time:.3f}s (centers={num_centers}, crops={num_crops}), Total={inference_time:.3f}s")
         except Exception as e:

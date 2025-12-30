@@ -539,6 +539,9 @@ def run_cascade_inference(
     # MobileViT attention 수집 (첫 번째 crop만)
     all_attention_weights = [] if return_attention else None
     
+    # 모든 crop 중심 수집 (첫 번째 샘플만, 디버깅용)
+    all_crop_centers = [] if debug_sample_idx == 0 else None
+    
     # Blending을 사용하는 경우 accumulator와 weight sum 초기화
     if use_blending and crops_per_center > 1:
         # 출력 채널 수 확인
@@ -575,6 +578,10 @@ def run_cascade_inference(
         )
         
         for crop_idx, crop_center in enumerate(crop_centers):
+            # 모든 crop 중심 수집 (첫 번째 샘플만)
+            if all_crop_centers is not None:
+                all_crop_centers.append((float(crop_center[0]), float(crop_center[1]), float(crop_center[2])))
+            
             # Cascade segmentation 모델은 항상 CoordConv 포함 입력을 기대
             # 첫 번째 샘플의 첫 번째 중심의 첫 번째 crop만 로그 출력
             is_first_crop = (debug_sample_idx == 0 and center_idx == 0 and crop_idx == 0)
@@ -694,6 +701,31 @@ def run_cascade_inference(
                 weight_sum_total = int(weight_sum.numel())
                 weight_sum_zero_ratio = weight_sum_zero_count / weight_sum_total if weight_sum_total > 0 else 0.0
                 
+                # weight_sum이 0인 영역의 공간적 분포 분석
+                weight_sum_zero_mask = (weight_sum == 0)
+                volume_shape = weight_sum.shape  # (H, W, D)
+                
+                # 경계 영역 정의 (각 차원의 10% 영역)
+                boundary_threshold = 0.1
+                h_bound = int(volume_shape[0] * boundary_threshold)
+                w_bound = int(volume_shape[1] * boundary_threshold)
+                d_bound = int(volume_shape[2] * boundary_threshold)
+                
+                # 경계 영역 마스크
+                boundary_mask = torch.zeros_like(weight_sum, dtype=torch.bool)
+                boundary_mask[:h_bound, :, :] = True
+                boundary_mask[-h_bound:, :, :] = True
+                boundary_mask[:, :w_bound, :] = True
+                boundary_mask[:, -w_bound:, :] = True
+                boundary_mask[:, :, :d_bound] = True
+                boundary_mask[:, :, -d_bound:] = True
+                
+                # 경계 영역에서 zero 비율
+                zero_in_boundary = (weight_sum_zero_mask & boundary_mask).sum().item()
+                zero_in_center = (weight_sum_zero_mask & ~boundary_mask).sum().item()
+                boundary_total = boundary_mask.sum().item()
+                center_total = (~boundary_mask).sum().item()
+                
                 full_logits_before_norm_min = float(full_logits.min().item())
                 full_logits_before_norm_max = float(full_logits.max().item())
                 full_logits_before_norm_mean = float(full_logits.mean().item())
@@ -714,6 +746,15 @@ def run_cascade_inference(
                                 "total_voxels": weight_sum_total,
                                 "zero_ratio": weight_sum_zero_ratio
                             },
+                            "weight_sum_spatial_distribution": {
+                                "zero_in_boundary": int(zero_in_boundary),
+                                "zero_in_center": int(zero_in_center),
+                                "boundary_total": int(boundary_total),
+                                "center_total": int(center_total),
+                                "zero_ratio_in_boundary": zero_in_boundary / boundary_total if boundary_total > 0 else 0.0,
+                                "zero_ratio_in_center": zero_in_center / center_total if center_total > 0 else 0.0,
+                                "boundary_threshold": boundary_threshold
+                            },
                             "full_logits_before_norm": {
                                 "min": full_logits_before_norm_min,
                                 "max": full_logits_before_norm_max,
@@ -722,7 +763,18 @@ def run_cascade_inference(
                             },
                             "num_centers": len(centers_full),
                             "num_crops": num_seg_calls,
-                            "use_blending": use_blending
+                            "use_blending": use_blending,
+                            "roi_centers": [[float(c) for c in center] for center in centers_full],
+                            "crop_centers": all_crop_centers if all_crop_centers is not None else None,
+                            "crop_centers_bounds": {
+                                "h_min": float(min(c[0] for c in all_crop_centers)) if all_crop_centers and len(all_crop_centers) > 0 else None,
+                                "h_max": float(max(c[0] for c in all_crop_centers)) if all_crop_centers and len(all_crop_centers) > 0 else None,
+                                "w_min": float(min(c[1] for c in all_crop_centers)) if all_crop_centers and len(all_crop_centers) > 0 else None,
+                                "w_max": float(max(c[1] for c in all_crop_centers)) if all_crop_centers and len(all_crop_centers) > 0 else None,
+                                "d_min": float(min(c[2] for c in all_crop_centers)) if all_crop_centers and len(all_crop_centers) > 0 else None,
+                                "d_max": float(max(c[2] for c in all_crop_centers)) if all_crop_centers and len(all_crop_centers) > 0 else None,
+                                "volume_shape": list(image.shape[1:])
+                            } if all_crop_centers is not None else None
                         },
                         "timestamp": int(time.time() * 1000)
                     }, ensure_ascii=False) + "\n")

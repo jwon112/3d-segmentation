@@ -16,6 +16,8 @@ from utils.experiment_utils import (
 )
 from losses import combined_loss, combined_loss_nnunet_style
 from metrics import calculate_wt_tc_et_dice
+from utils.runner.cascade_evaluation import load_roi_model_from_checkpoint, evaluate_cascade_pipeline
+from dataloaders import get_brats_base_datasets
 
 
 def _extract_hybrid_stats(model):
@@ -66,7 +68,8 @@ def save_hybrid_stats_to_csv(model, results_dir: str, model_name: str, seed: int
 
 
 def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
-                sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True, results_dir=None, ckpt_path=None, train_crops_per_center=1, dataset_version='brats2021'):
+                sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True, results_dir=None, ckpt_path=None, train_crops_per_center=1, dataset_version='brats2021',
+                data_dir=None, cascade_infer_cfg=None, coord_type='none', preprocessed_dir=None):
     """모델 훈련 함수
     
     Args:
@@ -258,61 +261,139 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         model.eval()
         va_loss = va_dice_sum = n_va = 0.0
         va_wt_sum = va_tc_sum = va_et_sum = va_rc_sum = 0.0
-        with torch.no_grad():
-            debug_printed = False
-            all_sample_dices = []  # 디버깅: 모든 샘플의 Dice 수집
-            for idx, batch_data in enumerate(tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False)):
-                # 포그라운드 좌표가 포함될 수 있으므로 처리
-                if len(batch_data) == 3:
-                    inputs, labels, _ = batch_data  # fg_coords_dict 무시
-                else:
-                    inputs, labels = batch_data
-                inputs, labels = inputs.to(device), labels.to(device)
-
-                # MobileUNETR 2D는 2D 입력을 그대로 사용
-                # mobile_unetr_3d는 3D 입력을 그대로 사용
-                if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
-                    inputs = inputs.unsqueeze(2)
-                    labels = labels.unsqueeze(2)
-
-                # 3D 검증: 슬라이딩 윈도우 추론 (학습 아님)
-                # 모든 3D 모델은 전체 볼륨을 처리하기 위해 슬라이딩 윈도우 사용
-                if dim == '3d' and inputs.dim() == 5 and inputs.size(0) == 1:
-                    logits = sliding_window_inference_3d(
-                        model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
-                    )
-                else:
-                    logits = model(inputs)
-                loss = criterion(logits, labels)
-                dice_scores = calculate_wt_tc_et_dice(logits, labels, dataset_version=dataset_version)
-                # WT/TC/ET 평균 (BRATS2024는 RC 포함)
-                mean_dice = dice_scores.mean()
-                all_sample_dices.append(mean_dice.item())  # 디버깅
+        
+        # Cascade 모델인 경우 test와 동일한 방식으로 validation 수행
+        if is_cascade_model and roi_model is not None and val_base_dataset is not None:
+            if is_main_process(rank):
+                print(f"[Cascade Training] Using cascade pipeline for validation (same as test)...")
+            
+            # Cascade inference 설정 가져오기
+            eval_crops_per_center = cascade_infer_cfg.get('crops_per_center', 1) if cascade_infer_cfg else 1
+            eval_crop_overlap = cascade_infer_cfg.get('crop_overlap', 0.5) if cascade_infer_cfg else 0.5
+            eval_use_blending = cascade_infer_cfg.get('use_blending', True) if cascade_infer_cfg else True
+            
+            # coord_type에 따라 include_coords와 coord_encoding_type 결정
+            if coord_type == 'none':
+                include_coords = False
+                coord_encoding_type = 'simple'
+            elif coord_type == 'simple':
+                include_coords = True
+                coord_encoding_type = 'simple'
+            elif coord_type == 'hybrid':
+                include_coords = True
+                coord_encoding_type = 'hybrid'
+            else:
+                include_coords = False
+                coord_encoding_type = 'simple'
+            
+            # Cascade pipeline으로 validation 수행
+            with torch.no_grad():
+                cascade_result = evaluate_cascade_pipeline(
+                    roi_model=roi_model,
+                    seg_model=model,
+                    base_dataset=val_base_dataset,
+                    device=device,
+                    roi_resize=(64, 64, 64),
+                    crop_size=(96, 96, 96),
+                    include_coords=include_coords,
+                    coord_encoding_type=coord_encoding_type,
+                    crops_per_center=eval_crops_per_center,
+                    crop_overlap=eval_crop_overlap,
+                    use_blending=eval_use_blending,
+                    collect_attention=False,
+                    results_dir=None,
+                    model_name=model_name,
+                    dataset_version=dataset_version,
+                    roi_use_4modalities=True,  # val_base_dataset은 항상 4 modalities
+                )
                 
-                if not debug_printed:
-                    pred_arg = torch.argmax(logits, dim=1)
-                    n_classes = 5 if is_brats2024 else 4
-                    pred_counts = [int((pred_arg == c).sum().item()) for c in range(n_classes)]
-                    gt_counts = [int((labels == c).sum().item()) for c in range(n_classes)]
-                    if is_main_process(rank):
-                        try:
-                            dv = dice_scores.detach().cpu().tolist()
-                        except Exception:
-                            dv = []
-                        dice_str = "WT/TC/ET/RC" if is_brats2024 else "WT/TC/ET"
-                        print(f"Val sample {idx+1} stats | pred counts: {pred_counts} | gt counts: {gt_counts}")
-                        print(f"Val sample {idx+1} {dice_str} dice: {dice_scores.detach().cpu().tolist()}")
-                        print(f"Val sample {idx+1} mean_dice (fg only): {mean_dice.item():.10f}")
-                    debug_printed = True
-                bsz = inputs.size(0)
-                va_loss += loss.item() * bsz
-                va_dice_sum += mean_dice.item() * bsz
-                va_wt_sum += float(dice_scores[0].item()) * bsz
-                va_tc_sum += float(dice_scores[1].item()) * bsz
-                va_et_sum += float(dice_scores[2].item()) * bsz
-                if is_brats2024 and len(dice_scores) >= 4:
-                    va_rc_sum += float(dice_scores[3].item()) * bsz
-                n_va += bsz
+                # 결과 추출
+                va_dice = cascade_result.get('dice', 0.0)
+                va_wt = cascade_result.get('wt', 0.0)
+                va_tc = cascade_result.get('tc', 0.0)
+                va_et = cascade_result.get('et', 0.0)
+                va_rc = cascade_result.get('rc', 0.0) if is_brats2024 else 0.0
+                va_loss = 0.0  # Cascade pipeline은 loss를 계산하지 않음
+                
+                # 평균 계산 (샘플 수는 base_dataset 길이)
+                n_va = len(val_base_dataset)
+                va_dice_sum = va_dice * n_va
+                va_wt_sum = va_wt * n_va
+                va_tc_sum = va_tc * n_va
+                va_et_sum = va_et * n_va
+                if is_brats2024:
+                    va_rc_sum = va_rc * n_va
+        else:
+            # 일반 모델 또는 cascade 모델이지만 ROI/base dataset이 없는 경우 기존 방식 사용
+            with torch.no_grad():
+                debug_printed = False
+                all_sample_dices = []  # 디버깅: 모든 샘플의 Dice 수집
+                for idx, batch_data in enumerate(tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False)):
+                    # 포그라운드 좌표가 포함될 수 있으므로 처리
+                    if len(batch_data) == 3:
+                        inputs, labels, _ = batch_data  # fg_coords_dict 무시
+                    else:
+                        inputs, labels = batch_data
+                    inputs, labels = inputs.to(device), labels.to(device)
+
+                    # MobileUNETR 2D는 2D 입력을 그대로 사용
+                    # mobile_unetr_3d는 3D 입력을 그대로 사용
+                    if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
+                        inputs = inputs.unsqueeze(2)
+                        labels = labels.unsqueeze(2)
+
+                    # 3D 검증: 슬라이딩 윈도우 추론 (학습 아님)
+                    # 모든 3D 모델은 전체 볼륨을 처리하기 위해 슬라이딩 윈도우 사용
+                    if dim == '3d' and inputs.dim() == 5 and inputs.size(0) == 1:
+                        logits = sliding_window_inference_3d(
+                            model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
+                        )
+                    else:
+                        logits = model(inputs)
+                    loss = criterion(logits, labels)
+                    dice_scores = calculate_wt_tc_et_dice(logits, labels, dataset_version=dataset_version)
+                    # WT/TC/ET 평균 (BRATS2024는 RC 포함)
+                    mean_dice = dice_scores.mean()
+                    all_sample_dices.append(mean_dice.item())  # 디버깅
+                    
+                    if not debug_printed:
+                        pred_arg = torch.argmax(logits, dim=1)
+                        n_classes = 5 if is_brats2024 else 4
+                        pred_counts = [int((pred_arg == c).sum().item()) for c in range(n_classes)]
+                        gt_counts = [int((labels == c).sum().item()) for c in range(n_classes)]
+                        if is_main_process(rank):
+                            try:
+                                dv = dice_scores.detach().cpu().tolist()
+                            except Exception:
+                                dv = []
+                            dice_str = "WT/TC/ET/RC" if is_brats2024 else "WT/TC/ET"
+                            print(f"Val sample {idx+1} stats | pred counts: {pred_counts} | gt counts: {gt_counts}")
+                            print(f"Val sample {idx+1} {dice_str} dice: {dice_scores.detach().cpu().tolist()}")
+                            print(f"Val sample {idx+1} mean_dice (fg only): {mean_dice.item():.10f}")
+                        debug_printed = True
+                    bsz = inputs.size(0)
+                    va_loss += loss.item() * bsz
+                    va_dice_sum += mean_dice.item() * bsz
+                    va_wt_sum += float(dice_scores[0].item()) * bsz
+                    va_tc_sum += float(dice_scores[1].item()) * bsz
+                    va_et_sum += float(dice_scores[2].item()) * bsz
+                    if is_brats2024 and len(dice_scores) >= 4:
+                        va_rc_sum += float(dice_scores[3].item()) * bsz
+                    n_va += bsz
+                
+                # 디버깅: 모든 샘플의 Dice 통계 출력 (일반 모델만)
+                if is_main_process(rank) and len(all_sample_dices) > 0:
+                    all_dices_arr = np.array(all_sample_dices)
+                    print(f"\n[Val Epoch {epoch+1}] All samples Dice stats:")
+                    print(f"  샘플 수: {len(all_sample_dices)}")
+                    print(f"  평균: {all_dices_arr.mean():.10f}")
+                    print(f"  최소: {all_dices_arr.min():.10f}")
+                    print(f"  최대: {all_dices_arr.max():.10f}")
+                    print(f"  표준편차: {all_dices_arr.std():.10f}")
+                    print(f"  0.0317과의 차이: {abs(all_dices_arr.mean() - 0.0317):.10f}")
+            
+            va_loss /= max(1, n_va)
+            va_dice = va_dice_sum / max(1, n_va)
             
             # 디버깅: 모든 샘플의 Dice 통계 출력
             if is_main_process(rank) and len(all_sample_dices) > 0:
