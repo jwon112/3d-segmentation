@@ -7,6 +7,11 @@ import os
 import time
 import json
 import torch
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # GUI 없이 사용
+import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 
 from utils.experiment_utils import get_roi_model, is_main_process
 from utils.experiment_config import get_roi_model_config
@@ -153,6 +158,103 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                 total_dice_time += dice_time
                 
                 dice_rows.append(dice)
+                
+                # 예측 마스크 시각화 및 저장 (results_dir가 제공된 경우)
+                if results_dir and is_main_process(rank):
+                    try:
+                        # patient 이름 추출
+                        patient_path = base_dataset.samples[idx] if hasattr(base_dataset, 'samples') else None
+                        if patient_path:
+                            if str(patient_path).endswith('.h5'):
+                                patient_name = os.path.basename(patient_path).replace('.h5', '')
+                            else:
+                                patient_name = os.path.basename(patient_path)
+                        else:
+                            patient_name = f"sample_{idx+1:04d}"
+                        
+                        # 예측 마스크 추출 (배치 처리에서는 result에서 직접 가져옴)
+                        pred_mask = result.get('full_mask')
+                        if pred_mask is None:
+                            # full_mask가 없으면 full_logits에서 생성
+                            full_logits_for_mask = result['full_logits']
+                            if full_logits_for_mask.dim() == 4:  # (C, H, W, D)
+                                pred_mask = torch.argmax(full_logits_for_mask, dim=0)
+                            else:
+                                pred_mask = torch.argmax(full_logits_for_mask.squeeze(0), dim=0)
+                        
+                        # CPU로 이동 및 numpy 변환
+                        pred_mask_np = pred_mask.cpu().numpy().astype(np.uint8)
+                        
+                        # 시각화 디렉토리 생성
+                        predictions_dir = os.path.join(results_dir, 'predictions')
+                        os.makedirs(predictions_dir, exist_ok=True)
+                        
+                        # 이미지와 마스크를 사용하여 시각화 생성
+                        # 배치 처리에서는 batch_images와 batch_targets에서 가져옴
+                        batch_image = batch_images[batch_idx]  # (C, H, W, D)
+                        batch_target = batch_targets[batch_idx]  # (H, W, D)
+                        image_np = batch_image.cpu().numpy()  # (C, H, W, D)
+                        target_np = batch_target.cpu().numpy()  # (H, W, D)
+                        
+                        # 주요 슬라이스 선택 (Depth 방향)
+                        H, W, D = pred_mask_np.shape
+                        slice_indices = [D//4, D//2, 3*D//4] if D > 3 else list(range(D))
+                        
+                        # FLAIR 채널 사용 (일반적으로 마지막 채널 또는 인덱스 3)
+                        flair_idx = min(3, image_np.shape[0] - 1) if image_np.shape[0] >= 4 else image_np.shape[0] - 1
+                        
+                        # 시각화 생성
+                        n_slices = len(slice_indices)
+                        fig, axes = plt.subplots(n_slices, 3, figsize=(15, 5*n_slices))
+                        if n_slices == 1:
+                            axes = axes.reshape(1, -1)
+                        
+                        # Segmentation colormap (evaluation.py와 동일)
+                        seg_cmap = ListedColormap(['black', 'red', 'green', 'blue', 'yellow'])
+                        
+                        for i, slice_idx in enumerate(slice_indices):
+                            # 원본 이미지 (FLAIR)
+                            img_slice = image_np[flair_idx, :, :, slice_idx]
+                            img_min, img_max = img_slice.min(), img_slice.max()
+                            if img_max > img_min:
+                                img_display = (img_slice - img_min) / (img_max - img_min)
+                            else:
+                                img_display = img_slice
+                            
+                            axes[i, 0].imshow(img_display, cmap='gray', origin='lower')
+                            axes[i, 0].set_title(f'FLAIR - Slice {slice_idx}')
+                            axes[i, 0].axis('off')
+                            
+                            # Ground Truth 오버레이
+                            axes[i, 1].imshow(img_display, cmap='gray', origin='lower')
+                            target_slice = target_np[:, :, slice_idx]
+                            mask_gt = target_slice > 0
+                            if mask_gt.any():
+                                axes[i, 1].imshow(target_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=4, origin='lower')
+                            axes[i, 1].set_title(f'Ground Truth - Slice {slice_idx}')
+                            axes[i, 1].axis('off')
+                            
+                            # Prediction 오버레이
+                            axes[i, 2].imshow(img_display, cmap='gray', origin='lower')
+                            pred_slice = pred_mask_np[:, :, slice_idx]
+                            mask_pred = pred_slice > 0
+                            if mask_pred.any():
+                                axes[i, 2].imshow(pred_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=4, origin='lower')
+                            axes[i, 2].set_title(f'Prediction - Slice {slice_idx}')
+                            axes[i, 2].axis('off')
+                        
+                        plt.tight_layout()
+                        jpg_path = os.path.join(predictions_dir, f"{patient_name}_pred.jpg")
+                        plt.savefig(jpg_path, dpi=200, bbox_inches='tight', format='jpg')
+                        plt.close()
+                        
+                        if idx == 0 or idx % 50 == 0 or idx == total_samples - 1:
+                            print(f"[Cascade Evaluation] Saved prediction visualization: {jpg_path}")
+                    except Exception as e:
+                        if is_main_process(rank):
+                            print(f"[Cascade Evaluation] Warning: Failed to save prediction visualization for sample {idx+1}: {e}")
+                            import traceback
+                            traceback.print_exc()
                 
                 if is_main_process(rank) and (idx == 0 or idx % 10 == 0 or idx == total_samples - 1):
                     if dataset_version == 'brats2024':
@@ -410,6 +512,101 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                 # #endregion
                 
                 dice_rows.append(dice)
+                
+                # 예측 마스크 시각화 및 저장 (results_dir가 제공된 경우)
+                if results_dir and is_main_process(rank):
+                    try:
+                        # patient 이름 추출
+                        patient_path = base_dataset.samples[idx] if hasattr(base_dataset, 'samples') else None
+                        if patient_path:
+                            if str(patient_path).endswith('.h5'):
+                                patient_name = os.path.basename(patient_path).replace('.h5', '')
+                            else:
+                                patient_name = os.path.basename(patient_path)
+                        else:
+                            patient_name = f"sample_{idx+1:04d}"
+                        
+                        # 예측 마스크 추출
+                        pred_mask = result.get('full_mask')
+                        if pred_mask is None:
+                            # full_mask가 없으면 full_logits에서 생성
+                            full_logits_for_mask = result['full_logits']
+                            if full_logits_for_mask.dim() == 4:  # (C, H, W, D)
+                                pred_mask = torch.argmax(full_logits_for_mask, dim=0)
+                            else:
+                                pred_mask = torch.argmax(full_logits_for_mask.squeeze(0), dim=0)
+                        
+                        # CPU로 이동 및 numpy 변환
+                        pred_mask_np = pred_mask.cpu().numpy().astype(np.uint8)
+                        
+                        # 시각화 디렉토리 생성
+                        predictions_dir = os.path.join(results_dir, 'predictions')
+                        os.makedirs(predictions_dir, exist_ok=True)
+                        
+                        # 이미지와 마스크를 사용하여 시각화 생성
+                        # image는 (C, H, W, D), target은 (H, W, D), pred_mask_np는 (H, W, D)
+                        image_np = image.cpu().numpy()  # (C, H, W, D)
+                        target_np = target.cpu().numpy()  # (H, W, D)
+                        
+                        # 주요 슬라이스 선택 (Depth 방향)
+                        H, W, D = pred_mask_np.shape
+                        slice_indices = [D//4, D//2, 3*D//4] if D > 3 else list(range(D))
+                        
+                        # FLAIR 채널 사용 (일반적으로 마지막 채널 또는 인덱스 3)
+                        flair_idx = min(3, image_np.shape[0] - 1) if image_np.shape[0] >= 4 else image_np.shape[0] - 1
+                        
+                        # 시각화 생성
+                        n_slices = len(slice_indices)
+                        fig, axes = plt.subplots(n_slices, 3, figsize=(15, 5*n_slices))
+                        if n_slices == 1:
+                            axes = axes.reshape(1, -1)
+                        
+                        # Segmentation colormap (evaluation.py와 동일)
+                        seg_cmap = ListedColormap(['black', 'red', 'green', 'blue', 'yellow'])
+                        
+                        for i, slice_idx in enumerate(slice_indices):
+                            # 원본 이미지 (FLAIR)
+                            img_slice = image_np[flair_idx, :, :, slice_idx]
+                            img_min, img_max = img_slice.min(), img_slice.max()
+                            if img_max > img_min:
+                                img_display = (img_slice - img_min) / (img_max - img_min)
+                            else:
+                                img_display = img_slice
+                            
+                            axes[i, 0].imshow(img_display, cmap='gray', origin='lower')
+                            axes[i, 0].set_title(f'FLAIR - Slice {slice_idx}')
+                            axes[i, 0].axis('off')
+                            
+                            # Ground Truth 오버레이
+                            axes[i, 1].imshow(img_display, cmap='gray', origin='lower')
+                            target_slice = target_np[:, :, slice_idx]
+                            mask_gt = target_slice > 0
+                            if mask_gt.any():
+                                axes[i, 1].imshow(target_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=4, origin='lower')
+                            axes[i, 1].set_title(f'Ground Truth - Slice {slice_idx}')
+                            axes[i, 1].axis('off')
+                            
+                            # Prediction 오버레이
+                            axes[i, 2].imshow(img_display, cmap='gray', origin='lower')
+                            pred_slice = pred_mask_np[:, :, slice_idx]
+                            mask_pred = pred_slice > 0
+                            if mask_pred.any():
+                                axes[i, 2].imshow(pred_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=4, origin='lower')
+                            axes[i, 2].set_title(f'Prediction - Slice {slice_idx}')
+                            axes[i, 2].axis('off')
+                        
+                        plt.tight_layout()
+                        jpg_path = os.path.join(predictions_dir, f"{patient_name}_pred.jpg")
+                        plt.savefig(jpg_path, dpi=200, bbox_inches='tight', format='jpg')
+                        plt.close()
+                        
+                        if idx == 0 or idx % 50 == 0 or idx == total_samples - 1:
+                            print(f"[Cascade Evaluation] Saved prediction visualization: {jpg_path}")
+                    except Exception as e:
+                        if is_main_process(rank):
+                            print(f"[Cascade Evaluation] Warning: Failed to save prediction visualization for sample {idx+1}: {e}")
+                            import traceback
+                            traceback.print_exc()
                 
                 sample_total_time = time.time() - sample_start_time
                 if is_main_process(rank) and (idx == 0 or idx % 10 == 0 or idx == total_samples - 1):
