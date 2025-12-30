@@ -104,6 +104,75 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     early_stopping_patience = 20  # 20 epoch 동안 개선 없으면 중단
     is_brats2024 = (dataset_version == 'brats2024')
     
+    # Cascade 모델인지 확인
+    is_cascade_model = model_name.startswith('cascade_')
+    
+    # Cascade 모델인 경우 ROI 모델 및 base dataset 준비
+    roi_model = None
+    val_base_dataset = None
+    if is_cascade_model:
+        if data_dir is None:
+            if is_main_process(rank):
+                print(f"[Cascade Training] Warning: data_dir not provided. Validation will use crop-based evaluation.")
+        else:
+            # ROI 모델 경로 찾기
+            possible_roi_model_names = ['roi_unet3d_small', 'roi_mobileunetr3d_tiny', 'roi_mobileunetr3d_small']
+            roi_model_name = None
+            roi_weight_path = None
+            
+            # results_dir에서 ROI 모델 체크포인트 찾기
+            if results_dir:
+                for candidate_roi_name in possible_roi_model_names:
+                    roi_checkpoint_patterns = [
+                        os.path.join(results_dir, f"{candidate_roi_name}_seed_{seed}_best.pth"),
+                    ]
+                    for pattern in roi_checkpoint_patterns:
+                        if pattern and os.path.exists(pattern):
+                            roi_weight_path = pattern
+                            roi_model_name = candidate_roi_name
+                            break
+                    if roi_weight_path:
+                        break
+            
+            # 기본 경로 시도
+            if not roi_weight_path:
+                for candidate_roi_name in possible_roi_model_names:
+                    default_path = f"models/weights/cascade/roi_model/{candidate_roi_name}/seed_{seed}/weights/best.pth"
+                    if os.path.exists(default_path):
+                        roi_weight_path = default_path
+                        roi_model_name = candidate_roi_name
+                        break
+            
+            if roi_weight_path and os.path.exists(roi_weight_path):
+                if is_main_process(rank):
+                    print(f"[Cascade Training] Loading ROI model from {roi_weight_path}")
+                try:
+                    roi_model, roi_use_4modalities = load_roi_model_from_checkpoint(roi_model_name, roi_weight_path, device)
+                    roi_model.eval()
+                except Exception as e:
+                    if is_main_process(rank):
+                        print(f"[Cascade Training] Warning: Failed to load ROI model: {e}")
+                        print(f"[Cascade Training] Validation will use crop-based evaluation.")
+                    roi_model = None
+            else:
+                if is_main_process(rank):
+                    print(f"[Cascade Training] Warning: ROI model not found. Validation will use crop-based evaluation.")
+            
+            # Validation용 base dataset 가져오기
+            try:
+                _, val_base_dataset, _ = get_brats_base_datasets(
+                    data_dir=data_dir,
+                    dataset_version=dataset_version,
+                    seed=seed,
+                    use_4modalities=True,
+                    preprocessed_dir=preprocessed_dir,
+                )
+            except Exception as e:
+                if is_main_process(rank):
+                    print(f"[Cascade Training] Warning: Failed to load base dataset for validation: {e}")
+                    print(f"[Cascade Training] Validation will use crop-based evaluation.")
+                val_base_dataset = None
+    
     # 체크포인트 저장 경로 (실험 결과 폴더 내부)
     if results_dir is None:
         results_dir = "experiment_result"
