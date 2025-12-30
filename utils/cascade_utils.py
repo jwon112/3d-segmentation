@@ -106,7 +106,11 @@ def _scale_center(center_roi: Tuple[float, float, float], original_shape: Sequen
     if debug_sample_idx == 0:
         import json
         import time
-        log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+        import os
+        # 현재 작업 디렉토리 기준으로 로그 파일 경로 설정
+        log_dir = os.path.join(os.getcwd(), '.cursor')
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, 'debug.log')
         try:
             with open(log_path, 'a', encoding='utf-8') as log_file:
                 log_file.write(json.dumps({
@@ -265,7 +269,11 @@ def build_segmentation_input(
     if debug_sample_idx == 0:
         import json
         import time
-        log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+        import os
+        # 현재 작업 디렉토리 기준으로 로그 파일 경로 설정
+        log_dir = os.path.join(os.getcwd(), '.cursor')
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, 'debug.log')
         try:
             with open(log_path, 'a', encoding='utf-8') as log_file:
                 log_file.write(json.dumps({
@@ -343,7 +351,11 @@ def _generate_multi_crop_centers(
     if debug_sample_idx == 0 and center_idx == 0:
         import json
         import time
-        log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+        import os
+        # 현재 작업 디렉토리 기준으로 로그 파일 경로 설정
+        log_dir = os.path.join(os.getcwd(), '.cursor')
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, 'debug.log')
         try:
             with open(log_path, 'a', encoding='utf-8') as log_file:
                 log_file.write(json.dumps({
@@ -389,7 +401,11 @@ def _generate_multi_crop_centers(
                 if debug_sample_idx == 0 and center_idx == 0 and i == 0 and j == 0 and k == 0:
                     import json
                     import time
-                    log_path = r"d:\강의\성균관대\연구실\연구\3D segmentation\code\.cursor\debug.log"
+                    import os
+                    # 현재 작업 디렉토리 기준으로 로그 파일 경로 설정
+                    log_dir = os.path.join(os.getcwd(), '.cursor')
+                    os.makedirs(log_dir, exist_ok=True)
+                    log_path = os.path.join(log_dir, 'debug.log')
                     try:
                         with open(log_path, 'a', encoding='utf-8') as log_file:
                             log_file.write(json.dumps({
