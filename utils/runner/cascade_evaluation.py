@@ -262,7 +262,6 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                                     center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
                                     if abs(center_d - slice_idx) <= crop_half_d:
                                         axes[i, 1].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow')
-                                        from matplotlib.patches import Rectangle
                                         rect = Rectangle(
                                             (center_w - crop_half_w, center_h - crop_half_h),
                                             crop_size_tuple[1], crop_size_tuple[0],
@@ -289,7 +288,6 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                                         axes[i, 2].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow', label='ROI Center' if center_idx == 0 else '')
                                         
                                         # Crop 영역 표시 (ROI 중심점 기준)
-                                        from matplotlib.patches import Rectangle
                                         rect = Rectangle(
                                             (center_w - crop_half_w, center_h - crop_half_h),
                                             crop_size_tuple[1], crop_size_tuple[0],
@@ -670,7 +668,6 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                                     center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
                                     if abs(center_d - slice_idx) <= crop_half_d:
                                         axes[i, 1].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow')
-                                        from matplotlib.patches import Rectangle
                                         rect = Rectangle(
                                             (center_w - crop_half_w, center_h - crop_half_h),
                                             crop_size_tuple[1], crop_size_tuple[0],
@@ -697,7 +694,6 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                                         axes[i, 2].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow', label='ROI Center' if center_idx == 0 else '')
                                         
                                         # Crop 영역 표시 (ROI 중심점 기준)
-                                        from matplotlib.patches import Rectangle
                                         rect = Rectangle(
                                             (center_w - crop_half_w, center_h - crop_half_h),
                                             crop_size_tuple[1], crop_size_tuple[0],
