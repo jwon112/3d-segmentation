@@ -362,6 +362,10 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             
             # Cascade pipeline으로 validation 수행
             with torch.no_grad():
+                # DDP 설정 확인
+                distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
+                world_size = torch.distributed.get_world_size() if distributed else 1
+                
                 cascade_result = evaluate_cascade_pipeline(
                     roi_model=roi_model,
                     seg_model=model,
@@ -381,6 +385,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     roi_use_4modalities=True,  # val_base_dataset은 항상 4 modalities
                     batch_size=eval_batch_size,  # cascade_infer_cfg에서 가져온 값
                     roi_batch_size=eval_roi_batch_size,  # cascade_infer_cfg에서 가져온 값
+                    distributed=distributed,
+                    world_size=world_size,
+                    rank=rank,
                 )
                 
                 # 결과 추출
