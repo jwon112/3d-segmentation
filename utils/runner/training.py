@@ -20,6 +20,55 @@ from utils.runner.cascade_evaluation import load_roi_model_from_checkpoint, eval
 from dataloaders import get_brats_base_datasets
 
 
+def get_roi_center_prob_schedule(current_epoch: int, total_epochs: int, schedule_type: str = 'cosine', warmup_ratio: float = 0.0):
+    """
+    Epoch 진행률에 따라 ROI 중심 사용 확률을 점진적으로 증가시킴
+    
+    Args:
+        current_epoch: 현재 epoch (0부터 시작)
+        total_epochs: 전체 epoch 수
+        schedule_type: 'cosine', 'linear', 'quadratic', 'sqrt' 중 선택
+        warmup_ratio: 초반 이 비율만큼은 GT 중심만 사용 (0.0 ~ 1.0)
+    
+    Returns:
+        ROI 중심 사용 확률 (0.0 ~ 1.0)
+    """
+    if total_epochs <= 1:
+        return 0.0
+    
+    warmup_epochs = int(total_epochs * warmup_ratio)
+    
+    # Warmup 구간: GT 중심만 사용
+    if current_epoch < warmup_epochs:
+        return 0.0
+    
+    # Warmup 이후 진행률 계산
+    remaining_epochs = total_epochs - warmup_epochs
+    if remaining_epochs <= 1:
+        return 1.0
+    
+    progress = (current_epoch - warmup_epochs) / (remaining_epochs - 1)
+    
+    if schedule_type == 'cosine':
+        # Cosine annealing 스타일: 초반에는 천천히, 후반에 빠르게 증가
+        # 1 - cos(π * progress / 2) 형태로, 초반에는 완만하게 증가
+        roi_prob = 1.0 - np.cos(np.pi * progress / 2.0)
+    elif schedule_type == 'linear':
+        # 선형 증가: 일정하게 증가
+        roi_prob = progress
+    elif schedule_type == 'quadratic':
+        # 2차 함수: 초반에는 매우 천천히, 후반에 빠르게
+        roi_prob = progress ** 2
+    elif schedule_type == 'sqrt':
+        # 제곱근: 초반에 빠르게, 후반에 완만하게
+        roi_prob = np.sqrt(progress)
+    else:
+        # 기본값: 선형
+        roi_prob = progress
+    
+    return float(roi_prob)
+
+
 def _extract_hybrid_stats(model):
     real_model = model.module if hasattr(model, 'module') else model
     if not getattr(real_model, 'log_hybrid_stats', False):
@@ -69,7 +118,8 @@ def save_hybrid_stats_to_csv(model, results_dir: str, model_name: str, seed: int
 
 def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
                 sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True, results_dir=None, ckpt_path=None, train_crops_per_center=1, dataset_version='brats2021',
-                data_dir=None, cascade_infer_cfg=None, coord_type='none', preprocessed_dir=None, use_5fold=False, fold_idx=None, fold_split_dir=None):
+                data_dir=None, cascade_infer_cfg=None, coord_type='none', preprocessed_dir=None, use_5fold=False, fold_idx=None, fold_split_dir=None,
+                roi_center_schedule='cosine', roi_center_warmup_ratio=0.0):
     """모델 훈련 함수
     
     Args:
@@ -110,6 +160,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     # Cascade 모델인 경우 ROI 모델 및 base dataset 준비
     roi_model = None
     val_base_dataset = None
+    roi_use_4modalities = True
     if is_cascade_model:
         if data_dir is None:
             if is_main_process(rank):
@@ -176,6 +227,16 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     print(f"[Cascade Training] Validation will use crop-based evaluation.")
                 val_base_dataset = None
     
+    # Dataset에 ROI 모델 설정 (Training용)
+    if is_cascade_model and roi_model is not None:
+        if hasattr(train_loader.dataset, 'roi_model'):
+            train_loader.dataset.roi_model = roi_model
+        if hasattr(train_loader.dataset, 'roi_use_4modalities'):
+            train_loader.dataset.roi_use_4modalities = roi_use_4modalities
+        if hasattr(train_loader.dataset, 'set_roi_center_prob'):
+            # 초기에는 GT 중심만 사용
+            train_loader.dataset.set_roi_center_prob(0.0)
+    
     # 체크포인트 저장 경로 (실험 결과 폴더 내부)
     if results_dir is None:
         results_dir = "experiment_result"
@@ -223,6 +284,21 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         # base_seed + epoch을 사용하여 각 epoch마다 다른 seed를 가지지만, 같은 seed로 시작하면 같은 순서로 재현 가능
         epoch_seed = seed + epoch
         set_seed(epoch_seed)
+        
+        # ROI 중심 비율 점진적 증가 (스케줄러 방식)
+        if is_cascade_model and roi_model is not None:
+            if hasattr(train_loader.dataset, 'set_roi_center_prob'):
+                roi_prob = get_roi_center_prob_schedule(
+                    current_epoch=epoch,
+                    total_epochs=epochs,
+                    schedule_type=roi_center_schedule,
+                    warmup_ratio=roi_center_warmup_ratio
+                )
+                train_loader.dataset.set_roi_center_prob(roi_prob)
+                # 10% 간격 또는 매 epoch 출력 (epochs가 10 이하인 경우)
+                print_interval = max(1, epochs // 10) if epochs > 10 else 1
+                if is_main_process(rank) and epoch % print_interval == 0:
+                    print(f"[Curriculum Learning] Epoch {epoch+1}/{epochs}: ROI center probability = {roi_prob:.3f} (schedule: {roi_center_schedule})")
         
         # Training
         if train_sampler is not None:

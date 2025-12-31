@@ -510,6 +510,9 @@ class BratsCascadeSegmentationDataset(Dataset):
         crops_per_center: int = 1,
         crop_overlap: float = 0.5,
         deterministic: bool = False,  # Validation/Test에서 재현 가능한 augmentation을 위한 플래그
+        roi_model=None,  # ROI 모델 (None이면 GT 중심만 사용)
+        roi_center_prob: float = 0.0,  # ROI 중심 사용 확률 (0.0 = GT만, 1.0 = ROI만)
+        roi_use_4modalities: bool = True,  # ROI 모델이 4 modalities 사용 여부
     ):
         self.base_dataset = base_dataset
         self.crop_size = _to_3tuple(crop_size)
@@ -522,6 +525,9 @@ class BratsCascadeSegmentationDataset(Dataset):
         self.crops_per_center = max(1, int(crops_per_center))
         self.crop_overlap = max(0.0, min(1.0, float(crop_overlap)))
         self.deterministic = deterministic
+        self.roi_model = roi_model
+        self.roi_center_prob = max(0.0, min(1.0, float(roi_center_prob)))
+        self.roi_use_4modalities = roi_use_4modalities
 
     def __len__(self):
         # Multi-crop 모드: 각 crop을 별도의 샘플로 취급
@@ -593,6 +599,45 @@ class BratsCascadeSegmentationDataset(Dataset):
             img_patch = img_patch + noise
         
         return img_patch, msk_patch
+    
+    def _get_center(self, image: torch.Tensor, mask: torch.Tensor, idx: int) -> Tuple[float, float, float]:
+        """중심점 결정: ROI 중심 또는 GT 중심"""
+        # ROI 중심 사용 여부 결정
+        use_roi_center = False
+        if self.roi_center_prob > 0 and self.roi_model is not None:
+            # 확률 기반 또는 nnU-Net 스타일 (1/3)
+            if abs(self.roi_center_prob - 1/3) < 0.01:  # nnU-Net 스타일
+                use_roi_center = (idx % 3 == 0)
+            else:  # 확률 기반
+                use_roi_center = torch.rand(1).item() < self.roi_center_prob
+        
+        if use_roi_center:
+            # ROI 중심 사용
+            try:
+                from utils.cascade_utils import run_roi_localization
+                roi_info = run_roi_localization(
+                    roi_model=self.roi_model,
+                    image=image,
+                    device=image.device,
+                    roi_resize=(64, 64, 64),
+                    roi_use_4modalities=self.roi_use_4modalities,
+                )
+                center = roi_info.get('center_full')
+                if center is None:
+                    center = compute_tumor_center(mask)  # Fallback
+            except Exception as e:
+                # ROI 예측 실패 시 GT 중심으로 fallback
+                center = compute_tumor_center(mask)
+        else:
+            # GT 중심 사용
+            center = compute_tumor_center(mask)
+        
+        # Center jitter 적용
+        if self.center_jitter > 0:
+            jitter = torch.randint(-self.center_jitter, self.center_jitter + 1, (3,))
+            center = tuple(float(c + j) for c, j in zip(center, jitter.tolist()))
+        
+        return center
 
     def __getitem__(self, idx):
         # Multi-crop 모드: 각 crop을 별도의 샘플로 취급
@@ -609,10 +654,7 @@ class BratsCascadeSegmentationDataset(Dataset):
                 image, mask, _ = loaded_data  # fg_coords_dict는 cascade에서는 사용 안 함
             else:
                 image, mask = loaded_data
-            center = compute_tumor_center(mask)
-            if self.center_jitter > 0:
-                jitter = torch.randint(-self.center_jitter, self.center_jitter + 1, (3,))
-                center = tuple(float(c + j) for c, j in zip(center, jitter.tolist()))
+            center = self._get_center(image, mask, idx)
             
             # 모든 crop center 생성
             crop_centers = _generate_multi_crop_centers(
@@ -632,10 +674,7 @@ class BratsCascadeSegmentationDataset(Dataset):
                 image, mask, _ = loaded_data  # fg_coords_dict는 cascade에서는 사용 안 함
             else:
                 image, mask = loaded_data
-            center = compute_tumor_center(mask)
-            if self.center_jitter > 0:
-                jitter = torch.randint(-self.center_jitter, self.center_jitter + 1, (3,))
-                center = tuple(float(c + j) for c, j in zip(center, jitter.tolist()))
+            center = self._get_center(image, mask, idx)
         
         img_crop, origin = crop_volume_with_center(image, center, self.crop_size, return_origin=True)
         mask_crop = crop_volume_with_center(mask, center, self.crop_size, return_origin=False).long()
@@ -680,6 +719,8 @@ def get_cascade_data_loaders(
     train_crop_overlap: float = 0.5,
     use_4modalities: bool = True,
     preprocessed_dir: Optional[str] = None,
+    roi_model=None,  # ROI 모델 (None이면 GT 중심만 사용)
+    roi_center_prob: float = 0.0,  # 초기 ROI 중심 사용 확률
 ):
     """ROI detection + cascade segmentation loaders with CoordConv support."""
     train_base, val_base, test_base = get_brats_base_datasets(
@@ -744,6 +785,9 @@ def get_cascade_data_loaders(
         return_metadata=False,
         crops_per_center=train_crops_per_center,
         crop_overlap=train_crop_overlap,
+        roi_model=roi_model,  # ROI 모델 전달
+        roi_center_prob=roi_center_prob,  # 초기 ROI 중심 확률
+        roi_use_4modalities=use_4modalities,
     )
     seg_val_ds = BratsCascadeSegmentationDataset(
         val_base,
