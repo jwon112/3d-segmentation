@@ -464,6 +464,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     distributed=distributed,
                     world_size=world_size,
                     rank=rank,
+                    use_nnunet_loss=use_nnunet_loss,  # Training에서 사용하는 loss 타입 전달
                 )
                 
                 # 결과 추출
@@ -472,7 +473,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 va_tc = cascade_result.get('tc', 0.0)
                 va_et = cascade_result.get('et', 0.0)
                 va_rc = cascade_result.get('rc', 0.0) if is_brats2024 else 0.0
-                va_loss = 0.0  # Cascade pipeline은 loss를 계산하지 않음
+                va_loss = cascade_result.get('loss', 0.0)  # Cascade pipeline에서 계산된 loss 사용
                 
                 # 평균 계산 (샘플 수는 base_dataset 길이)
                 n_va = len(val_base_dataset)

@@ -18,6 +18,7 @@ from utils.experiment_config import get_roi_model_config
 from utils.cascade_utils import run_cascade_inference, run_cascade_inference_batch, _generate_multi_crop_centers
 from dataloaders import get_brats_base_datasets
 from metrics import calculate_wt_tc_et_dice
+from losses import combined_loss_nnunet_style
 
 
 def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
@@ -26,7 +27,7 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                               crops_per_center=1, crop_overlap=0.5, use_blending=True,
                               collect_attention=False, results_dir=None, model_name='model', dataset_version='brats2021',
                               roi_use_4modalities=True, batch_size=1, roi_batch_size=None,
-                              distributed=False, world_size=1, rank=0):
+                              distributed=False, world_size=1, rank=0, use_nnunet_loss=True):
     """
     Run cascade inference on base dataset and compute WT/TC/ET dice.
     
@@ -51,7 +52,15 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
     roi_model.eval()
     seg_model.eval()
     dice_rows = []
+    loss_values = []  # Loss 값 수집
     all_attention_weights = [] if collect_attention else None
+    
+    # Loss 함수 설정
+    if use_nnunet_loss:
+        criterion = combined_loss_nnunet_style
+    else:
+        from losses import combined_loss
+        criterion = combined_loss
     
     # DDP 설정 확인 및 업데이트
     if torch.distributed.is_available() and torch.distributed.is_initialized():
@@ -180,8 +189,13 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                 else:
                     target_batch = target.unsqueeze(0)
                 
-                # Dice 계산
+                # Loss 및 Dice 계산
                 try:
+                    # Loss 계산
+                    loss = criterion(full_logits, target_batch)
+                    loss_values.append(loss.item())
+                    
+                    # Dice 계산
                     dice_start = time.time()
                     dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version, sample_idx=idx).detach().cpu()
                     dice_time = time.time() - dice_start
@@ -474,201 +488,206 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                 print(f"[Cascade Evaluation] Sample {local_idx+1}/{len(indices)} (global {idx+1}): target class counts={dict(zip(*torch.unique(target_batch, return_counts=True)))}")
             
             try:
-                    dice_start = time.time()
-                    dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version, sample_idx=idx).detach().cpu()
-                    dice_time = time.time() - dice_start
-                    total_dice_time += dice_time
-                    
-                    # dice_rows에 추가
-                    dice_rows.append(dice)
-                    
-                    # 예측 마스크 시각화 및 저장 (results_dir가 제공된 경우)
-                    if results_dir and is_main_process(rank):
-                        try:
-                            # patient 이름 추출
-                            patient_path = base_dataset.samples[idx] if hasattr(base_dataset, 'samples') else None
-                            if patient_path:
-                                if str(patient_path).endswith('.h5'):
-                                    patient_name = os.path.basename(patient_path).replace('.h5', '')
-                                else:
-                                    patient_name = os.path.basename(patient_path)
+                # Loss 계산
+                loss = criterion(full_logits, target_batch)
+                loss_values.append(loss.item())
+                
+                # Dice 계산
+                dice_start = time.time()
+                dice = calculate_wt_tc_et_dice(full_logits, target_batch, dataset_version=dataset_version, sample_idx=idx).detach().cpu()
+                dice_time = time.time() - dice_start
+                total_dice_time += dice_time
+                
+                # dice_rows에 추가
+                dice_rows.append(dice)
+                
+                # 예측 마스크 시각화 및 저장 (results_dir가 제공된 경우)
+                if results_dir and is_main_process(rank):
+                    try:
+                        # patient 이름 추출
+                        patient_path = base_dataset.samples[idx] if hasattr(base_dataset, 'samples') else None
+                        if patient_path:
+                            if str(patient_path).endswith('.h5'):
+                                patient_name = os.path.basename(patient_path).replace('.h5', '')
                             else:
-                                patient_name = f"sample_{idx+1:04d}"
-                            
-                            # 예측 마스크 추출
-                            pred_mask = result.get('full_mask')
-                            if pred_mask is None:
-                                # full_mask가 없으면 full_logits에서 생성
-                                full_logits_for_mask = result['full_logits']
-                                if full_logits_for_mask.dim() == 4:  # (C, H, W, D)
-                                    pred_mask = torch.argmax(full_logits_for_mask, dim=0)
-                                else:
-                                    pred_mask = torch.argmax(full_logits_for_mask.squeeze(0), dim=0)
-                            
-                            # CPU로 이동 및 numpy 변환
-                            pred_mask_np = pred_mask.cpu().numpy().astype(np.uint8)
-                            
-                            # 시각화 디렉토리 생성
-                            predictions_dir = os.path.join(results_dir, 'predictions')
-                            os.makedirs(predictions_dir, exist_ok=True)
-                            
-                            # 이미지와 마스크를 사용하여 시각화 생성
-                            # image는 (C, H, W, D), target은 (H, W, D), pred_mask_np는 (H, W, D)
-                            image_np = image.cpu().numpy()  # (C, H, W, D)
-                            target_np = target.cpu().numpy()  # (H, W, D)
-                            
-                            # 주요 슬라이스 선택 (Depth 방향)
-                            H, W, D = pred_mask_np.shape
-                            slice_indices = [D//4, D//2, 3*D//4] if D > 3 else list(range(D))
-                            
-                            # FLAIR 채널 사용 (일반적으로 마지막 채널 또는 인덱스 3)
-                            flair_idx = min(3, image_np.shape[0] - 1) if image_np.shape[0] >= 4 else image_np.shape[0] - 1
-                            
-                            # 시각화 생성
-                            n_slices = len(slice_indices)
-                            fig, axes = plt.subplots(n_slices, 3, figsize=(15, 5*n_slices))
-                            if n_slices == 1:
-                                axes = axes.reshape(1, -1)
-                            
-                            # Segmentation colormap (evaluation.py와 동일)
-                            seg_cmap = ListedColormap(['black', 'red', 'green', 'blue', 'yellow'])
-                            
-                            # ROI 중심점과 crop 영역 정보 추출
-                            roi_info = result.get('roi', {})
-                            roi_centers = roi_info.get('centers_full', []) or []
-                            if not roi_centers and roi_info.get('center_full'):
-                                roi_centers = [roi_info.get('center_full')]
-                            
-                            # Crop 크기 정보
-                            crop_size_tuple = crop_size if isinstance(crop_size, tuple) else tuple(crop_size)
-                            crop_half_h, crop_half_w, crop_half_d = crop_size_tuple[0] // 2, crop_size_tuple[1] // 2, crop_size_tuple[2] // 2
-                            
-                            # 모든 crop 중심점 생성 (crops_per_center > 1인 경우)
-                            all_crop_centers = []
-                            for roi_center in roi_centers:
-                                if roi_center and len(roi_center) >= 3:
-                                    crop_centers = _generate_multi_crop_centers(
-                                        center=roi_center,
-                                        crop_size=crop_size_tuple,
-                                        crops_per_center=crops_per_center,
-                                        crop_overlap=crop_overlap,
-                                    )
-                                    all_crop_centers.extend(crop_centers)
-                            
-                            for i, slice_idx in enumerate(slice_indices):
-                                # 원본 이미지 (FLAIR)
-                                img_slice = image_np[flair_idx, :, :, slice_idx]
-                                img_min, img_max = img_slice.min(), img_slice.max()
-                                if img_max > img_min:
-                                    img_display = (img_slice - img_min) / (img_max - img_min)
-                                else:
-                                    img_display = img_slice
-                                
-                                axes[i, 0].imshow(img_display, cmap='gray', origin='lower')
-                                # ROI 중심점 표시 (해당 슬라이스 근처에 있는 경우)
-                                for center_idx, center in enumerate(roi_centers):
-                                    if center and len(center) >= 3:
-                                        center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
-                                        # 슬라이스 범위 내에 있는지 확인 (crop_size의 절반 범위)
-                                        if abs(center_d - slice_idx) <= crop_half_d:
-                                            axes[i, 0].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow', label='ROI Center' if center_idx == 0 else '')
-                                
-                                # 모든 crop 영역 표시
-                                for crop_idx, crop_center in enumerate(all_crop_centers):
-                                    if crop_center and len(crop_center) >= 3:
-                                        crop_h, crop_w, crop_d = float(crop_center[0]), float(crop_center[1]), float(crop_center[2])
-                                        # 슬라이스 범위 내에 있는지 확인
-                                        if abs(crop_d - slice_idx) <= crop_half_d:
-                                            # 각 crop 영역을 표시 (약간 투명하게, 여러 개가 겹치므로)
-                                            rect = Rectangle(
-                                                (crop_w - crop_half_w, crop_h - crop_half_h),
-                                                crop_size_tuple[1], crop_size_tuple[0],
-                                                linewidth=1.0, edgecolor='cyan', facecolor='none', 
-                                                linestyle='--', alpha=0.3
-                                            )
-                                            axes[i, 0].add_patch(rect)
-                                
-                                axes[i, 0].set_title(f'FLAIR - Slice {slice_idx}')
-                                axes[i, 0].axis('off')
-                                
-                                # Ground Truth 오버레이
-                                axes[i, 1].imshow(img_display, cmap='gray', origin='lower')
-                                target_slice = target_np[:, :, slice_idx]
-                                mask_gt = target_slice > 0
-                                if mask_gt.any():
-                                    axes[i, 1].imshow(target_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=4, origin='lower')
-                                # ROI 중심점 표시
-                                for center_idx, center in enumerate(roi_centers):
-                                    if center and len(center) >= 3:
-                                        center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
-                                        if abs(center_d - slice_idx) <= crop_half_d:
-                                            axes[i, 1].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow')
-                                
-                                # 모든 crop 영역 표시
-                                for crop_idx, crop_center in enumerate(all_crop_centers):
-                                    if crop_center and len(crop_center) >= 3:
-                                        crop_h, crop_w, crop_d = float(crop_center[0]), float(crop_center[1]), float(crop_center[2])
-                                        if abs(crop_d - slice_idx) <= crop_half_d:
-                                            rect = Rectangle(
-                                                (crop_w - crop_half_w, crop_h - crop_half_h),
-                                                crop_size_tuple[1], crop_size_tuple[0],
-                                                linewidth=1.0, edgecolor='cyan', facecolor='none', 
-                                                linestyle='--', alpha=0.3
-                                            )
-                                            axes[i, 1].add_patch(rect)
-                                
-                                axes[i, 1].set_title(f'Ground Truth - Slice {slice_idx}')
-                                axes[i, 1].axis('off')
-                                
-                                # Prediction 오버레이
-                                axes[i, 2].imshow(img_display, cmap='gray', origin='lower')
-                                pred_slice = pred_mask_np[:, :, slice_idx]
-                                mask_pred = pred_slice > 0
-                                if mask_pred.any():
-                                    axes[i, 2].imshow(pred_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=4, origin='lower')
-                                
-                                # ROI 중심점 표시
-                                for center_idx, center in enumerate(roi_centers):
-                                    if center and len(center) >= 3:
-                                        center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
-                                        if abs(center_d - slice_idx) <= crop_half_d:
-                                            axes[i, 2].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow', label='ROI Center' if center_idx == 0 else '')
-                                
-                                # 모든 crop 영역 표시
-                                for crop_idx, crop_center in enumerate(all_crop_centers):
-                                    if crop_center and len(crop_center) >= 3:
-                                        crop_h, crop_w, crop_d = float(crop_center[0]), float(crop_center[1]), float(crop_center[2])
-                                        if abs(crop_d - slice_idx) <= crop_half_d:
-                                            rect = Rectangle(
-                                                (crop_w - crop_half_w, crop_h - crop_half_h),
-                                                crop_size_tuple[1], crop_size_tuple[0],
-                                                linewidth=1.0, edgecolor='cyan', facecolor='none', 
-                                                linestyle='--', alpha=0.3
-                                            )
-                                            axes[i, 2].add_patch(rect)
-                                
-                                axes[i, 2].set_title(f'Prediction - Slice {slice_idx}')
-                                axes[i, 2].axis('off')
-                            
-                            plt.tight_layout()
-                            jpg_path = os.path.join(predictions_dir, f"{patient_name}_pred.jpg")
-                            plt.savefig(jpg_path, dpi=200, bbox_inches='tight', format='jpg')
-                            plt.close()
-                            
-                            if local_idx == 0 or local_idx % 50 == 0 or local_idx == len(indices) - 1:
-                                print(f"[Cascade Evaluation] Saved prediction visualization: {jpg_path}")
-                        except Exception as e:
-                            if is_main_process(rank):
-                                print(f"[Cascade Evaluation] Warning: Failed to save prediction visualization for sample {local_idx+1} (global {idx+1}): {e}")
-                                import traceback
-                                traceback.print_exc()
-                    
-                    sample_total_time = time.time() - sample_start_time
-                    if is_main_process(rank) and (local_idx == 0 or local_idx % 10 == 0 or local_idx == len(indices) - 1):
-                        if dataset_version == 'brats2024':
-                            print(f"[Cascade Evaluation] Sample {local_idx+1}/{len(indices)} (global {idx+1}): Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f}, RC={dice[3]:.4f} | Total: {sample_total_time:.3f}s")
+                                patient_name = os.path.basename(patient_path)
                         else:
-                            print(f"[Cascade Evaluation] Sample {local_idx+1}/{len(indices)} (global {idx+1}): Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f} | Total: {sample_total_time:.3f}s")
+                            patient_name = f"sample_{idx+1:04d}"
+                        
+                        # 예측 마스크 추출
+                        pred_mask = result.get('full_mask')
+                        if pred_mask is None:
+                            # full_mask가 없으면 full_logits에서 생성
+                            full_logits_for_mask = result['full_logits']
+                            if full_logits_for_mask.dim() == 4:  # (C, H, W, D)
+                                pred_mask = torch.argmax(full_logits_for_mask, dim=0)
+                            else:
+                                pred_mask = torch.argmax(full_logits_for_mask.squeeze(0), dim=0)
+                        
+                        # CPU로 이동 및 numpy 변환
+                        pred_mask_np = pred_mask.cpu().numpy().astype(np.uint8)
+                        
+                        # 시각화 디렉토리 생성
+                        predictions_dir = os.path.join(results_dir, 'predictions')
+                        os.makedirs(predictions_dir, exist_ok=True)
+                        
+                        # 이미지와 마스크를 사용하여 시각화 생성
+                        # image는 (C, H, W, D), target은 (H, W, D), pred_mask_np는 (H, W, D)
+                        image_np = image.cpu().numpy()  # (C, H, W, D)
+                        target_np = target.cpu().numpy()  # (H, W, D)
+                        
+                        # 주요 슬라이스 선택 (Depth 방향)
+                        H, W, D = pred_mask_np.shape
+                        slice_indices = [D//4, D//2, 3*D//4] if D > 3 else list(range(D))
+                        
+                        # FLAIR 채널 사용 (일반적으로 마지막 채널 또는 인덱스 3)
+                        flair_idx = min(3, image_np.shape[0] - 1) if image_np.shape[0] >= 4 else image_np.shape[0] - 1
+                        
+                        # 시각화 생성
+                        n_slices = len(slice_indices)
+                        fig, axes = plt.subplots(n_slices, 3, figsize=(15, 5*n_slices))
+                        if n_slices == 1:
+                            axes = axes.reshape(1, -1)
+                        
+                        # Segmentation colormap (evaluation.py와 동일)
+                        seg_cmap = ListedColormap(['black', 'red', 'green', 'blue', 'yellow'])
+                        
+                        # ROI 중심점과 crop 영역 정보 추출
+                        roi_info = result.get('roi', {})
+                        roi_centers = roi_info.get('centers_full', []) or []
+                        if not roi_centers and roi_info.get('center_full'):
+                            roi_centers = [roi_info.get('center_full')]
+                        
+                        # Crop 크기 정보
+                        crop_size_tuple = crop_size if isinstance(crop_size, tuple) else tuple(crop_size)
+                        crop_half_h, crop_half_w, crop_half_d = crop_size_tuple[0] // 2, crop_size_tuple[1] // 2, crop_size_tuple[2] // 2
+                        
+                        # 모든 crop 중심점 생성 (crops_per_center > 1인 경우)
+                        all_crop_centers = []
+                        for roi_center in roi_centers:
+                            if roi_center and len(roi_center) >= 3:
+                                crop_centers = _generate_multi_crop_centers(
+                                    center=roi_center,
+                                    crop_size=crop_size_tuple,
+                                    crops_per_center=crops_per_center,
+                                    crop_overlap=crop_overlap,
+                                )
+                                all_crop_centers.extend(crop_centers)
+                        
+                        for i, slice_idx in enumerate(slice_indices):
+                            # 원본 이미지 (FLAIR)
+                            img_slice = image_np[flair_idx, :, :, slice_idx]
+                            img_min, img_max = img_slice.min(), img_slice.max()
+                            if img_max > img_min:
+                                img_display = (img_slice - img_min) / (img_max - img_min)
+                            else:
+                                img_display = img_slice
+                            
+                            axes[i, 0].imshow(img_display, cmap='gray', origin='lower')
+                            # ROI 중심점 표시 (해당 슬라이스 근처에 있는 경우)
+                            for center_idx, center in enumerate(roi_centers):
+                                if center and len(center) >= 3:
+                                    center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
+                                    # 슬라이스 범위 내에 있는지 확인 (crop_size의 절반 범위)
+                                    if abs(center_d - slice_idx) <= crop_half_d:
+                                        axes[i, 0].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow', label='ROI Center' if center_idx == 0 else '')
+                            
+                            # 모든 crop 영역 표시
+                            for crop_idx, crop_center in enumerate(all_crop_centers):
+                                if crop_center and len(crop_center) >= 3:
+                                    crop_h, crop_w, crop_d = float(crop_center[0]), float(crop_center[1]), float(crop_center[2])
+                                    # 슬라이스 범위 내에 있는지 확인
+                                    if abs(crop_d - slice_idx) <= crop_half_d:
+                                        # 각 crop 영역을 표시 (약간 투명하게, 여러 개가 겹치므로)
+                                        rect = Rectangle(
+                                            (crop_w - crop_half_w, crop_h - crop_half_h),
+                                            crop_size_tuple[1], crop_size_tuple[0],
+                                            linewidth=1.0, edgecolor='cyan', facecolor='none', 
+                                            linestyle='--', alpha=0.3
+                                        )
+                                        axes[i, 0].add_patch(rect)
+                            
+                            axes[i, 0].set_title(f'FLAIR - Slice {slice_idx}')
+                            axes[i, 0].axis('off')
+                            
+                            # Ground Truth 오버레이
+                            axes[i, 1].imshow(img_display, cmap='gray', origin='lower')
+                            target_slice = target_np[:, :, slice_idx]
+                            mask_gt = target_slice > 0
+                            if mask_gt.any():
+                                axes[i, 1].imshow(target_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=4, origin='lower')
+                            # ROI 중심점 표시
+                            for center_idx, center in enumerate(roi_centers):
+                                if center and len(center) >= 3:
+                                    center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
+                                    if abs(center_d - slice_idx) <= crop_half_d:
+                                        axes[i, 1].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow')
+                            
+                            # 모든 crop 영역 표시
+                            for crop_idx, crop_center in enumerate(all_crop_centers):
+                                if crop_center and len(crop_center) >= 3:
+                                    crop_h, crop_w, crop_d = float(crop_center[0]), float(crop_center[1]), float(crop_center[2])
+                                    if abs(crop_d - slice_idx) <= crop_half_d:
+                                        rect = Rectangle(
+                                            (crop_w - crop_half_w, crop_h - crop_half_h),
+                                            crop_size_tuple[1], crop_size_tuple[0],
+                                            linewidth=1.0, edgecolor='cyan', facecolor='none', 
+                                            linestyle='--', alpha=0.3
+                                        )
+                                        axes[i, 1].add_patch(rect)
+                            
+                            axes[i, 1].set_title(f'Ground Truth - Slice {slice_idx}')
+                            axes[i, 1].axis('off')
+                            
+                            # Prediction 오버레이
+                            axes[i, 2].imshow(img_display, cmap='gray', origin='lower')
+                            pred_slice = pred_mask_np[:, :, slice_idx]
+                            mask_pred = pred_slice > 0
+                            if mask_pred.any():
+                                axes[i, 2].imshow(pred_slice, cmap=seg_cmap, alpha=0.5, vmin=0, vmax=4, origin='lower')
+                            
+                            # ROI 중심점 표시
+                            for center_idx, center in enumerate(roi_centers):
+                                if center and len(center) >= 3:
+                                    center_h, center_w, center_d = float(center[0]), float(center[1]), float(center[2])
+                                    if abs(center_d - slice_idx) <= crop_half_d:
+                                        axes[i, 2].plot(center_w, center_h, 'r*', markersize=15, markeredgewidth=2, markeredgecolor='yellow', label='ROI Center' if center_idx == 0 else '')
+                            
+                            # 모든 crop 영역 표시
+                            for crop_idx, crop_center in enumerate(all_crop_centers):
+                                if crop_center and len(crop_center) >= 3:
+                                    crop_h, crop_w, crop_d = float(crop_center[0]), float(crop_center[1]), float(crop_center[2])
+                                    if abs(crop_d - slice_idx) <= crop_half_d:
+                                        rect = Rectangle(
+                                            (crop_w - crop_half_w, crop_h - crop_half_h),
+                                            crop_size_tuple[1], crop_size_tuple[0],
+                                            linewidth=1.0, edgecolor='cyan', facecolor='none', 
+                                            linestyle='--', alpha=0.3
+                                        )
+                                        axes[i, 2].add_patch(rect)
+                            
+                            axes[i, 2].set_title(f'Prediction - Slice {slice_idx}')
+                            axes[i, 2].axis('off')
+                        
+                        plt.tight_layout()
+                        jpg_path = os.path.join(predictions_dir, f"{patient_name}_pred.jpg")
+                        plt.savefig(jpg_path, dpi=200, bbox_inches='tight', format='jpg')
+                        plt.close()
+                        
+                        if local_idx == 0 or local_idx % 50 == 0 or local_idx == len(indices) - 1:
+                            print(f"[Cascade Evaluation] Saved prediction visualization: {jpg_path}")
+                    except Exception as e:
+                        if is_main_process(rank):
+                            print(f"[Cascade Evaluation] Warning: Failed to save prediction visualization for sample {local_idx+1} (global {idx+1}): {e}")
+                            import traceback
+                            traceback.print_exc()
+                
+                sample_total_time = time.time() - sample_start_time
+                if is_main_process(rank) and (local_idx == 0 or local_idx % 10 == 0 or local_idx == len(indices) - 1):
+                    if dataset_version == 'brats2024':
+                        print(f"[Cascade Evaluation] Sample {local_idx+1}/{len(indices)} (global {idx+1}): Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f}, RC={dice[3]:.4f} | Total: {sample_total_time:.3f}s")
+                    else:
+                        print(f"[Cascade Evaluation] Sample {local_idx+1}/{len(indices)} (global {idx+1}): Dice - WT={dice[0]:.4f}, TC={dice[1]:.4f}, ET={dice[2]:.4f} | Total: {sample_total_time:.3f}s")
             except Exception as e:
                 error_msg = f"[Cascade Evaluation] Error processing sample {local_idx+1}/{len(indices)} (global {idx+1}/{total_samples}): {type(e).__name__}: {e}"
                 if is_main_process(rank):
@@ -676,8 +695,6 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                     import traceback
                     traceback.print_exc()
                 # 예외가 발생해도 다음 샘플로 계속 진행
-                        # 예외가 발생해도 다음 샘플로 계속 진행 (dice 계산 실패는 기록만 하고 계속)
-                        # raise  # 주석 처리: 예외를 발생시키지 않고 다음 샘플로 계속
     
     if is_main_process(rank):
         total_eval_time = total_data_load_time + total_seg_time + total_dice_time
@@ -743,11 +760,15 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             if is_main_process(rank):
                 print(f"[Cascade Evaluation] Warning: No attention weights collected (collect_attention={collect_attention}, len={len(all_attention_weights) if all_attention_weights else 0})")
     
+    # Loss 평균 계산
+    mean_loss = np.mean(loss_values) if loss_values else 0.0
+    
     result = {
         'wt': float(mean_scores[0].item()),
         'tc': float(mean_scores[1].item()),
         'et': float(mean_scores[2].item()),
-        'mean': float(mean_scores.mean().item())
+        'mean': float(mean_scores.mean().item()),
+        'loss': float(mean_loss)
     }
     if is_brats2024 and len(mean_scores) >= 4:
         result['rc'] = float(mean_scores[3].item())
