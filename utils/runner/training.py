@@ -475,11 +475,11 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 va_rc = cascade_result.get('rc', 0.0) if is_brats2024 else 0.0
                 va_loss = cascade_result.get('loss', 0.0)  # Cascade pipeline에서 계산된 loss 사용
                 
-                # 디버깅: cascade_result 내용 확인
-                if is_main_process(rank) and epoch == 0:  # 첫 epoch만 출력
-                    print(f"[Training Debug] cascade_result keys: {list(cascade_result.keys())}")
-                    print(f"[Training Debug] cascade_result['loss']: {cascade_result.get('loss', 'NOT FOUND')}")
-                    print(f"[Training Debug] va_loss after get: {va_loss}")
+                # 디버깅: cascade_result 내용 확인 (모든 epoch에서 출력)
+                if is_main_process(rank):
+                    print(f"[Training Debug] Epoch {epoch+1} - cascade_result keys: {list(cascade_result.keys())}")
+                    print(f"[Training Debug] Epoch {epoch+1} - cascade_result['loss']: {cascade_result.get('loss', 'NOT FOUND')}")
+                    print(f"[Training Debug] Epoch {epoch+1} - va_loss immediately after get: {va_loss}")
                 
                 # 평균 계산 (샘플 수는 base_dataset 길이)
                 n_va = len(val_base_dataset)
@@ -585,6 +585,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         
         # Learning rate scheduling (ReduceLROnPlateau는 validation metric 필요)
         # nnU-Net 스타일: validation loss를 모니터링
+        if is_main_process(rank):
+            print(f"[Training Debug] Epoch {epoch+1} - va_loss before scheduler.step: {va_loss}")
         scheduler.step(va_loss)
         
         # Best model tracking 및 체크포인트 저장 (rank 0만)
@@ -643,6 +645,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         
         if is_main_process(rank):
             checkpoint_msg = " [BEST]" if checkpoint_saved else ""
+            print(f"[Training Debug] Epoch {epoch+1} - va_loss before final print: {va_loss}")
             if is_brats2024:
                 print(f"Epoch {epoch+1}/{epochs} | Train Loss {tr_loss:.4f} Dice {tr_dice:.4f} | Val Loss {va_loss:.4f} Dice {va_dice:.4f} (WT {va_wt:.4f} | TC {va_tc:.4f} | ET {va_et:.4f} | RC {va_rc:.4f}){checkpoint_msg}")
             else:
