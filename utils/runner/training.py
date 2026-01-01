@@ -572,7 +572,10 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 print(f"  표준편차: {all_dices_arr.std():.10f}")
                 print(f"  0.0317과의 차이: {abs(all_dices_arr.mean() - 0.0317):.10f}")
         
-        va_loss /= max(1, n_va)
+        # Cascade 모델의 경우 va_loss는 이미 평균값이므로 다시 나누지 않음
+        # 일반 모델의 경우만 va_loss를 나눔
+        if not is_cascade_model or val_base_dataset is None:
+            va_loss /= max(1, n_va)
         va_dice = va_dice_sum / max(1, n_va)
         va_wt = va_wt_sum / max(1, n_va)
         va_tc = va_tc_sum / max(1, n_va)
