@@ -193,7 +193,12 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
                 try:
                     # Loss 계산
                     loss = criterion(full_logits, target_batch)
-                    loss_values.append(loss.item())
+                    loss_item = loss.item()
+                    loss_values.append(loss_item)
+                    
+                    # 디버깅: 첫 번째 샘플에서 loss 출력
+                    if batch_idx == 0 and local_idx == 0 and is_main_process(rank):
+                        print(f"[Cascade Evaluation] Batch sample {batch_idx+1} (global {idx+1}) loss: {loss_item:.6f}, full_logits shape: {full_logits.shape}, target shape: {target_batch.shape}")
                     
                     # Dice 계산
                     dice_start = time.time()
@@ -490,7 +495,12 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             try:
                 # Loss 계산
                 loss = criterion(full_logits, target_batch)
-                loss_values.append(loss.item())
+                loss_item = loss.item()
+                loss_values.append(loss_item)
+                
+                # 디버깅: 첫 번째 샘플에서 loss 출력
+                if local_idx == 0 and is_main_process(rank):
+                    print(f"[Cascade Evaluation] Sequential sample {local_idx+1} (global {idx+1}) loss: {loss_item:.6f}, full_logits shape: {full_logits.shape}, target shape: {target_batch.shape}")
                 
                 # Dice 계산
                 dice_start = time.time()
@@ -762,6 +772,20 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
     
     # Loss 평균 계산
     mean_loss = np.mean(loss_values) if loss_values else 0.0
+    
+    # 디버깅: loss 통계 출력
+    if is_main_process(rank):
+        if loss_values:
+            loss_array = np.array(loss_values)
+            print(f"[Cascade Evaluation] Loss stats: min={loss_array.min():.6f}, max={loss_array.max():.6f}, mean={mean_loss:.6f}, std={loss_array.std():.6f}, count={len(loss_values)}")
+            # 처음 5개와 마지막 5개 loss 값 출력
+            if len(loss_values) > 10:
+                print(f"[Cascade Evaluation] First 5 losses: {loss_values[:5]}")
+                print(f"[Cascade Evaluation] Last 5 losses: {loss_values[-5:]}")
+            else:
+                print(f"[Cascade Evaluation] All losses: {loss_values}")
+        else:
+            print(f"[Cascade Evaluation] Warning: No loss values collected! (dice_rows count: {len(dice_rows)})")
     
     result = {
         'wt': float(mean_scores[0].item()),
