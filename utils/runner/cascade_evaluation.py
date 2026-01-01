@@ -824,6 +824,12 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
     }
     if is_brats2024 and len(mean_scores) >= 4:
         result['rc'] = float(mean_scores[3].item())
+    
+    # 디버깅: result 딕셔너리 확인
+    if is_main_process(rank):
+        print(f"[Cascade Evaluation] Returning result with keys: {list(result.keys())}")
+        print(f"[Cascade Evaluation] result['loss']: {result.get('loss', 'NOT FOUND')}")
+    
     return result
 
 

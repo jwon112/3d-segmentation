@@ -475,6 +475,12 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 va_rc = cascade_result.get('rc', 0.0) if is_brats2024 else 0.0
                 va_loss = cascade_result.get('loss', 0.0)  # Cascade pipeline에서 계산된 loss 사용
                 
+                # 디버깅: cascade_result 내용 확인
+                if is_main_process(rank) and epoch == 0:  # 첫 epoch만 출력
+                    print(f"[Training Debug] cascade_result keys: {list(cascade_result.keys())}")
+                    print(f"[Training Debug] cascade_result['loss']: {cascade_result.get('loss', 'NOT FOUND')}")
+                    print(f"[Training Debug] va_loss after get: {va_loss}")
+                
                 # 평균 계산 (샘플 수는 base_dataset 길이)
                 n_va = len(val_base_dataset)
                 va_dice_sum = va_dice * n_va
