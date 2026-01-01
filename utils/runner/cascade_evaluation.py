@@ -770,14 +770,42 @@ def evaluate_cascade_pipeline(roi_model, seg_model, base_dataset, device,
             if is_main_process(rank):
                 print(f"[Cascade Evaluation] Warning: No attention weights collected (collect_attention={collect_attention}, len={len(all_attention_weights) if all_attention_weights else 0})")
     
-    # Loss 평균 계산
-    mean_loss = np.mean(loss_values) if loss_values else 0.0
+    # Loss 평균 계산 (DDP 환경에서 전체 프로세스의 loss 평균 계산)
+    if loss_values:
+        local_mean_loss = np.mean(loss_values)
+        local_count = len(loss_values)
+    else:
+        local_mean_loss = 0.0
+        local_count = 0
+    
+    # DDP 환경에서 전체 프로세스의 loss 평균 계산
+    if distributed and torch.distributed.is_available() and torch.distributed.is_initialized():
+        # 각 프로세스의 평균 loss와 샘플 수를 수집
+        local_loss_sum = local_mean_loss * local_count
+        local_loss_sum_tensor = torch.tensor(local_loss_sum, dtype=torch.float32, device=device)
+        local_count_tensor = torch.tensor(float(local_count), dtype=torch.float32, device=device)
+        
+        # 모든 프로세스에서 합산
+        torch.distributed.all_reduce(local_loss_sum_tensor, op=torch.distributed.ReduceOp.SUM)
+        torch.distributed.all_reduce(local_count_tensor, op=torch.distributed.ReduceOp.SUM)
+        
+        # 전체 평균 계산
+        total_count = int(local_count_tensor.item())
+        if total_count > 0:
+            mean_loss = float(local_loss_sum_tensor.item() / total_count)
+        else:
+            mean_loss = 0.0
+    else:
+        mean_loss = local_mean_loss
+        total_count = local_count
     
     # 디버깅: loss 통계 출력
     if is_main_process(rank):
         if loss_values:
             loss_array = np.array(loss_values)
-            print(f"[Cascade Evaluation] Loss stats: min={loss_array.min():.6f}, max={loss_array.max():.6f}, mean={mean_loss:.6f}, std={loss_array.std():.6f}, count={len(loss_values)}")
+            print(f"[Cascade Evaluation] Loss stats (local): min={loss_array.min():.6f}, max={loss_array.max():.6f}, mean={local_mean_loss:.6f}, std={loss_array.std():.6f}, count={local_count}")
+            if distributed:
+                print(f"[Cascade Evaluation] Loss stats (global): mean={mean_loss:.6f}, total_count={total_count}")
             # 처음 5개와 마지막 5개 loss 값 출력
             if len(loss_values) > 10:
                 print(f"[Cascade Evaluation] First 5 losses: {loss_values[:5]}")
