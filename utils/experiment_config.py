@@ -44,19 +44,21 @@ SIZE_SUFFIX_MODELS = {
     'quadbranch_spatial_centralized_concat_': ['xs', 's', 'm', 'l'],
     'quadbranch_spatial_distributed_concat_': ['xs', 's', 'm', 'l'],
     'quadbranch_spatial_distributed_conv_': ['xs', 's', 'm', 'l'],
-    'cascade_shufflenet_v2_': ['xs', 's', 'm', 'l'],
-    'cascade_shufflenet_v2_p3d_': ['xs', 's', 'm', 'l'],
-    'cascade_shufflenet_v2_lk_': ['xs', 's', 'm', 'l'],
-    'cascade_shufflenet_v2_p3d_lk_': ['xs', 's', 'm', 'l'],
-    'cascade_shufflenet_v2_lka_': ['xs', 's', 'm', 'l'],
-    'cascade_shufflenet_v2_lka_segnext_': ['xs', 's', 'm', 'l'],
-    'cascade_shufflenet_v2_p3d_lka_segnext_': ['xs', 's', 'm', 'l'],
-    'cascade_shufflenet_v2_mvit_': ['xs', 's', 'm', 'l'],
-    'cascade_shufflenet_v2_p3d_mvit_': ['xs', 's', 'm', 'l'],
-    'cascade_patch_conv_transformer_': ['xs', 's', 'm', 'l'],  # New: Patch Conv + Transformer
-    'cascade_unet3d_': ['xs', 's', 'm', 'l'],  # Baseline: Standard 3D U-Net
-    'cascade_unetr_': ['xs', 's', 'm', 'l'],  # Baseline: UNETR
-    'cascade_swin_unetr_': ['xs', 's', 'm', 'l'],  # Baseline: SwinUNETR
+    # ShuffleNetV2 계열 모델들 (CNN 기반, cascade 접두사 불필요 - 완전히 같은 아키텍처)
+    'shufflenet_v2_': ['xs', 's', 'm', 'l'],
+    'shufflenet_v2_p3d_': ['xs', 's', 'm', 'l'],
+    'shufflenet_v2_lk_': ['xs', 's', 'm', 'l'],
+    'shufflenet_v2_p3d_lk_': ['xs', 's', 'm', 'l'],
+    'shufflenet_v2_lka_': ['xs', 's', 'm', 'l'],
+    'shufflenet_v2_lka_segnext_': ['xs', 's', 'm', 'l'],
+    'shufflenet_v2_p3d_lka_segnext_': ['xs', 's', 'm', 'l'],
+    'shufflenet_v2_mvit_': ['xs', 's', 'm', 'l'],
+    'shufflenet_v2_p3d_mvit_': ['xs', 's', 'm', 'l'],
+    # ViT 계열 모델들 (입력 해상도 제약, cascade 파이프라인 권장 - 주석 참고)
+    'cascade_patch_conv_transformer_': ['xs', 's', 'm', 'l'],  # Note: cascade 파이프라인 권장
+    'cascade_unetr_': ['xs', 's', 'm', 'l'],  # Note: cascade 파이프라인 권장
+    'cascade_swin_unetr_': ['xs', 's', 'm', 'l'],  # Note: cascade 파이프라인 권장
+    'cascade_unet3d_': ['xs', 's', 'm', 'l'],  # Note: unet3d_와 동일 (CoordConv 지원)
 }
 
 # Size suffix를 지원하는 dualbranch_14 backbone들
@@ -104,15 +106,23 @@ def get_all_available_models() -> List[str]:
 
 
 def validate_and_filter_models(models: Optional[List[str]]) -> List[str]:
-    """사용자가 지정한 모델들을 검증하고 필터링"""
+    """사용자가 지정한 모델들을 검증하고 필터링
+    
+    Note: CNN 계열 모델(ShuffleNetV2)의 경우 cascade 접두사는 자동으로 제거되어 처리됩니다.
+    """
     if models is None:
         return get_all_available_models()
     
     available_models = []
     for model_name in models:
+        # CNN 계열 모델의 cascade 접두사 자동 제거 (하위 호환성)
+        original_name = model_name
+        if model_name.startswith('cascade_shufflenet_v2_'):
+            model_name = model_name.replace('cascade_shufflenet_v2_', 'shufflenet_v2_', 1)
+        
         # 고정 이름 모델인지 확인
         if model_name in FIXED_NAME_MODELS:
-            available_models.append(model_name)
+            available_models.append(original_name)  # 원본 이름 유지
             continue
         
         # Size suffix를 지원하는 모델 prefix인지 확인
@@ -146,9 +156,9 @@ def validate_and_filter_models(models: Optional[List[str]]) -> List[str]:
                             break
         
         if is_valid:
-            available_models.append(model_name)
+            available_models.append(original_name)  # 원본 이름 유지 (하위 호환성)
         else:
-            print(f"Warning: Invalid model name '{model_name}' will be skipped.")
+            print(f"Warning: Invalid model name '{original_name}' will be skipped.")
     
     return available_models
 

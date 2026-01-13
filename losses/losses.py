@@ -1,5 +1,30 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
+
+
+class RobustCrossEntropyLoss(nn.CrossEntropyLoss):
+    """nnUNet 스타일 Robust Cross Entropy Loss
+    
+    target tensor의 차원과 타입을 자동으로 처리합니다.
+    이는 nnUNet의 RobustCrossEntropyLoss와 동일한 구현입니다.
+    
+    Args:
+        input: 모델 출력 logits (B, C, H, W) 또는 (B, C, H, W, D)
+        target: Ground truth 라벨 (B, H, W) 또는 (B, H, W, D) 또는 (B, 1, H, W, D)
+    
+    Returns:
+        Cross Entropy Loss (scalar)
+    """
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        # target이 (B, 1, H, W, D) 형태인 경우 처리
+        if target.ndim == input.ndim:
+            assert target.shape[1] == 1, \
+                f"Expected target shape[1] == 1 when target.ndim == input.ndim, got {target.shape[1]}"
+            target = target[:, 0]  # (B, H, W, D)로 변환
+        
+        # long 타입으로 변환
+        return super().forward(input, target.long())
 
 
 def dice_loss(pred, target, smooth=1e-5):
@@ -63,6 +88,7 @@ def combined_loss_nnunet_style(pred, target, alpha=0.3):
     nnU-Net style combined loss
     
     - Uses Soft Dice Loss with Squared Prediction
+    - Uses RobustCrossEntropyLoss for better compatibility
     - Dice Loss 우선 (70%): alpha=0.3 means CE 30%, Dice 70%
     - This is more robust to class imbalance
     
@@ -74,7 +100,7 @@ def combined_loss_nnunet_style(pred, target, alpha=0.3):
     Returns:
         Combined loss (scalar)
     """
-    ce_loss = F.cross_entropy(pred, target)
+    ce_loss = RobustCrossEntropyLoss()(pred, target)
     d_loss = soft_dice_loss_with_squared_pred(pred, target)
     return alpha * ce_loss + (1 - alpha) * d_loss
 

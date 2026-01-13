@@ -62,8 +62,10 @@ def get_data_loaders(
     else:
         raise ValueError(f"Unknown coord_type: {coord_type}. Must be 'none', 'simple', or 'hybrid'")
     
-    # Cascade 모델인 경우 cascade 데이터로더 사용 (segmentation 단계만)
-    if model_name and model_name.startswith('cascade_'):
+    # Note: 모든 모델은 cascade 접두사와 무관하게 기본 파이프라인(nnU-Net 스타일) 사용
+    # Cascade 파이프라인(ROI 기반 크롭)을 사용하려면 --use_cascade_pipeline 플래그 사용
+    # cascade_ 접두사는 모델 아키텍처 식별용으로만 사용됨
+    # (ViT 계열 모델은 입력 해상도 제약으로 인해 cascade 파이프라인 권장)
         cascade_loaders = get_cascade_data_loaders(
             data_dir=data_dir,
             roi_batch_size=batch_size,

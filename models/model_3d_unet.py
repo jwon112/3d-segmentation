@@ -137,11 +137,11 @@ class UNet3D(nn.Module):
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
-    def __init__(self, n_channels=4, n_classes=4, norm: str = 'bn', bilinear=False, size: str = 's'):
+    def __init__(self, n_channels=4, n_classes=4, norm: str = 'in', bilinear=False, size: str = 's'):
         super(UNet3D, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
-        self.norm = (norm or 'bn')
+        self.norm = (norm or 'in')
         self.bilinear = bilinear
         self.size = size
         
@@ -191,22 +191,22 @@ class UNet3D(nn.Module):
 
 # Convenience classes for backward compatibility
 class UNet3D_XS(UNet3D):
-    def __init__(self, n_channels=4, n_classes=4, norm: str = 'bn', bilinear=False):
+    def __init__(self, n_channels=4, n_classes=4, norm: str = 'in', bilinear=False):
         super().__init__(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=bilinear, size='xs')
 
 
 class UNet3D_Small(UNet3D):
-    def __init__(self, n_channels=4, n_classes=4, norm: str = 'bn', bilinear=False):
+    def __init__(self, n_channels=4, n_classes=4, norm: str = 'in', bilinear=False):
         super().__init__(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=bilinear, size='s')
 
 
 class UNet3D_Medium(UNet3D):
-    def __init__(self, n_channels=4, n_classes=4, norm: str = 'bn', bilinear=False):
+    def __init__(self, n_channels=4, n_classes=4, norm: str = 'in', bilinear=False):
         super().__init__(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=bilinear, size='m')
 
 
 class UNet3D_Large(UNet3D):
-    def __init__(self, n_channels=4, n_classes=4, norm: str = 'bn', bilinear=False):
+    def __init__(self, n_channels=4, n_classes=4, norm: str = 'in', bilinear=False):
         super().__init__(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=bilinear, size='l')
 
 # Losses and metrics moved to ml/losses.py and ml/metrics.py
