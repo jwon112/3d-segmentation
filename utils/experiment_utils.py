@@ -124,6 +124,9 @@ def sliding_window_inference_3d(model, volume, patch_size=(128, 128, 128), overl
         z0 = min(0, D - pd)
         patch = volume[:, :, 0:ph, 0:pw, 0:pd].to(device)
         logits0 = model(patch)
+        # Deep Supervision이 활성화된 경우 메인 출력만 사용
+        if isinstance(logits0, (list, tuple)):
+            logits0 = logits0[0]
         C_out = logits0.size(1)
 
     out = torch.zeros((1, C_out, H, W, D), dtype=torch.float32, device=device)
@@ -149,6 +152,9 @@ def sliding_window_inference_3d(model, volume, patch_size=(128, 128, 128), overl
                 for dz in ds:
                     patch = volume[:, :, hy:hy+ph, wx:wx+pw, dz:dz+pd].to(device)
                     logits = model(patch)
+                    # Deep Supervision이 활성화된 경우 메인 출력만 사용
+                    if isinstance(logits, (list, tuple)):
+                        logits = logits[0]
                     out[:, :, hy:hy+ph, wx:wx+pw, dz:dz+pd] += logits * wpatch
                     wsum[:, :, hy:hy+ph, wx:wx+pw, dz:dz+pd] += wpatch
 

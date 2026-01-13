@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Union, Tuple, List
 
 
 class RobustCrossEntropyLoss(nn.CrossEntropyLoss):
@@ -105,3 +106,62 @@ def combined_loss_nnunet_style(pred, target, alpha=0.3):
     return alpha * ce_loss + (1 - alpha) * d_loss
 
 
+class DeepSupervisionWrapper(nn.Module):
+    """Deep Supervision을 위한 Loss Wrapper
+    
+    여러 레벨의 출력에 대해 loss를 계산하고 가중 합을 반환합니다.
+    nnUNet의 DeepSupervisionWrapper와 동일한 구현입니다.
+    
+    Args:
+        loss: 기본 loss 함수 (예: combined_loss_nnunet_style)
+        weight_factors: 각 레벨의 가중치 (기본값: [1.0, 0.5, 0.25, 0.125])
+                       깊은 레벨일수록 낮은 가중치
+    
+    Example:
+        >>> base_loss = combined_loss_nnunet_style
+        >>> ds_loss = DeepSupervisionWrapper(base_loss, weight_factors=[1.0, 0.5, 0.25, 0.125])
+        >>> outputs = [main_output, ds2, ds3, ds4]  # 모델 출력
+        >>> loss = ds_loss(outputs, target)
+    """
+    def __init__(self, loss, weight_factors=None):
+        super(DeepSupervisionWrapper, self).__init__()
+        if weight_factors is None:
+            # 기본 가중치: 깊은 레벨일수록 낮은 가중치
+            weight_factors = [1.0, 0.5, 0.25, 0.125]
+        assert any([x != 0 for x in weight_factors]), "At least one weight factor should be != 0.0"
+        self.weight_factors = tuple(weight_factors)
+        self.loss = loss
+
+    def forward(self, net_output: Union[Tuple, List], target: torch.Tensor):
+        """
+        Args:
+            net_output: 모델 출력 리스트/튜플 (예: [main_output, ds2, ds3, ds4])
+            target: Ground truth 라벨 (B, H, W, D)
+        
+        Returns:
+            가중 합산된 loss
+        """
+        assert isinstance(net_output, (tuple, list)), \
+            f"net_output must be tuple or list, got {type(net_output)}"
+        
+        # 각 레벨의 출력에 대해 loss 계산
+        losses = []
+        for i, output in enumerate(net_output):
+            # 출력을 target 크기에 맞게 다운샘플링 (필요한 경우)
+            if output.shape[2:] != target.shape[1:]:
+                output = F.interpolate(
+                    output, size=target.shape[1:],
+                    mode='trilinear', align_corners=False
+                )
+            
+            # Loss 계산
+            loss = self.loss(output, target)
+            
+            # 가중치 적용
+            if i < len(self.weight_factors):
+                losses.append(self.weight_factors[i] * loss)
+            else:
+                # 가중치가 지정되지 않은 경우 기본값 1.0
+                losses.append(loss)
+        
+        return sum(losses)

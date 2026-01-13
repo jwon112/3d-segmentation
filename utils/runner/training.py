@@ -14,10 +14,11 @@ import time
 from utils.experiment_utils import (
     set_seed, is_main_process, sliding_window_inference_3d
 )
-from losses import combined_loss, combined_loss_nnunet_style
+from losses import combined_loss, combined_loss_nnunet_style, DeepSupervisionWrapper
 from metrics import calculate_wt_tc_et_dice
 from utils.runner.cascade_evaluation import load_roi_model_from_checkpoint, evaluate_cascade_pipeline
 from dataloaders import get_brats_base_datasets
+from utils.lr_scheduler import PolyLRScheduler
 
 
 def get_roi_center_prob_schedule(current_epoch: int, total_epochs: int, schedule_type: str = 'cosine', warmup_ratio: float = 0.0):
@@ -134,14 +135,32 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     model = model.to(device)
     # nnU-Net style loss: Soft Dice with Squared Prediction, Dice 70% + CE 30%
     # Standard loss: Dice 50% + CE 50%
-    criterion = combined_loss_nnunet_style if use_nnunet_loss else combined_loss
+    base_loss = combined_loss_nnunet_style if use_nnunet_loss else combined_loss
+    
+    # Deep Supervision 지원 여부 확인 (모델이 리스트를 반환하는지 확인)
+    # 첫 번째 forward로 확인 (더미 입력 사용)
+    with torch.no_grad():
+        dummy_input = torch.randn(1, 4, 32, 32, 32).to(device)
+        dummy_output = model(dummy_input)
+        use_deep_supervision = isinstance(dummy_output, (list, tuple))
+    
+    # Deep Supervision이 활성화된 경우 wrapper 사용
+    if use_deep_supervision:
+        criterion = DeepSupervisionWrapper(base_loss, weight_factors=[1.0, 0.5, 0.25, 0.125])
+        if is_main_process(rank):
+            print(f"[Deep Supervision] Enabled with weights [1.0, 0.5, 0.25, 0.125]")
+    else:
+        criterion = base_loss
+        if is_main_process(rank):
+            print(f"[Deep Supervision] Disabled (single output)")
+    
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    # ReduceLROnPlateau: 검증 성능이 개선되지 않을 때 학습률 감소 (nnU-Net 스타일)
-    # mode='min': validation loss가 낮을수록 좋음
-    # factor=0.5: 학습률을 0.5배로 감소
-    # patience=3: 3 epoch 동안 개선 없으면 감소 (nnU-Net 표준)
-    # Note: verbose 파라미터는 일부 PyTorch 버전에서 지원되지 않으므로 제거
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
+    
+    # Learning rate scheduler: PolyLR (nnUNet 스타일)
+    max_steps = epochs * len(train_loader)
+    scheduler = PolyLRScheduler(optimizer, initial_lr=lr, max_steps=max_steps, exponent=0.9)
+    if is_main_process(rank):
+        print(f"[PolyLR] Using Polynomial LR Scheduler (max_steps={max_steps}, exponent=0.9)")
     
     train_losses = []
     val_dices = []
@@ -355,6 +374,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             # 학습 단계에서는 슬라이딩 윈도우를 사용하지 않음 (단일 패치 forward)
             logits = model(inputs)
             
+            # PolyLR 스케줄러: 매 step마다 호출
+            scheduler.step()
+            
             torch.cuda.synchronize()
             t_fwd = time.time()
             fwd_times.append(t_fwd - t_load)
@@ -367,8 +389,14 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             t_bwd = time.time()
             bwd_times.append(t_bwd - t_fwd)
             
+            # Deep Supervision이 활성화된 경우 메인 출력만 사용
+            if isinstance(logits, (list, tuple)):
+                logits_for_dice = logits[0].detach()  # 메인 출력만 사용
+            else:
+                logits_for_dice = logits.detach()
+            
             # BraTS composite Dice (WT, TC, ET, RC for BRATS2024)
-            dice_scores = calculate_wt_tc_et_dice(logits.detach(), labels, dataset_version=dataset_version)
+            dice_scores = calculate_wt_tc_et_dice(logits_for_dice, labels, dataset_version=dataset_version)
             # 평균 Dice (WT/TC/ET 평균, BRATS2024는 RC 포함)
             mean_dice = dice_scores.mean()
             bsz = inputs.size(0)
@@ -517,7 +545,12 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                     else:
                         logits = model(inputs)
                     loss = criterion(logits, labels)
-                    dice_scores = calculate_wt_tc_et_dice(logits, labels, dataset_version=dataset_version)
+                    # Deep Supervision이 활성화된 경우 메인 출력만 사용
+                    if isinstance(logits, (list, tuple)):
+                        logits_for_dice = logits[0]  # 메인 출력만 사용
+                    else:
+                        logits_for_dice = logits
+                    dice_scores = calculate_wt_tc_et_dice(logits_for_dice, labels, dataset_version=dataset_version)
                     # WT/TC/ET 평균 (BRATS2024는 RC 포함)
                     mean_dice = dice_scores.mean()
                     all_sample_dices.append(mean_dice.item())  # 디버깅
@@ -586,11 +619,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             va_rc = 0.0
         val_dices.append(va_dice)
         
-        # Learning rate scheduling (ReduceLROnPlateau는 validation metric 필요)
-        # nnU-Net 스타일: validation loss를 모니터링
-        if is_main_process(rank):
-            print(f"[Training Debug] Epoch {epoch+1} - va_loss before scheduler.step: {va_loss}")
-        scheduler.step(va_loss)
+        # Learning rate scheduling
+        # PolyLR은 매 step마다 이미 호출되므로 epoch 끝에서는 호출하지 않음
         
         # Best model tracking 및 체크포인트 저장 (rank 0만)
         # Test set은 최종에만 평가하므로, epoch 중에는 평가하지 않음

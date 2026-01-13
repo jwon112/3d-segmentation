@@ -137,13 +137,14 @@ class UNet3D(nn.Module):
     
     Channel widths are configurable via size parameter ('xs', 's', 'm', 'l')
     """
-    def __init__(self, n_channels=4, n_classes=4, norm: str = 'in', bilinear=False, size: str = 's'):
+    def __init__(self, n_channels=4, n_classes=4, norm: str = 'in', bilinear=False, size: str = 's', deep_supervision: bool = True):
         super(UNet3D, self).__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.norm = (norm or 'in')
         self.bilinear = bilinear
         self.size = size
+        self.deep_supervision = deep_supervision
         
         # Get channel configuration
         channels = get_unet_channels(size)
@@ -167,6 +168,12 @@ class UNet3D(nn.Module):
         
         # Output
         self.outc = OutConv3D(enc_channels[0] // factor, n_classes)
+        
+        # Deep Supervision outputs (각 디코더 레벨에서 출력)
+        if deep_supervision:
+            self.ds4 = OutConv3D(enc_channels[3] // factor, n_classes)
+            self.ds3 = OutConv3D(enc_channels[2] // factor, n_classes)
+            self.ds2 = OutConv3D(enc_channels[1] // factor, n_classes)
 
     def forward(self, x):
         # Encoder
@@ -184,9 +191,18 @@ class UNet3D(nn.Module):
         d2 = self.dec2(d3, e2)
         d1 = self.dec1(d2, e1)
         
-        # Output
-        logits = self.outc(d1)
-        return logits
+        # Main output
+        main_output = self.outc(d1)
+        
+        # Deep Supervision outputs
+        if self.deep_supervision:
+            ds4 = self.ds4(d4)
+            ds3 = self.ds3(d3)
+            ds2 = self.ds2(d2)
+            # 깊은 레벨일수록 낮은 가중치를 위해 역순으로 반환 (main이 가장 중요)
+            return [main_output, ds2, ds3, ds4]
+        else:
+            return main_output
 
 
 # Convenience classes for backward compatibility
