@@ -594,6 +594,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         'quadbranch_spatial_centralized_concat_', 'quadbranch_spatial_distributed_concat_',
         'quadbranch_spatial_distributed_conv_',
         # 특정 모델 이름 (패턴이 아닌 정확한 이름)
+        'nnunet',
         'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s',
         'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s'
     ]
@@ -610,6 +611,21 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             f"Unknown model: '{model_name}'\n"
             f"Supported model patterns: {', '.join(SUPPORTED_MODEL_PATTERNS)}\n"
             f"Note: Most models support size suffixes: _xs, _s, _m, _l (e.g., 'dualbranch_18_shufflenet_v1_s')"
+        )
+    
+    # nnUNet PlainConvUNet을 직접 사용하는 별칭 모델
+    # 'nnunet'이라는 이름으로 호출하면 unet3d_s (InstanceNorm, 3D) 설정을 그대로 사용
+    if model_name == 'nnunet':
+        # 내부적으로는 동일한 get_model 로직을 재사용하여 PlainConvUNet 생성
+        return get_model(
+            model_name='unet3d_s',
+            n_channels=n_channels,
+            n_classes=n_classes,
+            dim=dim,
+            patch_size=patch_size,
+            use_pretrained=use_pretrained,
+            norm='in',            # nnUNet 스타일 InstanceNorm
+            coord_type=coord_type
         )
     
     # Helper function for consistent error handling
@@ -635,19 +651,75 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     MobileUNETR_3D_Wrapper = None
     
     # 2D 입력인 경우 3D로 확장 (unsqueeze depth dimension)
+    # nnUNet 공식 PlainConvUNet(외부 패키지)을 사용하여 3D U-Net을 생성
     if model_name.startswith('unet3d_') and not model_name.startswith('unet3d_stride_'):
         if dim == '2d':
-            # 2D 데이터는 depth 차원 추가가 필요
-            pass
+            # 2D 데이터는 depth 차원 추가가 필요하지만,
+            # PlainConvUNet은 3D Conv를 사용하므로 여기서는 3D 전용으로 제한
+            raise ValueError("PlainConvUNet 기반 'unet3d_' 모델은 dim='3d'에서만 지원됩니다.")
         try:
             base_name, size = parse_model_size(model_name)
         except Exception as e:
             raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
         
-        def _create_unet3d():
-            from models.model_3d_unet import UNet3D
-            return UNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
-        return _create_model_with_error_handling(model_name, _create_unet3d)
+        def _create_unet3d_plainconv():
+            import torch
+            try:
+                from dynamic_network_architectures.architectures.unet import PlainConvUNet
+            except ImportError as e:
+                raise ImportError(
+                    f"Failed to import PlainConvUNet from dynamic-network-architectures: {e}\n"
+                    f"Install it with: pip install 'dynamic-network-architectures>=0.4.1,<0.5'"
+                )
+            from models.channel_configs import get_unet_channels
+            
+            # 채널 설정은 기존 UNET_CHANNELS를 그대로 사용 (xs, s, m, l)
+            channels = get_unet_channels(size)
+            features_per_stage = channels['enc']  # 예: [32, 64, 128, 256, 320]
+            n_stages = len(features_per_stage)
+            
+            # nnUNet PlainConvUNet과 동일한 기본 설정
+            kernel_sizes = [[3, 3, 3]] * n_stages
+            strides = [[1, 1, 1]] + [[2, 2, 2]] * (n_stages - 1)
+            n_conv_per_stage = [2] * n_stages
+            n_conv_per_stage_decoder = [2] * (n_stages - 1)
+            
+            # 정규화 / 활성화 / bias 설정
+            if norm == 'in':
+                norm_op = torch.nn.InstanceNorm3d
+                norm_op_kwargs = {'eps': 1e-5, 'affine': True}
+            elif norm == 'bn':
+                norm_op = torch.nn.BatchNorm3d
+                norm_op_kwargs = {'eps': 1e-5, 'momentum': 0.1, 'affine': True, 'track_running_stats': True}
+            else:
+                raise ValueError(f"PlainConvUNet 3D currently supports norm='in' or 'bn', got '{norm}'")
+            
+            nonlin = torch.nn.LeakyReLU
+            nonlin_kwargs = {'inplace': True}
+            conv_bias = True
+            
+            model = PlainConvUNet(
+                input_channels=n_channels,
+                num_classes=n_classes,
+                n_stages=n_stages,
+                features_per_stage=features_per_stage,
+                conv_op=torch.nn.Conv3d,
+                kernel_sizes=kernel_sizes,
+                strides=strides,
+                n_conv_per_stage=n_conv_per_stage,
+                n_conv_per_stage_decoder=n_conv_per_stage_decoder,
+                conv_bias=conv_bias,
+                norm_op=norm_op,
+                norm_op_kwargs=norm_op_kwargs,
+                dropout_op=None,
+                dropout_op_kwargs=None,
+                nonlin=nonlin,
+                nonlin_kwargs=nonlin_kwargs,
+                deep_supervision=True,
+            )
+            return model
+        
+        return _create_model_with_error_handling(model_name, _create_unet3d_plainconv)
     elif model_name.startswith('unet3d_stride_'):
         # UNet3D variant with stride-2 conv downsampling - Support xs, s, m, l sizes
         try:

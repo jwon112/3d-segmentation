@@ -513,7 +513,7 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
         n_image_channels: int = 4,
         n_coord_channels: int = 3,
         n_classes: int = 4,
-        norm: str = "bn",
+        norm: str = "in",
         size: str = "s",
         include_coords: bool = True,
     ) -> None:
@@ -521,7 +521,7 @@ class CascadeShuffleNetV2SegNeXt3D_LKA(nn.Module):
         self.n_image_channels = n_image_channels
         self.n_coord_channels = n_coord_channels
         self.include_coords = include_coords and n_coord_channels > 0
-        self.norm = norm or "bn"
+        self.norm = norm or "in"
         self.size = size
 
         activation = get_activation_type(size)
@@ -703,7 +703,7 @@ def build_cascade_shufflenet_v2_segnext_lka(
     n_image_channels: int = 4,
     n_coord_channels: int = 3,
     n_classes: int = 4,
-    norm: str = "bn",
+    norm: str = "in",
     size: str = "s",
     include_coords: bool = True,
 ) -> CascadeShuffleNetV2SegNeXt3D_LKA:
@@ -1296,7 +1296,7 @@ class CascadeShuffleNetV2SegNeXt3D_P3D_LKA(nn.Module):
         n_image_channels: int = 4,
         n_coord_channels: int = 3,
         n_classes: int = 4,
-        norm: str = "bn",
+        norm: str = "in",
         size: str = "s",
         include_coords: bool = True,
     ) -> None:
@@ -1304,7 +1304,7 @@ class CascadeShuffleNetV2SegNeXt3D_P3D_LKA(nn.Module):
         self.n_image_channels = n_image_channels
         self.n_coord_channels = n_coord_channels
         self.include_coords = include_coords and n_coord_channels > 0
-        self.norm = norm or "bn"
+        self.norm = norm or "in"
         self.size = size
 
         activation = get_activation_type(size)
@@ -1487,7 +1487,7 @@ def build_cascade_shufflenet_v2_segnext_p3d_lka(
     n_image_channels: int = 4,
     n_coord_channels: int = 3,
     n_classes: int = 4,
-    norm: str = "bn",
+    norm: str = "in",
     size: str = "s",
     include_coords: bool = True,
 ) -> CascadeShuffleNetV2SegNeXt3D_P3D_LKA:

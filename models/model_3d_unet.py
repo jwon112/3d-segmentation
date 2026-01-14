@@ -53,18 +53,21 @@ def _make_activation(activation: str = 'relu', inplace: bool = True) -> nn.Modul
 
 
 class DoubleConv3D(nn.Module):
-    """3D Double Convolution 블록"""
+    """3D Double Convolution 블록
+    
+    nnUNet 스타일: LeakyReLU 활성화 함수, conv_bias=True 사용
+    """
     def __init__(self, in_channels, out_channels, mid_channels=None, norm: str = 'bn'):
         super().__init__()
         if not mid_channels:
             mid_channels = out_channels
         self.double_conv = nn.Sequential(
-            nn.Conv3d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
+            nn.Conv3d(in_channels, mid_channels, kernel_size=3, padding=1, bias=True),
             _make_norm3d(norm, mid_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv3d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.LeakyReLU(inplace=True),
+            nn.Conv3d(mid_channels, out_channels, kernel_size=3, padding=1, bias=True),
             _make_norm3d(norm, out_channels),
-            nn.ReLU(inplace=True)
+            nn.LeakyReLU(inplace=True)
         )
 
     def forward(self, x):
@@ -96,13 +99,16 @@ class Up3D(nn.Module):
             total_channels = in_channels + skip_channels
             self.conv = DoubleConv3D(total_channels, out_channels, in_channels // 2, norm=norm)
         else:
-            self.up = nn.ConvTranspose3d(in_channels, in_channels // 2, kernel_size=2, stride=2)
-            # bilinear=False일 때는 upsampling 후 skip connection과 concat하므로
-            # total_channels = (in_channels // 2) + skip_channels
-            # skip_channels가 None이면 기본값으로 in_channels // 2를 사용 (기존 동작 유지)
+            # nnUNet PlainConvUNet 스타일:
+            # ConvTranspose3d 출력 채널 수는 해당 decoder stage의 feature 수(out_channels)와 동일
+            #   - 예: bottleneck 320 -> upsample 256, skip 256 → concat 512 채널
+            self.up = nn.ConvTranspose3d(in_channels, out_channels, kernel_size=2, stride=2)
+            # bilinear=False일 때는 upsampling 후 skip connection과 concat
+            # total_channels = out_channels + skip_channels
+            # skip_channels가 None이면 기본값으로 out_channels를 사용
             if skip_channels is None:
-                skip_channels = in_channels // 2
-            total_channels = (in_channels // 2) + skip_channels
+                skip_channels = out_channels
+            total_channels = out_channels + skip_channels
             self.conv = DoubleConv3D(total_channels, out_channels, norm=norm)
 
     def forward(self, x1, x2):
@@ -150,21 +156,41 @@ class UNet3D(nn.Module):
         channels = get_unet_channels(size)
         enc_channels = channels['enc']
         
-        # Encoder
+        # Encoder (4 stages: [32, 64, 128, 256])
+        # nnUNet과 동일하게 encoder는 4개 stage만 사용
         self.enc1 = DoubleConv3D(n_channels, enc_channels[0], norm=self.norm)
         self.enc2 = Down3D(enc_channels[0], enc_channels[1], norm=self.norm)
         self.enc3 = Down3D(enc_channels[1], enc_channels[2], norm=self.norm)
         self.enc4 = Down3D(enc_channels[2], enc_channels[3], norm=self.norm)
         
-        # Bottleneck
+        # Bottleneck (nnUNet의 마지막 encoder stage와 동일한 채널 수)
+        # nnUNet에서는 encoder의 마지막 stage가 bottleneck 역할
+        # 우리는 별도 bottleneck 블록 사용하지만 채널 수는 동일하게 유지
         factor = 2 if bilinear else 1
-        self.bottleneck = DoubleConv3D(enc_channels[3], channels['bottleneck'] // factor, norm=self.norm)
+        bottleneck_channel = channels['bottleneck'] // factor
+        self.bottleneck = DoubleConv3D(enc_channels[3], bottleneck_channel, norm=self.norm)
         
         # Decoder
-        self.dec4 = Up3D(channels['bottleneck'], enc_channels[3] // factor, bilinear, norm=self.norm)
-        self.dec3 = Up3D(enc_channels[3], enc_channels[2] // factor, bilinear, norm=self.norm)
-        self.dec2 = Up3D(enc_channels[2], enc_channels[1] // factor, bilinear, norm=self.norm)
-        self.dec1 = Up3D(enc_channels[1], enc_channels[0] // factor, bilinear, norm=self.norm)
+        # nnUNet 스타일: decoder의 in_channels는 skip connection 채널과 일치해야 함
+        # dec4: bottleneck 출력과 enc4 skip connection 결합
+        #   - bottleneck 출력: bottleneck_channel
+        #   - enc4 skip: enc_channels[3] = 256
+        #   - bilinear=False일 때: ConvTranspose3d로 절반으로 줄이므로 bottleneck_channel // 2 + enc_channels[3]
+        #   - bilinear=True일 때: Upsample이므로 bottleneck_channel + enc_channels[3]
+        if bilinear:
+            # bilinear=True: Upsample 사용, skip과 concat
+            self.dec4 = Up3D(bottleneck_channel, enc_channels[3] // factor, bilinear, norm=self.norm, skip_channels=enc_channels[3])
+            self.dec3 = Up3D(enc_channels[3] // factor, enc_channels[2] // factor, bilinear, norm=self.norm, skip_channels=enc_channels[2])
+            self.dec2 = Up3D(enc_channels[2] // factor, enc_channels[1] // factor, bilinear, norm=self.norm, skip_channels=enc_channels[1])
+            self.dec1 = Up3D(enc_channels[1] // factor, enc_channels[0] // factor, bilinear, norm=self.norm, skip_channels=enc_channels[0])
+        else:
+            # bilinear=False: ConvTranspose3d 사용
+            # dec4: bottleneck_channel -> bottleneck_channel // 2 (upsample) + enc_channels[3] (skip) = bottleneck_channel // 2 + enc_channels[3]
+            # 하지만 bottleneck_channel이 이미 enc_channels[3]과 다를 수 있으므로, skip_channels를 명시적으로 지정
+            self.dec4 = Up3D(bottleneck_channel, enc_channels[3] // factor, bilinear, norm=self.norm, skip_channels=enc_channels[3])
+            self.dec3 = Up3D(enc_channels[3] // factor, enc_channels[2] // factor, bilinear, norm=self.norm, skip_channels=enc_channels[2])
+            self.dec2 = Up3D(enc_channels[2] // factor, enc_channels[1] // factor, bilinear, norm=self.norm, skip_channels=enc_channels[1])
+            self.dec1 = Up3D(enc_channels[1] // factor, enc_channels[0] // factor, bilinear, norm=self.norm, skip_channels=enc_channels[0])
         
         # Output
         self.outc = OutConv3D(enc_channels[0] // factor, n_classes)

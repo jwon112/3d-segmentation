@@ -24,8 +24,11 @@ UNET_CHANNELS = {
         'bottleneck': 256,  # bottleneck channel
     },
     's': {
-        'enc': [32, 64, 128, 256, 512],  # encoder channels
-        'bottleneck': 512,  # bottleneck channel
+        # encoder channels: 실제로는 4개 stage만 사용 [32, 64, 128, 256]
+        # 마지막 320은 nnUNet의 features_per_stage에 포함되지만, 실제 encoder는 4개만 사용
+        # nnUNet과의 비교를 위해 features_per_stage: [32, 64, 128, 256, 320]로 계산됨
+        'enc': [32, 64, 128, 256, 320],  # encoder channels (nnUNet style: capped at 320)
+        'bottleneck': 320,  # bottleneck channel (nnUNet style: capped at 320)
     },
     'm': {
         'enc': [64, 128, 256, 512, 1024],  # encoder channels
