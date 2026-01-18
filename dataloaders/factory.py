@@ -210,10 +210,20 @@ def get_data_loaders(
         elif hasattr(train_base_dataset, 'max_cache_size'):
             train_base_dataset.max_cache_size = 0
         
+        # samples_per_volume 자동 계산 (patch_size에 따라)
+        # 96³: 8 samples, 128³: 3 samples (8:3 비율)
+        patch_size = (128, 128, 128)  # 기본값
+        if patch_size[0] == 96:
+            samples_per_volume = 8
+        elif patch_size[0] == 128:
+            samples_per_volume = 3
+        else:
+            samples_per_volume = 16  # 기본값 (다른 크기의 경우)
+        
         train_dataset = BratsPatchDataset3D(
             base_dataset=train_base_dataset,
-            patch_size=(128, 128, 128),
-            samples_per_volume=16,  # 기본값: 볼륨당 16개 패치 샘플링
+            patch_size=patch_size,
+            samples_per_volume=samples_per_volume,  # 자동 계산된 값 사용
             augment=use_mri_augmentation,
             anisotropy_augment=anisotropy_augment,
             max_cache_size=50,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소

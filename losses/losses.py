@@ -43,23 +43,23 @@ def dice_loss(pred, target, smooth=1e-5):
     return 1 - dice.mean()
 
 
-def soft_dice_loss_with_squared_pred(pred, target, smooth=1e-5):
+def soft_dice_loss_nnunet(pred, target, smooth=1e-5):
     """
-    nnU-Net style Soft Dice Loss with Squared Prediction
+    nnU-Net style Soft Dice Loss (without squared prediction)
     
-    Squared prediction을 사용하여 작은 예측값에 더 큰 페널티를 줍니다.
-    이는 클래스 불균형 문제에 더 강건합니다.
+    nnUNet의 기본 Dice Loss 구현입니다.
+    Squared prediction을 사용하지 않습니다.
     
     Args:
         pred: 모델 출력 logits (B, C, H, W) 또는 (B, C, H, W, D)
         target: Ground truth 라벨 (B, H, W) 또는 (B, H, W, D)
-        smooth: Smoothing factor
+        smooth: Smoothing factor (기본값: 1e-5, nnUNet과 동일)
     
     Returns:
         Dice loss (scalar)
     """
     pred = F.softmax(pred, dim=1)
-    pred = pred ** 2  # Squared prediction (nnU-Net style)
+    # nnUNet은 squared prediction을 사용하지 않음
     
     if len(pred.shape) == 4:  # 2D: (B, C, H, W)
         target_one_hot = F.one_hot(target, num_classes=pred.shape[1]).permute(0, 3, 1, 2).float()
@@ -84,25 +84,24 @@ def combined_loss(pred, target, alpha=0.5):
     return alpha * ce_loss + (1 - alpha) * d_loss
 
 
-def combined_loss_nnunet_style(pred, target, alpha=0.3):
+def combined_loss_nnunet_style(pred, target, alpha=0.5):
     """
     nnU-Net style combined loss
     
-    - Uses Soft Dice Loss with Squared Prediction
+    - Uses Soft Dice Loss (without squared prediction, nnUNet 기본값)
     - Uses RobustCrossEntropyLoss for better compatibility
-    - Dice Loss 우선 (70%): alpha=0.3 means CE 30%, Dice 70%
-    - This is more robust to class imbalance
+    - Equal weights (50:50): alpha=0.5 means CE 50%, Dice 50% (nnUNet 기본값)
     
     Args:
         pred: 모델 출력 logits
         target: Ground truth 라벨
-        alpha: Cross Entropy weight (default 0.3 = 30% CE, 70% Dice)
+        alpha: Cross Entropy weight (default 0.5 = 50% CE, 50% Dice, nnUNet 기본값)
     
     Returns:
         Combined loss (scalar)
     """
     ce_loss = RobustCrossEntropyLoss()(pred, target)
-    d_loss = soft_dice_loss_with_squared_pred(pred, target)
+    d_loss = soft_dice_loss_nnunet(pred, target)
     return alpha * ce_loss + (1 - alpha) * d_loss
 
 

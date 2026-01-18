@@ -91,6 +91,8 @@ if __name__ == "__main__":
                        help='Use 4 modalities (T1, T1CE, T2, FLAIR) instead of 2 (T1CE, FLAIR). Default: False (uses 2 modalities)')
     parser.add_argument('--preprocessed_base_dir', type=str, default='/home/work/3D_/processed_data',
                        help='Base directory containing preprocessed H5 files (default: /home/work/3D_/processed_data). If None, uses default project data/ directory')
+    parser.add_argument('--results_dir', type=str, default=None,
+                       help='Results directory path. If specified, resumes training from this directory. If None, creates a new directory with timestamp.')
     
     args = parser.parse_args()
     
@@ -198,6 +200,7 @@ if __name__ == "__main__":
             coord_type=args.coord_type,
             use_4modalities=args.use_4modalities,
             preprocessed_base_dir=args.preprocessed_base_dir,
+            results_dir=args.results_dir,
         )
         
         # rank 확인 (환경 변수 또는 distributed 초기화 상태 확인)

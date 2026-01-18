@@ -30,7 +30,7 @@ from utils.runner.evaluation import evaluate_model
 from utils.runner.cascade_evaluation import load_roi_model_from_checkpoint, evaluate_segmentation_with_roi
 
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, cascade_infer_cfg=None, cascade_model_cfg=None, train_crops_per_center=1, train_crop_overlap=0.5, anisotropy_augment: bool = False, coord_type: str = 'none', use_4modalities: bool = False, preprocessed_base_dir=None):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, cascade_infer_cfg=None, cascade_model_cfg=None, train_crops_per_center=1, train_crop_overlap=0.5, anisotropy_augment: bool = False, coord_type: str = 'none', use_4modalities: bool = False, preprocessed_base_dir=None, results_dir=None, num_iterations_per_epoch=250, num_val_iterations_per_epoch=50):
     """3D Segmentation 통합 실험 실행
     
     Args:
@@ -46,6 +46,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         use_pretrained: pretrained 가중치 사용 여부 (기본: False, scratch 학습)
         dataset_version: 데이터셋 버전 'brats2021' 또는 'brats2018' (기본: 'brats2018')
         use_5fold: 5-fold cross-validation 사용 여부
+        results_dir: 실험 결과 저장 디렉토리 (None이면 새로 생성, 기존 경로 주면 재개)
     """
     
     # coord_type에 따라 include_coords와 coord_encoding_type 결정
@@ -62,8 +63,11 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
         raise ValueError(f"Unknown coord_type: {coord_type}. Must be 'none', 'simple', or 'hybrid'")
     
     # 실험 결과 저장 디렉토리
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir = f"experiment_result/integrated_experiment_results_{timestamp}"
+    # results_dir가 주어지면 그 경로 사용, 없으면 새로 생성
+    # 재개 여부는 training.py에서 latest.pth 존재 여부로 자동 결정됨
+    if results_dir is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_dir = f"experiment_result/integrated_experiment_results_{timestamp}"
     os.makedirs(results_dir, exist_ok=True)
     
     # Distributed setup (먼저 rank 확인)
@@ -422,6 +426,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         use_5fold=use_5fold,  # Cascade 모델 validation용
                         fold_idx=fold_idx,  # Cascade 모델 validation용
                         fold_split_dir=fold_split_dir,  # Cascade 모델 validation용
+                        num_iterations_per_epoch=num_iterations_per_epoch,
+                        num_val_iterations_per_epoch=num_val_iterations_per_epoch,
                     )
                     # BRATS2024는 RC 포함, 다른 버전은 RC 없음
                     if dataset_version == 'brats2024' and len(train_result) >= 9:

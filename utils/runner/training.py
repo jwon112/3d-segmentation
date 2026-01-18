@@ -117,16 +117,17 @@ def save_hybrid_stats_to_csv(model, results_dir: str, model_name: str, seed: int
     print(f"[HybridStats] Saved stats to {csv_path}")
 
 
-def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.001, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
+def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
                 sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True, results_dir=None, ckpt_path=None, train_crops_per_center=1, dataset_version='brats2021',
                 data_dir=None, cascade_infer_cfg=None, coord_type='none', preprocessed_dir=None, use_5fold=False, fold_idx=None, fold_split_dir=None,
-                roi_center_schedule='cosine', roi_center_warmup_ratio=0.0):
+                roi_center_schedule='cosine', roi_center_warmup_ratio=0.0, num_iterations_per_epoch=250, num_val_iterations_per_epoch=50):
     """모델 훈련 함수
     
     Args:
         use_nnunet_loss: If True, use nnU-Net style loss (Soft Dice with Squared Pred, Dice 70% + CE 30%)
                         If False, use standard combined loss (Dice 50% + CE 50%)
         results_dir: 실험 결과 저장 디렉토리 (체크포인트 저장 경로)
+                     이미 존재하는 경로면 자동으로 재개, 새로 생성되면 새로 시작
         ckpt_path: 체크포인트 저장 경로 (None이면 자동 생성)
     """
     # 훈련 시작 전 시드 재고정 (완전한 재현성 보장)
@@ -154,10 +155,12 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         if is_main_process(rank):
             print(f"[Deep Supervision] Disabled (single output)")
     
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    # nnUNet 기본 설정: SGD with momentum=0.99, nesterov=True, weight_decay=3e-5
+    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.99, nesterov=True, weight_decay=3e-5)
     
     # Learning rate scheduler: PolyLR (nnUNet 스타일)
-    max_steps = epochs * len(train_loader)
+    # nnUNet 방식: 고정 iteration per epoch 사용
+    max_steps = epochs * num_iterations_per_epoch
     scheduler = PolyLRScheduler(optimizer, initial_lr=lr, max_steps=max_steps, exponent=0.9)
     if is_main_process(rank):
         print(f"[PolyLR] Using Polynomial LR Scheduler (max_steps={max_steps}, exponent=0.9)")
@@ -170,7 +173,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     best_epoch = 0
     best_val_wt = best_val_tc = best_val_et = best_val_rc = 0.0
     epochs_without_improvement = 0  # Early stopping을 위한 카운터
-    early_stopping_patience = 20  # 20 epoch 동안 개선 없으면 중단
+    early_stopping_patience = 50  # 50 epoch 동안 개선 없으면 중단
     is_brats2024 = (dataset_version == 'brats2024')
     
     # Cascade 모델인지 확인
@@ -263,6 +266,60 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
     if ckpt_path is None:
         ckpt_path = os.path.join(results_dir, f"{model_name}_seed_{seed}_best.pth")
     
+    # Latest checkpoint 경로 (재개용)
+    latest_ckpt_path = os.path.join(results_dir, f"{model_name}_seed_{seed}_latest.pth")
+    if use_5fold and fold_idx is not None:
+        latest_ckpt_path = os.path.join(results_dir, f"{model_name}_seed_{seed}_fold_{fold_idx}_latest.pth")
+    
+    # 재개 로직: latest checkpoint가 있으면 자동으로 재개
+    # results_dir가 이미 존재하는 경로로 주어졌다면 재개 모드로 간주
+    start_epoch = 0
+    if os.path.exists(latest_ckpt_path):
+        if is_main_process(rank):
+            print(f"[Resume] Found checkpoint: {latest_ckpt_path}")
+        try:
+            checkpoint = torch.load(latest_ckpt_path, map_location=device)
+            
+            # DDP 모델 처리: 모든 프로세스에서 로드
+            model_to_load = model.module if hasattr(model, 'module') else model
+            model_to_load.load_state_dict(checkpoint['state_dict'])
+            
+            # 모든 프로세스에서 optimizer, scheduler 로드
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            scheduler.load_state_dict(checkpoint['scheduler'])
+            
+            start_epoch = checkpoint.get('epoch', 0)
+            best_val_dice = checkpoint.get('best_val_dice', 0.0)
+            best_epoch = checkpoint.get('best_epoch', 0)
+            best_val_wt = checkpoint.get('best_val_wt', 0.0)
+            best_val_tc = checkpoint.get('best_val_tc', 0.0)
+            best_val_et = checkpoint.get('best_val_et', 0.0)
+            if is_brats2024:
+                best_val_rc = checkpoint.get('best_val_rc', 0.0)
+            # Early stopping 상태 복원 (중요: 재개 시 이어서 작동)
+            epochs_without_improvement = checkpoint.get('epochs_without_improvement', 0)
+            
+            if is_main_process(rank):
+                print(f"[Resume] Resumed from epoch {start_epoch}/{epochs}")
+                print(f"[Resume] Best val dice: {best_val_dice:.4f} (epoch {best_epoch})")
+                print(f"[Resume] Early stopping: {epochs_without_improvement}/{early_stopping_patience} epochs without improvement")
+            
+            # DDP 동기화: 모든 프로세스가 체크포인트 로드 완료 대기
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                torch.distributed.barrier()
+        except Exception as e:
+            if is_main_process(rank):
+                print(f"[Resume] Warning: Failed to load checkpoint: {e}")
+                print(f"[Resume] Starting from scratch...")
+            start_epoch = 0
+            epochs_without_improvement = 0  # 재개 실패 시 초기화
+    
+    # Epoch 범위 체크: 재개 시 epoch가 총 epoch보다 크거나 같으면 새로 시작
+    if start_epoch >= epochs:
+        if is_main_process(rank):
+            print(f"[Resume] Warning: Checkpoint epoch {start_epoch} >= total epochs {epochs}. Starting from scratch.")
+        start_epoch = 0
+    
     # BatchNorm Warmup: 초기 running stats를 실제 데이터 분포로 업데이트
     # 검증 모드에서 잘못된 running stats 사용으로 인한 문제 해결
     # Multi-crop 모드에서는 메모리 부족 방지를 위해 warmup 건너뛰기 또는 최소화
@@ -298,7 +355,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
         if is_main_process(rank):
             print("\n[Warmup] Skipped (multi-crop mode to save memory).\n")
     
-    for epoch in range(epochs):
+    for epoch in range(start_epoch, epochs):
         # 각 epoch 시작 시 seed 재설정하여 재현성 보장 (Stochastic depth 등 랜덤 연산 포함)
         # base_seed + epoch을 사용하여 각 epoch마다 다른 seed를 가지지만, 같은 seed로 시작하면 같은 순서로 재현 가능
         epoch_seed = seed + epoch
@@ -343,8 +400,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                 print(f"  Multi-crop mode: {train_crops_per_center} crops per center ({train_crops_per_center**3} total crops per sample)")
         
         # Iterator를 명시적으로 사용하여 배치 대기 시간 측정
+        # nnUNet 방식: 고정 iteration per epoch 사용
         train_iter = iter(train_loader)
-        for step in tqdm(range(len(train_loader)), desc=f"Train {epoch+1}/{epochs}", leave=False):
+        for step in tqdm(range(num_iterations_per_epoch), desc=f"Train {epoch+1}/{epochs}", leave=False):
             # 배치를 받기 전 시간 측정 (대기 시간 포함)
             torch.cuda.synchronize()
             t_wait_start = time.time()
@@ -522,7 +580,14 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
             with torch.no_grad():
                 debug_printed = False
                 all_sample_dices = []  # 디버깅: 모든 샘플의 Dice 수집
-                for idx, batch_data in enumerate(tqdm(val_loader, desc=f"Val   {epoch+1}/{epochs}", leave=False)):
+                # nnUNet 방식: 고정 iteration per epoch 사용
+                val_iter = iter(val_loader)
+                for idx in tqdm(range(num_val_iterations_per_epoch), desc=f"Val   {epoch+1}/{epochs}", leave=False):
+                    try:
+                        batch_data = next(val_iter)
+                    except StopIteration:
+                        val_iter = iter(val_loader)
+                        batch_data = next(val_iter)
                     # 포그라운드 좌표가 포함될 수 있으므로 처리
                     if len(batch_data) == 3:
                         inputs, labels, _ = batch_data  # fg_coords_dict 무시
@@ -648,10 +713,30 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.00
                                 pass
                         if isinstance(getattr(m, '_buffers', None), dict) and bname in m._buffers:
                             m._buffers.pop(bname, None)
+                # Best checkpoint: 모델 가중치만 저장 (평가용, 기존 호환성 유지)
                 torch.save(model_to_save.state_dict(), ckpt_path)
                 print(f"[Epoch {epoch+1}] Saved best checkpoint (Val Dice: {va_dice:.4f}) to {ckpt_path}")
         else:
             epochs_without_improvement += 1  # 개선 없음
+        
+        # Latest checkpoint: 매 epoch마다 저장 (재개용)
+        if is_main_process(rank):
+            model_to_save = model.module if hasattr(model, 'module') else model
+            checkpoint = {
+                'epoch': epoch + 1,
+                'state_dict': model_to_save.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'scheduler': scheduler.state_dict(),
+                'best_val_dice': best_val_dice,
+                'best_epoch': best_epoch,
+                'best_val_wt': best_val_wt,
+                'best_val_tc': best_val_tc,
+                'best_val_et': best_val_et,
+                'epochs_without_improvement': epochs_without_improvement,
+            }
+            if is_brats2024:
+                checkpoint['best_val_rc'] = best_val_rc
+            torch.save(checkpoint, latest_ckpt_path)
         
         # Early stopping 체크
         if epochs_without_improvement >= early_stopping_patience:

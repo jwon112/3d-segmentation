@@ -71,12 +71,6 @@ class BratsPatchDataset3D(Dataset):
         self.augment = augment
         self.anisotropy_augment = anisotropy_augment
         self.max_cache_size = max_cache_size
-
-        self.index_map = []
-        for vidx in range(len(self.base_dataset)):
-            for s in range(self.samples_per_volume):
-                sampling_type = 0 if (s % 3 == 0) else 1
-                self.index_map.append((vidx, s, sampling_type))
         
         # LRU 캐시 (worker별로 독립적으로 유지됨)
         self._volume_cache = OrderedDict()
@@ -85,7 +79,9 @@ class BratsPatchDataset3D(Dataset):
         self._cache_misses = 0
 
     def __len__(self) -> int:
-        return len(self.index_map)
+        # nnUNet 방식: 실제 볼륨 수 반환
+        # 실제 학습은 num_iterations_per_epoch로 제어됨
+        return len(self.base_dataset)
     
     def get_cache_stats(self):
         """캐시 통계 반환 (디버깅용)"""
@@ -101,16 +97,23 @@ class BratsPatchDataset3D(Dataset):
         }
 
     def __getitem__(self, idx):
-        vidx, _, sampling_type = self.index_map[idx]
+        # nnUNet 방식: 매번 랜덤 볼륨 선택
+        # idx는 무시하고 매번 랜덤하게 선택
+        num_volumes = len(self.base_dataset)
         
-        # Subset 인덱스 처리: Subset인 경우 실제 인덱스로 변환
+        # Subset 인덱스 처리: Subset인 경우 실제 인덱스 중에서 랜덤 선택
         if hasattr(self.base_dataset, 'indices'):
-            # Subset인 경우: 원본 데이터셋의 실제 인덱스 사용
-            actual_vidx = self.base_dataset.indices[vidx]
             base_dataset = self.base_dataset.dataset
+            vidx = torch.randint(0, num_volumes, (1,)).item()
+            actual_vidx = self.base_dataset.indices[vidx]
         else:
-            actual_vidx = vidx
+            # 일반 데이터셋: 직접 랜덤 선택
+            actual_vidx = torch.randint(0, num_volumes, (1,)).item()
             base_dataset = self.base_dataset
+        
+        # 샘플링 타입 결정: 포그라운드 오버샘플링 비율 (1:2)
+        fg_count = (self.samples_per_volume + 2) // 3
+        sampling_type = 0 if torch.randint(0, self.samples_per_volume, (1,)).item() < fg_count else 1
         
         # LRU 캐시 확인 및 업데이트
         cache_key = (id(base_dataset), actual_vidx)  # 데이터셋 인스턴스와 인덱스 조합
