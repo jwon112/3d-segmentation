@@ -30,21 +30,26 @@ def get_project_root():
 
 
 def _normalize_volume_np(vol):
-    """퍼센타일 클리핑 + Z-score 정규화 (비영점 마스크 기준, 배경은 0 유지)"""
+    """
+    nnUNet 스타일 Z-score 정규화 (비영점 마스크 기준, 배경은 0 유지)
+    
+    nnUNet은 MRI의 경우 percentile clipping 없이 Z-score만 사용합니다.
+    CT의 경우에만 percentile clipping을 사용합니다.
+    """
     nz = vol > 0
     if nz.sum() == 0:
         return vol.astype(np.float32)
 
+    # 비영점 영역의 값만 사용하여 Z-score 계산
     v = vol[nz]
-    lo, hi = np.percentile(v, [0.5, 99.5])
-    v_clipped = np.clip(v, lo, hi)
-    m = v_clipped.mean()
-    s = v_clipped.std()
+    m = v.mean()
+    s = v.std()
     if s < 1e-8:
         s = 1e-8
 
+    # Z-score normalization (percentile clipping 없음)
     out = np.zeros_like(vol, dtype=np.float32)
-    out[nz] = ((v_clipped - m) / s).astype(np.float32)
+    out[nz] = ((v - m) / s).astype(np.float32)
     return out
 
 

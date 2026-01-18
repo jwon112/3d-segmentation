@@ -118,19 +118,30 @@ class BratsDataset3D(Dataset):
         
         samples = []
         if self.dataset_version == 'brats2021':
-            brats2021_dir = os.path.join(self.data_dir, 'BRATS2021', 'BraTS2021_Training_Data')
-            if not os.path.exists(brats2021_dir):
-                raise FileNotFoundError(
-                    f"BraTS2021 dataset not found at {brats2021_dir}\n"
-                    f"Please ensure the dataset is extracted in the correct directory."
-                )
-            print(f"Loading BraTS2021 dataset from {brats2021_dir}")
-            for patient_dir in sorted(os.listdir(brats2021_dir)):
-                patient_path = os.path.join(brats2021_dir, patient_dir)
-                if os.path.isdir(patient_path):
-                    samples.append(patient_path)
-            if not samples:
-                raise ValueError(f"No patient data found in {brats2021_dir}")
+            # preprocessed_dir이 있으면 H5 파일 목록을 직접 가져옴
+            if self.preprocessed_dir and os.path.exists(self.preprocessed_dir):
+                print(f"Loading BraTS2021 dataset from preprocessed directory: {self.preprocessed_dir}")
+                for h5_file in sorted(Path(self.preprocessed_dir).glob('*.h5')):
+                    # H5 파일 경로를 샘플로 저장 (__getitem__에서 사용)
+                    samples.append(str(h5_file.resolve()))
+                if not samples:
+                    raise ValueError(f"No H5 files found in preprocessed directory: {self.preprocessed_dir}")
+                print(f"  Found {len(samples)} preprocessed H5 files")
+            else:
+                # 원본 디렉토리에서 환자 목록 가져옴 (fallback)
+                brats2021_dir = os.path.join(self.data_dir, 'BRATS2021', 'BraTS2021_Training_Data')
+                if not os.path.exists(brats2021_dir):
+                    raise FileNotFoundError(
+                        f"BraTS2021 dataset not found at {brats2021_dir}\n"
+                        f"Please ensure the dataset is extracted in the correct directory or provide preprocessed_dir."
+                    )
+                print(f"Loading BraTS2021 dataset from {brats2021_dir}")
+                for patient_dir in sorted(os.listdir(brats2021_dir)):
+                    patient_path = os.path.join(brats2021_dir, patient_dir)
+                    if os.path.isdir(patient_path):
+                        samples.append(patient_path)
+                if not samples:
+                    raise ValueError(f"No patient data found in {brats2021_dir}")
         elif self.dataset_version == 'brats2018':
             brats2018_dir = os.path.join(self.data_dir, 'BRATS2018', 'MICCAI_BraTS_2018_Data_Training')
             if not os.path.exists(brats2018_dir):

@@ -219,6 +219,9 @@ def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_
         real_model = model.module if hasattr(model, 'module') else model
         device_obj = torch.device(device)
         
+        # 모델을 device로 이동 (CPU에 있을 수 있음)
+        real_model = real_model.to(device_obj)
+        
         # 입력 seed 고정 (재현성 향상)
         torch.manual_seed(42)
         if torch.cuda.is_available():
@@ -232,7 +235,8 @@ def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_
             real_model.train()
             with torch.enable_grad():
                 output_warmup = real_model(dummy_input_warmup)
-                if isinstance(output_warmup, tuple):
+                # Deep Supervision 모델은 리스트나 튜플로 출력을 반환할 수 있음
+                if isinstance(output_warmup, (tuple, list)):
                     loss_warmup = output_warmup[0].sum()
                 else:
                     loss_warmup = output_warmup.sum()
@@ -295,7 +299,7 @@ def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_
                         # Output 텐서의 메모리 크기 계산
                         if isinstance(output, torch.Tensor):
                             output_mem = output.element_size() * output.nelement()
-                        elif isinstance(output, tuple):
+                        elif isinstance(output, (tuple, list)):
                             output_mem = sum(
                                 t.element_size() * t.nelement() 
                                 if isinstance(t, torch.Tensor) else 0 
@@ -320,7 +324,8 @@ def calculate_pam(model, input_size=(1, 4, 64, 64, 64), mode='inference', stage_
                 # Forward pass
                 output = real_model(dummy_input)
                 # Dummy loss for backward
-                if isinstance(output, tuple):
+                # Deep Supervision 모델은 리스트나 튜플로 출력을 반환할 수 있음
+                if isinstance(output, (tuple, list)):
                     loss = output[0].sum()
                 else:
                     loss = output.sum()
