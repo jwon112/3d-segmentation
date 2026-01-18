@@ -147,9 +147,18 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01
     
     # Deep Supervision이 활성화된 경우 wrapper 사용
     if use_deep_supervision:
-        criterion = DeepSupervisionWrapper(base_loss, weight_factors=[1.0, 0.5, 0.25, 0.125])
+        # nnUNet 방식: 동적으로 가중치 계산
+        # weights = [1, 0.5, 0.25, 0.125, ...] 형태로 지수적으로 감소
+        num_outputs = len(dummy_output)
+        import numpy as np
+        weights = np.array([1.0 / (2 ** i) for i in range(num_outputs)], dtype=np.float32)
+        weights[-1] = 0  # 마지막 weight는 0 (가장 낮은 해상도 출력 제외)
+        weights = weights / weights.sum()  # 정규화하여 합이 1이 되도록
+        weights = weights.tolist()
+        
+        criterion = DeepSupervisionWrapper(base_loss, weight_factors=weights)
         if is_main_process(rank):
-            print(f"[Deep Supervision] Enabled with weights [1.0, 0.5, 0.25, 0.125]")
+            print(f"[Deep Supervision] Enabled with {num_outputs} outputs, weights: {weights}")
     else:
         criterion = base_loss
         if is_main_process(rank):

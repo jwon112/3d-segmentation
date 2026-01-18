@@ -40,6 +40,7 @@ def get_data_loaders(
     train_crops_per_center: int = 1,
     train_crop_overlap: float = 0.5,
     anisotropy_augment: bool = False,
+    use_nnunet_augmentation: bool = False,
     coord_type: str = 'none',
     preprocessed_dir: Optional[str] = None,
 ):
@@ -224,8 +225,9 @@ def get_data_loaders(
             base_dataset=train_base_dataset,
             patch_size=patch_size,
             samples_per_volume=samples_per_volume,  # 자동 계산된 값 사용
-            augment=use_mri_augmentation,
+            augment=use_mri_augmentation if not use_nnunet_augmentation else False,  # nnUNet augmentation 사용 시 기존 augmentation 비활성화
             anisotropy_augment=anisotropy_augment,
+            nnunet_augmentation=use_nnunet_augmentation,
             max_cache_size=50,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
         )
         

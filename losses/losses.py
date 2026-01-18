@@ -43,7 +43,7 @@ def dice_loss(pred, target, smooth=1e-5):
     return 1 - dice.mean()
 
 
-def soft_dice_loss_nnunet(pred, target, smooth=1e-5):
+def soft_dice_loss_nnunet(pred, target, smooth=1e-5, do_bg=False):
     """
     nnU-Net style Soft Dice Loss (without squared prediction)
     
@@ -54,6 +54,7 @@ def soft_dice_loss_nnunet(pred, target, smooth=1e-5):
         pred: 모델 출력 logits (B, C, H, W) 또는 (B, C, H, W, D)
         target: Ground truth 라벨 (B, H, W) 또는 (B, H, W, D)
         smooth: Smoothing factor (기본값: 1e-5, nnUNet과 동일)
+        do_bg: Background를 포함할지 여부 (기본값: False, nnUNet 일반 segmentation과 동일)
     
     Returns:
         Dice loss (scalar)
@@ -70,6 +71,11 @@ def soft_dice_loss_nnunet(pred, target, smooth=1e-5):
         intersection = (pred * target_one_hot).sum(dim=(2, 3, 4))
         union = pred.sum(dim=(2, 3, 4)) + target_one_hot.sum(dim=(2, 3, 4))
     
+    # do_bg=False인 경우 background (class 0) 제외
+    if not do_bg:
+        intersection = intersection[:, 1:]  # (B, C-1)
+        union = union[:, 1:]  # (B, C-1)
+    
     dice = (2.0 * intersection + smooth) / (union + smooth)
     return 1 - dice.mean()
 
@@ -84,24 +90,26 @@ def combined_loss(pred, target, alpha=0.5):
     return alpha * ce_loss + (1 - alpha) * d_loss
 
 
-def combined_loss_nnunet_style(pred, target, alpha=0.5):
+def combined_loss_nnunet_style(pred, target, alpha=0.5, do_bg=False):
     """
     nnU-Net style combined loss
     
     - Uses Soft Dice Loss (without squared prediction, nnUNet 기본값)
     - Uses RobustCrossEntropyLoss for better compatibility
     - Equal weights (50:50): alpha=0.5 means CE 50%, Dice 50% (nnUNet 기본값)
+    - do_bg=False: Background 제외 (nnUNet 일반 segmentation 기본값)
     
     Args:
         pred: 모델 출력 logits
         target: Ground truth 라벨
         alpha: Cross Entropy weight (default 0.5 = 50% CE, 50% Dice, nnUNet 기본값)
+        do_bg: Background를 포함할지 여부 (default False, nnUNet 일반 segmentation과 동일)
     
     Returns:
         Combined loss (scalar)
     """
     ce_loss = RobustCrossEntropyLoss()(pred, target)
-    d_loss = soft_dice_loss_nnunet(pred, target)
+    d_loss = soft_dice_loss_nnunet(pred, target, do_bg=do_bg)
     return alpha * ce_loss + (1 - alpha) * d_loss
 
 

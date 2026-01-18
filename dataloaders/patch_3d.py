@@ -53,6 +53,100 @@ def _apply_anisotropy_resize_patch(
     return img_out, msk_out
 
 
+def _apply_nnunet_augmentation(
+    img_patch: torch.Tensor,
+    msk_patch: torch.Tensor,
+    patch_size: Tuple[int, int, int],
+):
+    """
+    nnUNet 스타일 augmentation 적용
+    
+    nnUNet 기본 augmentation:
+    1. Mirroring (모든 축에 대해 독립적으로, p=0.5)
+    2. Rotation (p=0.2, 각 축별로 독립적으로)
+    3. Scaling (p=0.2, scale=(0.7, 1.4), 모든 축 동기화)
+    4. GaussianNoise (p=0.1, variance=(0, 0.1))
+    5. GaussianBlur (p=0.2, sigma=(0.5, 1.0))
+    6. Brightness (p=0.15, multiplier=(0.75, 1.25))
+    
+    Args:
+        img_patch: (C, H, W, D)
+        msk_patch: (H, W, D)
+        patch_size: (H, W, D)
+    
+    Returns:
+        Augmented img_patch, msk_patch
+    """
+    # 1. Mirroring (모든 축에 대해 독립적으로)
+    if torch.rand(1).item() < 0.5:
+        img_patch = torch.flip(img_patch, dims=(2,))  # H axis
+        msk_patch = torch.flip(msk_patch, dims=(1,))
+    if torch.rand(1).item() < 0.5:
+        img_patch = torch.flip(img_patch, dims=(3,))  # W axis
+        msk_patch = torch.flip(msk_patch, dims=(2,))
+    if torch.rand(1).item() < 0.5:
+        img_patch = torch.flip(img_patch, dims=(4,))  # D axis
+        msk_patch = torch.flip(msk_patch, dims=(3,))
+    
+    # 2. Rotation (p=0.2, 각 축별로 독립적으로)
+    # nnUNet은 각 축별로 독립적으로 회전하지만, 여기서는 간단하게 XY plane 회전만 적용
+    if torch.rand(1).item() < 0.2:
+        # XY plane rotation (90, 180, 270도)
+        k = torch.randint(1, 4, (1,)).item()
+        img_patch = torch.rot90(img_patch, k=k, dims=(3, 4))  # W, D axes
+        msk_patch = torch.rot90(msk_patch, k=k, dims=(2, 3))
+    
+    # 3. Scaling (p=0.2, scale=(0.7, 1.4), 모든 축 동기화)
+    if torch.rand(1).item() < 0.2:
+        scale = 0.7 + 0.7 * torch.rand(1).item()  # (0.7, 1.4)
+        # 모든 축에 동일한 scale 적용
+        H, W, D = patch_size
+        new_size = (int(H * scale), int(W * scale), int(D * scale))
+        # 최소 크기 보장
+        new_size = (max(2, new_size[0]), max(2, new_size[1]), max(2, new_size[2]))
+        
+        # Interpolate
+        img_patch_5d = img_patch.unsqueeze(0)  # (1, C, H, W, D)
+        msk_patch_4d = msk_patch.unsqueeze(0).unsqueeze(0).float()  # (1, 1, H, W, D)
+        
+        img_scaled = F.interpolate(img_patch_5d, size=new_size, mode='trilinear', align_corners=False)
+        msk_scaled = F.interpolate(msk_patch_4d, size=new_size, mode='nearest')
+        
+        # 다시 원래 크기로
+        img_patch = F.interpolate(img_scaled, size=patch_size, mode='trilinear', align_corners=False).squeeze(0)
+        msk_patch = F.interpolate(msk_scaled, size=patch_size, mode='nearest').squeeze(0).squeeze(0).long()
+    
+    # 4. GaussianNoise (p=0.1, variance=(0, 0.1))
+    if torch.rand(1).item() < 0.1:
+        noise_variance = torch.rand(1).item() * 0.1  # (0, 0.1)
+        noise = torch.randn_like(img_patch) * math.sqrt(noise_variance)
+        img_patch = img_patch + noise
+    
+    # 5. GaussianBlur (p=0.2, sigma=(0.5, 1.0))
+    # 간단한 구현: 작은 kernel로 blur 효과
+    if torch.rand(1).item() < 0.2:
+        sigma = 0.5 + 0.5 * torch.rand(1).item()  # (0.5, 1.0)
+        kernel_size = max(3, int(2 * sigma * 2 + 1))  # 최소 3
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        
+        # 간단한 가우시안 블러: 각 채널별로 독립적으로 적용
+        # 실제로는 3D Gaussian blur를 구현해야 하지만, 여기서는 간단하게
+        # 각 축에 대해 1D Gaussian blur를 순차적으로 적용
+        for c in range(img_patch.shape[0]):
+            channel = img_patch[c:c+1]  # (1, H, W, D)
+            # 간단한 smoothing (실제 Gaussian blur는 더 복잡)
+            channel = F.avg_pool3d(channel.unsqueeze(0), kernel_size=3, stride=1, padding=1)
+            img_patch[c] = channel.squeeze(0).squeeze(0)
+    
+    # 6. Brightness (p=0.15, multiplier=(0.75, 1.25))
+    if torch.rand(1).item() < 0.15:
+        multiplier = 0.75 + 0.5 * torch.rand(1).item()  # (0.75, 1.25)
+        img_patch = img_patch * multiplier
+    
+    return img_patch, msk_patch
+
+
 class BratsPatchDataset3D(Dataset):
     """3D BraTS 패치 데이터셋 (학습용) - nnU-Net 스타일 샘플링"""
 
@@ -63,6 +157,7 @@ class BratsPatchDataset3D(Dataset):
         samples_per_volume: int = 16,
         augment: bool = False,
         anisotropy_augment: bool = False,
+        nnunet_augmentation: bool = False,
         max_cache_size: int = 50,
     ):
         self.base_dataset = base_dataset
@@ -70,6 +165,7 @@ class BratsPatchDataset3D(Dataset):
         self.samples_per_volume = samples_per_volume
         self.augment = augment
         self.anisotropy_augment = anisotropy_augment
+        self.nnunet_augmentation = nnunet_augmentation
         self.max_cache_size = max_cache_size
         
         # LRU 캐시 (worker별로 독립적으로 유지됨)
@@ -209,6 +305,12 @@ class BratsPatchDataset3D(Dataset):
         return img_patch, msk_patch
 
     def _maybe_augment(self, img_patch: torch.Tensor, msk_patch: torch.Tensor):
+        # nnUNet augmentation이 활성화된 경우 우선 적용
+        if self.nnunet_augmentation:
+            img_patch, msk_patch = _apply_nnunet_augmentation(img_patch, msk_patch, self.patch_size)
+            return img_patch, msk_patch
+        
+        # 기존 augmentation 로직
         if not self.augment and not self.anisotropy_augment:
             return img_patch, msk_patch
 
