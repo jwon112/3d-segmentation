@@ -448,7 +448,12 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01
             t_fwd = time.time()
             fwd_times.append(t_fwd - t_load)
             
-            loss = criterion(logits, labels)
+            # Deep Supervision wrapper가 적용되었지만 실제 출력이 Tensor인 경우 처리
+            if isinstance(criterion, DeepSupervisionWrapper) and not isinstance(logits, (list, tuple)):
+                # wrapper를 사용하지 않고 base_loss 직접 사용
+                loss = base_loss(logits, labels)
+            else:
+                loss = criterion(logits, labels)
             loss.backward()
             optimizer.step()
             
@@ -618,7 +623,12 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01
                         )
                     else:
                         logits = model(inputs)
-                    loss = criterion(logits, labels)
+                    # Deep Supervision wrapper가 적용되었지만 실제 출력이 Tensor인 경우 처리
+                    if isinstance(criterion, DeepSupervisionWrapper) and not isinstance(logits, (list, tuple)):
+                        # wrapper를 사용하지 않고 base_loss 직접 사용
+                        loss = base_loss(logits, labels)
+                    else:
+                        loss = criterion(logits, labels)
                     # Deep Supervision이 활성화된 경우 메인 출력만 사용
                     if isinstance(logits, (list, tuple)):
                         logits_for_dice = logits[0]  # 메인 출력만 사용
