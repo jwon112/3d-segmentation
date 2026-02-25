@@ -27,10 +27,9 @@ from utils.result_utils import (
 )
 from utils.runner.training import train_model
 from utils.runner.evaluation import evaluate_model
-from utils.runner.cascade_evaluation import load_roi_model_from_checkpoint, evaluate_segmentation_with_roi
 
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, use_nnunet_augmentation=False, cascade_infer_cfg=None, cascade_model_cfg=None, train_crops_per_center=1, train_crop_overlap=0.5, anisotropy_augment: bool = False, coord_type: str = 'none', use_4modalities: bool = False, preprocessed_base_dir=None, results_dir=None, num_iterations_per_epoch=250, num_val_iterations_per_epoch=50):
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, use_nnunet_augmentation=False, train_crops_per_center=1, train_crop_overlap=0.5, anisotropy_augment: bool = False, coord_type: str = 'none', use_4modalities: bool = False, preprocessed_base_dir=None, results_dir=None, num_iterations_per_epoch=250, num_val_iterations_per_epoch=50):
     """3D Segmentation 통합 실험 실행
     
     Args:
@@ -220,13 +219,6 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     # 모델별 결정성 보장: 모델 초기화/샘플링 RNG 고정
                     set_seed(seed)
                     
-                    # Cascade 모델인 경우 ROI 모델 정보 확인
-                    roi_model_name_for_result = None
-                    if model_name.startswith('cascade_') and cascade_model_cfg:
-                        roi_model_name_for_result = cascade_model_cfg.get('roi_model_name')
-                        if is_main_process(rank):
-                            print(f"Cascade model detected. ROI model: {roi_model_name_for_result}")
-                    
                     # 모델에 따라 use_4modalities 및 n_channels 결정
                     # 사용자가 명시적으로 지정한 경우 그 값을 사용, 아니면 모델 기본값 사용
                     model_config = get_model_config(model_name)
@@ -298,11 +290,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         model = model.to(device)
                         # 일부 모델은 조건부 파라미터 사용으로 인해 find_unused_parameters=True 필요
                         # - GhostNet: 일부 파라미터가 사용되지 않을 수 있음
-                        # - CascadeSwinUNETR: 조건부 skip connection으로 일부 파라미터가 사용되지 않을 수 있음
-                        use_find_unused = (
-                            'ghostnet' in model_name.lower() or 
-                            'cascade_swin_unetr' in model_name.lower()
-                        )
+                        use_find_unused = 'ghostnet' in model_name.lower()
                         model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=use_find_unused)
                     
                     # 모델 정보 출력 (rank 0에서만)
@@ -347,23 +335,10 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         print("=" * 50)
                     
                     # 입력 크기 설정 (PAM, Latency 공용)
-                    # Cascade 모델은 n_channels(모달리티 수) + coord_channels
-                    actual_n_channels = n_channels
-                    if model_name.startswith('cascade_'):
-                        if coord_type == 'none':
-                            coord_channels = 0
-                        elif coord_type == 'simple':
-                            coord_channels = 3
-                        elif coord_type == 'hybrid':
-                            coord_channels = 9
-                        else:
-                            coord_channels = 0
-                        actual_n_channels = n_channels + coord_channels  # 모달리티 수 + coord channels
-                    
                     if dim == '2d':
-                        input_size = (1, actual_n_channels, *INPUT_SIZE_2D)
+                        input_size = (1, n_channels, *INPUT_SIZE_2D)
                     else:
-                        input_size = (1, actual_n_channels, *INPUT_SIZE_3D)
+                        input_size = (1, n_channels, *INPUT_SIZE_3D)
 
                     # PAM 계산 (모델 정보 출력 직후 바로 측정)
                     pam_train_list = []
@@ -372,9 +347,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     pam_inference_stages = {}
                     if is_main_process(rank):
                         if dim == '2d':
-                            pam_input_size = (1, actual_n_channels, *INPUT_SIZE_2D)
+                            pam_input_size = (1, n_channels, *INPUT_SIZE_2D)
                         else:
-                            pam_input_size = (1, actual_n_channels, 128, 128, 128)
+                            pam_input_size = (1, n_channels, 128, 128, 128)
                         try:
                             pam_train_list, pam_train_stages = calculate_pam(
                                 model, input_size=pam_input_size, mode='train', stage_wise=True, device=device
@@ -420,13 +395,6 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim=dim, use_nnunet_loss=use_nnunet_loss,
                         results_dir=results_dir, ckpt_path=ckpt_path, train_crops_per_center=train_crops_per_center,
                         dataset_version=dataset_version,
-                        data_dir=data_path,  # Cascade 모델 validation용
-                        cascade_infer_cfg=cascade_infer_cfg,  # Cascade 모델 validation용
-                        coord_type=coord_type,  # Cascade 모델 validation용
-                        preprocessed_dir=os.path.join(preprocessed_base_dir, dataset_version.upper()) if preprocessed_base_dir else None,  # Cascade 모델 validation용
-                        use_5fold=use_5fold,  # Cascade 모델 validation용
-                        fold_idx=fold_idx,  # Cascade 모델 validation용
-                        fold_split_dir=fold_split_dir,  # Cascade 모델 validation용
                         num_iterations_per_epoch=num_iterations_per_epoch,
                         num_val_iterations_per_epoch=num_val_iterations_per_epoch,
                     )
@@ -439,9 +407,9 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     
                     # FLOPs 계산 (모델이 device에 있는 상태에서)
                     if dim == '2d':
-                        flops = calculate_flops(model, input_size=(1, actual_n_channels, *INPUT_SIZE_2D))
+                        flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_2D))
                     else:
-                        flops = calculate_flops(model, input_size=(1, actual_n_channels, *INPUT_SIZE_3D))
+                        flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
                     if is_main_process(rank):
                         print(f"FLOPs: {flops:,}")
                     
@@ -511,7 +479,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             if dim == '2d':
                                 flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_2D))
                             else:
-                                flops = calculate_flops(model, input_size=(1, actual_n_channels, *INPUT_SIZE_3D))
+                                flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
                             if is_main_process(rank):
                                 print(f"FLOPs after deploy: {flops:,}")
                             # Recalculate PAM after deploy mode (may be different due to fused branches)
@@ -530,15 +498,6 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                                 except Exception as e:
                                     print(f"Warning: Failed to recalculate PAM after deploy: {e}")
 
-                    # Test set 평가
-                    # evaluate_model이 cascade 모델을 자동으로 감지하여 ROI 기반 평가 수행
-                    # cascade_infer_cfg에서 crops_per_center, crop_overlap, use_blending, batch_size, roi_batch_size 가져오기
-                    eval_crops_per_center = cascade_infer_cfg.get('crops_per_center', 1) if cascade_infer_cfg else 1
-                    eval_crop_overlap = cascade_infer_cfg.get('crop_overlap', 0.5) if cascade_infer_cfg else 0.5
-                    eval_use_blending = cascade_infer_cfg.get('use_blending', True) if cascade_infer_cfg else True
-                    eval_batch_size = cascade_infer_cfg.get('batch_size', 1) if cascade_infer_cfg else 1
-                    eval_roi_batch_size = cascade_infer_cfg.get('roi_batch_size', None) if cascade_infer_cfg else None
-                    
                     metrics = evaluate_model(
                         model,
                         test_loader,
@@ -551,41 +510,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         results_dir=results_dir,
                         coord_type=coord_type,
                         dataset_version=dataset_version,
-                        data_dir=data_path,  # Cascade 모델 평가용
-                        seed=seed,  # Cascade 모델 평가용
-                        use_5fold=use_5fold,  # Cascade 모델 평가용
-                        fold_idx=fold_idx,  # Cascade 모델 평가용
-                        fold_split_dir=fold_split_dir,  # Cascade 모델 평가용
-                        preprocessed_dir=os.path.join(preprocessed_base_dir, dataset_version.upper()) if preprocessed_base_dir else None,  # Cascade 모델 평가용
-                        crops_per_center=eval_crops_per_center,  # cascade_infer_cfg에서 가져온 값
-                        crop_overlap=eval_crop_overlap,  # cascade_infer_cfg에서 가져온 값
-                        use_blending=eval_use_blending,  # cascade_infer_cfg에서 가져온 값
-                        batch_size=eval_batch_size,  # cascade_infer_cfg에서 가져온 값
-                        roi_batch_size=eval_roi_batch_size,  # cascade_infer_cfg에서 가져온 값
                     )
-                    
-                    cascade_metrics = None
-                    # Cascade 모델인 경우 cascade_metrics도 별도로 저장 (호환성 유지)
-                    if model_name.startswith('cascade_'):
-                        cascade_metrics = {
-                            'mean': metrics.get('dice', 0.0),
-                            'wt': metrics.get('wt', 0.0),
-                            'tc': metrics.get('tc', 0.0),
-                            'et': metrics.get('et', 0.0),
-                        }
-                        if dataset_version == 'brats2024' and 'rc' in metrics:
-                            cascade_metrics['rc'] = metrics.get('rc', 0.0)
-                        if is_main_process(rank):
-                            if dataset_version == 'brats2024' and 'rc' in cascade_metrics:
-                                print(
-                                    f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
-                                    f"(WT {cascade_metrics['wt']:.4f} | TC {cascade_metrics['tc']:.4f} | ET {cascade_metrics['et']:.4f} | RC {cascade_metrics['rc']:.4f})"
-                                )
-                            else:
-                                print(
-                                    f"Cascade ROI→Seg Dice: {cascade_metrics['mean']:.4f} "
-                                    f"(WT {cascade_metrics['wt']:.4f} | TC {cascade_metrics['tc']:.4f} | ET {cascade_metrics['et']:.4f})"
-                                )
                     
                     # 결과 저장 (각 run마다 하나의 행만 생성, PAM과 Latency는 평균값 사용)
                     # PAM과 Latency 평균값 계산
@@ -611,8 +536,6 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             best_val_tc=best_val_tc,
                             best_val_et=best_val_et,
                             best_epoch=best_epoch,
-                            cascade_metrics=cascade_metrics,
-                            roi_model_name=roi_model_name_for_result,
                             coord_type=coord_type,  # 좌표 타입 추가
                             best_val_rc=best_val_rc if dataset_version == 'brats2024' else None
                         )

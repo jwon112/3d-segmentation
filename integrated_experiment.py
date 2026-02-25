@@ -64,26 +64,6 @@ if __name__ == "__main__":
                        help='Apply MRI-specific data augmentations to training patches (default: False)')
     parser.add_argument('--anisotropy_augmentation', action='store_true', default=False,
                        help='Apply depth anisotropy resize augmentation (train only, default: False)')
-    parser.add_argument('--use_cascade_pipeline', action='store_true', default=False,
-                       help='Enable cascade ROI→Seg evaluation using a pre-trained ROI detector')
-    parser.add_argument('--roi_model_name', type=str, default='roi_mobileunetr3d_tiny',
-                       help='ROI detection model architecture name (used for cascade models and cascade pipeline evaluation)')
-    parser.add_argument('--roi_weight_path', type=str, default=None,
-                       help='Path to pre-trained ROI detector weights (.pth). If not specified, uses default path: models/weights/cascade/roi_model/{roi_model_name}/seed_{seed}/weights/best.pth')
-    parser.add_argument('--roi_resize', type=int, nargs=3, default=[64, 64, 64],
-                       help='ROI detector input size (DxHxW) (default: 64 64 64)')
-    parser.add_argument('--cascade_crop_size', type=int, nargs=3, default=[96, 96, 96],
-                       help='Segmentation crop size (DxHxW) used during cascade inference (default: 96 96 96)')
-    parser.add_argument('--crops_per_center', type=int, default=1,
-                       help='Number of crops per center during inference (1=single crop, 2=2x2x2=8 crops, 3=3x3x3=27 crops) (default: 1)')
-    parser.add_argument('--crop_overlap', type=float, default=0.5,
-                       help='Overlap ratio between crops (0.0 ~ 1.0) (default: 0.5)')
-    parser.add_argument('--use_crop_blending', action='store_true', default=True,
-                       help='Use cosine blending for multi-crop merging (default: True, False uses voxel-wise max)')
-    parser.add_argument('--train_crops_per_center', type=int, default=1,
-                       help='Number of crops per center during training (1=single crop, 2=2x2x2=8 crops, 3=3x3x3=27 crops). Each epoch randomly samples one crop from multiple positions. (default: 1)')
-    parser.add_argument('--train_crop_overlap', type=float, default=0.5,
-                       help='Overlap ratio between crops during training (0.0 ~ 1.0). If not specified, uses --crop_overlap value. (default: 0.5)')
     parser.add_argument('--coord_type', type=str, default='none',
                        choices=['none', 'simple', 'hybrid'],
                        help='Coordinate encoding type: none (no coords, 4 channels), simple (3 coord channels, 7 total), hybrid (9 coord channels, 13 total). Default: none')
@@ -95,25 +75,6 @@ if __name__ == "__main__":
                        help='Results directory path. If specified, resumes training from this directory. If None, creates a new directory with timestamp.')
     
     args = parser.parse_args()
-    
-    # ROI weight 경로 자동 생성 함수
-    def get_default_roi_weight_path(roi_model_name: str, seed: int) -> str:
-        """ROI 모델 이름과 seed로 기본 weight 경로 생성"""
-        return f"models/weights/cascade/roi_model/{roi_model_name}/seed_{seed}/weights/best.pth"
-    
-    # ROI weight 경로 자동 생성 (지정되지 않은 경우)
-    if args.use_cascade_pipeline and not args.roi_weight_path:
-        # 첫 번째 seed 사용 (여러 seed인 경우 첫 번째 것 사용)
-        default_path = get_default_roi_weight_path(args.roi_model_name, args.seeds[0])
-        if os.path.exists(default_path):
-            args.roi_weight_path = default_path
-        else:
-            raise FileNotFoundError(
-                f"ROI weight file not found. Please specify --roi_weight_path or ensure the default path exists: {default_path}"
-            )
-    
-    if args.use_cascade_pipeline and args.roi_weight_path and not os.path.exists(args.roi_weight_path):
-        raise FileNotFoundError(f"ROI weight file not found: {args.roi_weight_path}")
     
     # --use_standard_loss가 True이면 nnU-Net loss 비활성화
     use_nnunet_loss = args.use_nnunet_loss and not args.use_standard_loss
@@ -128,8 +89,6 @@ if __name__ == "__main__":
         rank = torch.distributed.get_rank()
     
     if is_main_process(rank):
-        if args.use_cascade_pipeline and args.roi_weight_path:
-            print(f"Using default ROI weight path: {args.roi_weight_path}")
         print("Starting 3D Segmentation Integrated Experiment System")
         print("Starting 3D Segmentation Integrated Experiment System")
         print(f"Data path: {args.data_path}")
@@ -161,42 +120,12 @@ if __name__ == "__main__":
         if is_main_process(rank):
             print(f"Warning: Failed to set sharing strategy: {_e}")
 
-    # Cascade 모델 학습 시에도 ROI 모델 정보를 전달
-    cascade_cfg = None
-    if args.use_cascade_pipeline:
-        cascade_cfg = {
-            'roi_model_name': args.roi_model_name,
-            'roi_weight_path': args.roi_weight_path,
-            'roi_resize': tuple(args.roi_resize),
-            'crop_size': tuple(args.cascade_crop_size),
-            'coord_type': args.coord_type,
-            'crops_per_center': args.crops_per_center,
-            'crop_overlap': args.crop_overlap,
-            'use_blending': args.use_crop_blending,
-        }
-    
-    # Cascade 모델인 경우 ROI 모델 정보를 전달 (학습 시에도 메타데이터로 저장)
-    cascade_model_cfg = None
-    if args.models:
-        # Cascade 모델이 있는지 확인
-        cascade_models = [m for m in args.models if m.startswith('cascade_')]
-        if cascade_models:
-            cascade_model_cfg = {
-                'roi_model_name': args.roi_model_name,
-                'roi_resize': tuple(args.roi_resize),
-                'crop_size': tuple(args.cascade_crop_size),
-            }
-
     try:
         results_dir, results_df = run_integrated_experiment(
             args.data_path, args.epochs, args.batch_size, args.seeds, args.models, args.datasets, args.dim,
             args.use_pretrained, use_nnunet_loss, args.num_workers, args.dataset_version, args.use_5fold,
             use_mri_augmentation=args.use_mri_augmentation,
             anisotropy_augment=args.anisotropy_augmentation,
-            cascade_infer_cfg=cascade_cfg if args.use_cascade_pipeline else None,
-            cascade_model_cfg=cascade_model_cfg,
-            train_crops_per_center=args.train_crops_per_center,
-            train_crop_overlap=args.train_crop_overlap,
             coord_type=args.coord_type,
             use_4modalities=args.use_4modalities,
             preprocessed_base_dir=args.preprocessed_base_dir,

@@ -16,58 +16,7 @@ from utils.experiment_utils import (
 )
 from losses import combined_loss, combined_loss_nnunet_style, DeepSupervisionWrapper
 from metrics import calculate_wt_tc_et_dice
-from utils.runner.cascade_evaluation import load_roi_model_from_checkpoint, evaluate_cascade_pipeline
-from dataloaders import get_brats_base_datasets
 from utils.lr_scheduler import PolyLRScheduler
-
-
-def get_roi_center_prob_schedule(current_epoch: int, total_epochs: int, schedule_type: str = 'cosine', warmup_ratio: float = 0.0):
-    """
-    Epoch 진행률에 따라 ROI 중심 사용 확률을 점진적으로 증가시킴
-    
-    Args:
-        current_epoch: 현재 epoch (0부터 시작)
-        total_epochs: 전체 epoch 수
-        schedule_type: 'cosine', 'linear', 'quadratic', 'sqrt' 중 선택
-        warmup_ratio: 초반 이 비율만큼은 GT 중심만 사용 (0.0 ~ 1.0)
-    
-    Returns:
-        ROI 중심 사용 확률 (0.0 ~ 1.0)
-    """
-    if total_epochs <= 1:
-        return 0.0
-    
-    warmup_epochs = int(total_epochs * warmup_ratio)
-    
-    # Warmup 구간: GT 중심만 사용
-    if current_epoch < warmup_epochs:
-        return 0.0
-    
-    # Warmup 이후 진행률 계산
-    remaining_epochs = total_epochs - warmup_epochs
-    if remaining_epochs <= 1:
-        return 1.0
-    
-    progress = (current_epoch - warmup_epochs) / (remaining_epochs - 1)
-    
-    if schedule_type == 'cosine':
-        # Cosine annealing 스타일: 초반에는 천천히, 후반에 빠르게 증가
-        # 1 - cos(π * progress / 2) 형태로, 초반에는 완만하게 증가
-        roi_prob = 1.0 - np.cos(np.pi * progress / 2.0)
-    elif schedule_type == 'linear':
-        # 선형 증가: 일정하게 증가
-        roi_prob = progress
-    elif schedule_type == 'quadratic':
-        # 2차 함수: 초반에는 매우 천천히, 후반에 빠르게
-        roi_prob = progress ** 2
-    elif schedule_type == 'sqrt':
-        # 제곱근: 초반에 빠르게, 후반에 완만하게
-        roi_prob = np.sqrt(progress)
-    else:
-        # 기본값: 선형
-        roi_prob = progress
-    
-    return float(roi_prob)
 
 
 def _extract_hybrid_stats(model):
@@ -119,8 +68,7 @@ def save_hybrid_stats_to_csv(model, results_dir: str, model_name: str, seed: int
 
 def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01, device='cuda', model_name='model', seed=24, train_sampler=None, rank: int = 0,
                 sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=True, results_dir=None, ckpt_path=None, train_crops_per_center=1, dataset_version='brats2021',
-                data_dir=None, cascade_infer_cfg=None, coord_type='none', preprocessed_dir=None, use_5fold=False, fold_idx=None, fold_split_dir=None,
-                roi_center_schedule='cosine', roi_center_warmup_ratio=0.0, num_iterations_per_epoch=250, num_val_iterations_per_epoch=50):
+                num_iterations_per_epoch=250, num_val_iterations_per_epoch=50):
     """모델 훈련 함수
     
     Args:
@@ -185,88 +133,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01
     early_stopping_patience = 50  # 50 epoch 동안 개선 없으면 중단
     is_brats2024 = (dataset_version == 'brats2024')
     
-    # Cascade 모델인지 확인
-    is_cascade_model = model_name.startswith('cascade_')
-    
-    # Cascade 모델인 경우 ROI 모델 및 base dataset 준비
-    roi_model = None
-    val_base_dataset = None
-    roi_use_4modalities = True
-    if is_cascade_model:
-        if data_dir is None:
-            if is_main_process(rank):
-                print(f"[Cascade Training] Warning: data_dir not provided. Validation will use crop-based evaluation.")
-        else:
-            # ROI 모델 경로 찾기
-            possible_roi_model_names = ['roi_unet3d_small', 'roi_mobileunetr3d_tiny', 'roi_mobileunetr3d_small']
-            roi_model_name = None
-            roi_weight_path = None
-            
-            # results_dir에서 ROI 모델 체크포인트 찾기
-            if results_dir:
-                for candidate_roi_name in possible_roi_model_names:
-                    roi_checkpoint_patterns = [
-                        os.path.join(results_dir, f"{candidate_roi_name}_seed_{seed}_best.pth"),
-                    ]
-                    for pattern in roi_checkpoint_patterns:
-                        if pattern and os.path.exists(pattern):
-                            roi_weight_path = pattern
-                            roi_model_name = candidate_roi_name
-                            break
-                    if roi_weight_path:
-                        break
-            
-            # 기본 경로 시도
-            if not roi_weight_path:
-                for candidate_roi_name in possible_roi_model_names:
-                    default_path = f"models/weights/cascade/roi_model/{candidate_roi_name}/seed_{seed}/weights/best.pth"
-                    if os.path.exists(default_path):
-                        roi_weight_path = default_path
-                        roi_model_name = candidate_roi_name
-                        break
-            
-            if roi_weight_path and os.path.exists(roi_weight_path):
-                if is_main_process(rank):
-                    print(f"[Cascade Training] Loading ROI model from {roi_weight_path}")
-                try:
-                    roi_model, roi_use_4modalities = load_roi_model_from_checkpoint(roi_model_name, roi_weight_path, device)
-                    roi_model.eval()
-                except Exception as e:
-                    if is_main_process(rank):
-                        print(f"[Cascade Training] Warning: Failed to load ROI model: {e}")
-                        print(f"[Cascade Training] Validation will use crop-based evaluation.")
-                    roi_model = None
-            else:
-                if is_main_process(rank):
-                    print(f"[Cascade Training] Warning: ROI model not found. Validation will use crop-based evaluation.")
-            
-            # Validation용 base dataset 가져오기
-            try:
-                _, val_base_dataset, _ = get_brats_base_datasets(
-                    data_dir=data_dir,
-                    dataset_version=dataset_version,
-                    seed=seed,
-                    use_4modalities=True,
-                    preprocessed_dir=preprocessed_dir,
-                    use_5fold=use_5fold,
-                    fold_idx=fold_idx,
-                    fold_split_dir=fold_split_dir,
-                )
-            except Exception as e:
-                if is_main_process(rank):
-                    print(f"[Cascade Training] Warning: Failed to load base dataset for validation: {e}")
-                    print(f"[Cascade Training] Validation will use crop-based evaluation.")
-                val_base_dataset = None
-    
-    # Dataset에 ROI 모델 설정 (Training용)
-    if is_cascade_model and roi_model is not None:
-        if hasattr(train_loader.dataset, 'roi_model'):
-            train_loader.dataset.roi_model = roi_model
-        if hasattr(train_loader.dataset, 'roi_use_4modalities'):
-            train_loader.dataset.roi_use_4modalities = roi_use_4modalities
-        if hasattr(train_loader.dataset, 'set_roi_center_prob'):
-            # 초기에는 GT 중심만 사용
-            train_loader.dataset.set_roi_center_prob(0.0)
+    # Cascade/ROI 기반 학습 로직은 더 이상 사용하지 않음 (nnUNet 스타일 단일 파이프라인만 유지)
     
     # 체크포인트 저장 경로 (실험 결과 폴더 내부)
     if results_dir is None:
@@ -369,21 +236,6 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01
         # base_seed + epoch을 사용하여 각 epoch마다 다른 seed를 가지지만, 같은 seed로 시작하면 같은 순서로 재현 가능
         epoch_seed = seed + epoch
         set_seed(epoch_seed)
-        
-        # ROI 중심 비율 점진적 증가 (스케줄러 방식)
-        if is_cascade_model and roi_model is not None:
-            if hasattr(train_loader.dataset, 'set_roi_center_prob'):
-                roi_prob = get_roi_center_prob_schedule(
-                    current_epoch=epoch,
-                    total_epochs=epochs,
-                    schedule_type=roi_center_schedule,
-                    warmup_ratio=roi_center_warmup_ratio
-                )
-                train_loader.dataset.set_roi_center_prob(roi_prob)
-                # 10% 간격 또는 매 epoch 출력 (epochs가 10 이하인 경우)
-                print_interval = max(1, epochs // 10) if epochs > 10 else 1
-                if is_main_process(rank) and epoch % print_interval == 0:
-                    print(f"[Curriculum Learning] Epoch {epoch+1}/{epochs}: ROI center probability = {roi_prob:.3f} (schedule: {roi_center_schedule})")
         
         # Training
         if train_sampler is not None:
@@ -510,173 +362,79 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01
         va_loss = va_dice_sum = n_va = 0.0
         va_wt_sum = va_tc_sum = va_et_sum = va_rc_sum = 0.0
         
-        # Cascade 모델인 경우 test와 동일한 방식으로 validation 수행
-        if is_cascade_model and roi_model is not None and val_base_dataset is not None:
-            if is_main_process(rank):
-                print(f"[Cascade Training] Using cascade pipeline for validation (same as test)...")
-            
-            # Cascade inference 설정 가져오기
-            eval_crops_per_center = cascade_infer_cfg.get('crops_per_center', 1) if cascade_infer_cfg else 1
-            eval_crop_overlap = cascade_infer_cfg.get('crop_overlap', 0.5) if cascade_infer_cfg else 0.5
-            eval_use_blending = cascade_infer_cfg.get('use_blending', True) if cascade_infer_cfg else True
-            eval_batch_size = cascade_infer_cfg.get('batch_size', 1) if cascade_infer_cfg else 1
-            eval_roi_batch_size = cascade_infer_cfg.get('roi_batch_size', None) if cascade_infer_cfg else None
-            
-            # coord_type에 따라 include_coords와 coord_encoding_type 결정
-            if coord_type == 'none':
-                include_coords = False
-                coord_encoding_type = 'simple'
-            elif coord_type == 'simple':
-                include_coords = True
-                coord_encoding_type = 'simple'
-            elif coord_type == 'hybrid':
-                include_coords = True
-                coord_encoding_type = 'hybrid'
-            else:
-                include_coords = False
-                coord_encoding_type = 'simple'
-            
-            # Cascade pipeline으로 validation 수행
-            with torch.no_grad():
-                # DDP 설정 확인
-                distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
-                world_size = torch.distributed.get_world_size() if distributed else 1
-                
-                cascade_result = evaluate_cascade_pipeline(
-                    roi_model=roi_model,
-                    seg_model=model,
-                    base_dataset=val_base_dataset,
-                    device=device,
-                    roi_resize=(64, 64, 64),
-                    crop_size=(96, 96, 96),
-                    include_coords=include_coords,
-                    coord_encoding_type=coord_encoding_type,
-                    crops_per_center=eval_crops_per_center,
-                    crop_overlap=eval_crop_overlap,
-                    use_blending=eval_use_blending,
-                    collect_attention=False,
-                    results_dir=None,
-                    model_name=model_name,
-                    dataset_version=dataset_version,
-                    roi_use_4modalities=True,  # val_base_dataset은 항상 4 modalities
-                    batch_size=eval_batch_size,  # cascade_infer_cfg에서 가져온 값
-                    roi_batch_size=eval_roi_batch_size,  # cascade_infer_cfg에서 가져온 값
-                    distributed=distributed,
-                    world_size=world_size,
-                    rank=rank,
-                    use_nnunet_loss=use_nnunet_loss,  # Training에서 사용하는 loss 타입 전달
-                )
-                
-                # 결과 추출
-                va_dice = cascade_result.get('mean', 0.0)  # 'mean' 키 사용 (evaluate_cascade_pipeline이 반환하는 키)
-                va_wt = cascade_result.get('wt', 0.0)
-                va_tc = cascade_result.get('tc', 0.0)
-                va_et = cascade_result.get('et', 0.0)
-                va_rc = cascade_result.get('rc', 0.0) if is_brats2024 else 0.0
-                va_loss = cascade_result.get('loss', 0.0)  # Cascade pipeline에서 계산된 loss 사용
-                
-                # 디버깅: cascade_result 내용 확인 (모든 epoch에서 출력)
-                if is_main_process(rank):
-                    print(f"[Training Debug] Epoch {epoch+1} - cascade_result keys: {list(cascade_result.keys())}")
-                    print(f"[Training Debug] Epoch {epoch+1} - cascade_result['loss']: {cascade_result.get('loss', 'NOT FOUND')}")
-                    print(f"[Training Debug] Epoch {epoch+1} - va_loss immediately after get: {va_loss}")
-                
-                # 평균 계산 (샘플 수는 base_dataset 길이)
-                n_va = len(val_base_dataset)
-                va_dice_sum = va_dice * n_va
-                va_wt_sum = va_wt * n_va
-                va_tc_sum = va_tc * n_va
-                va_et_sum = va_et * n_va
-                if is_brats2024:
-                    va_rc_sum = va_rc * n_va
-        else:
-            # 일반 모델 또는 cascade 모델이지만 ROI/base dataset이 없는 경우 기존 방식 사용
-            with torch.no_grad():
-                debug_printed = False
-                all_sample_dices = []  # 디버깅: 모든 샘플의 Dice 수집
-                # nnUNet 방식: 고정 iteration per epoch 사용
-                val_iter = iter(val_loader)
-                for idx in tqdm(range(num_val_iterations_per_epoch), desc=f"Val   {epoch+1}/{epochs}", leave=False):
-                    try:
-                        batch_data = next(val_iter)
-                    except StopIteration:
-                        val_iter = iter(val_loader)
-                        batch_data = next(val_iter)
-                    # 포그라운드 좌표가 포함될 수 있으므로 처리
-                    if len(batch_data) == 3:
-                        inputs, labels, _ = batch_data  # fg_coords_dict 무시
-                    else:
-                        inputs, labels = batch_data
-                    inputs, labels = inputs.to(device), labels.to(device)
+        # nnUNet 스타일 단일 검증 경로만 사용
+        with torch.no_grad():
+            debug_printed = False
+            all_sample_dices = []  # 디버깅: 모든 샘플의 Dice 수집
+            # nnUNet 방식: 고정 iteration per epoch 사용
+            val_iter = iter(val_loader)
+            for idx in tqdm(range(num_val_iterations_per_epoch), desc=f"Val   {epoch+1}/{epochs}", leave=False):
+                try:
+                    batch_data = next(val_iter)
+                except StopIteration:
+                    val_iter = iter(val_loader)
+                    batch_data = next(val_iter)
+                # 포그라운드 좌표가 포함될 수 있으므로 처리
+                if len(batch_data) == 3:
+                    inputs, labels, _ = batch_data  # fg_coords_dict 무시
+                else:
+                    inputs, labels = batch_data
+                inputs, labels = inputs.to(device), labels.to(device)
 
-                    # MobileUNETR 2D는 2D 입력을 그대로 사용
-                    # mobile_unetr_3d는 3D 입력을 그대로 사용
-                    if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
-                        inputs = inputs.unsqueeze(2)
-                        labels = labels.unsqueeze(2)
+                # MobileUNETR 2D는 2D 입력을 그대로 사용
+                # mobile_unetr_3d는 3D 입력을 그대로 사용
+                if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
+                    inputs = inputs.unsqueeze(2)
+                    labels = labels.unsqueeze(2)
 
-                    # 3D 검증: 슬라이딩 윈도우 추론 (학습 아님)
-                    # 모든 3D 모델은 전체 볼륨을 처리하기 위해 슬라이딩 윈도우 사용
-                    if dim == '3d' and inputs.dim() == 5 and inputs.size(0) == 1:
-                        logits = sliding_window_inference_3d(
-                            model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
-                        )
-                    else:
-                        logits = model(inputs)
-                    # Deep Supervision wrapper가 적용되었지만 실제 출력이 Tensor인 경우 처리
-                    if isinstance(criterion, DeepSupervisionWrapper) and not isinstance(logits, (list, tuple)):
-                        # wrapper를 사용하지 않고 base_loss 직접 사용
-                        loss = base_loss(logits, labels)
-                    else:
-                        loss = criterion(logits, labels)
-                    # Deep Supervision이 활성화된 경우 메인 출력만 사용
-                    if isinstance(logits, (list, tuple)):
-                        logits_for_dice = logits[0]  # 메인 출력만 사용
-                    else:
-                        logits_for_dice = logits
-                    dice_scores = calculate_wt_tc_et_dice(logits_for_dice, labels, dataset_version=dataset_version)
-                    # WT/TC/ET 평균 (BRATS2024는 RC 포함)
-                    mean_dice = dice_scores.mean()
-                    all_sample_dices.append(mean_dice.item())  # 디버깅
-                    
-                    if not debug_printed:
-                        pred_arg = torch.argmax(logits, dim=1)
-                        n_classes = 5 if is_brats2024 else 4
-                        pred_counts = [int((pred_arg == c).sum().item()) for c in range(n_classes)]
-                        gt_counts = [int((labels == c).sum().item()) for c in range(n_classes)]
-                        if is_main_process(rank):
-                            try:
-                                dv = dice_scores.detach().cpu().tolist()
-                            except Exception:
-                                dv = []
-                            dice_str = "WT/TC/ET/RC" if is_brats2024 else "WT/TC/ET"
-                            print(f"Val sample {idx+1} stats | pred counts: {pred_counts} | gt counts: {gt_counts}")
-                            print(f"Val sample {idx+1} {dice_str} dice: {dice_scores.detach().cpu().tolist()}")
-                            print(f"Val sample {idx+1} mean_dice (fg only): {mean_dice.item():.10f}")
-                        debug_printed = True
-                    bsz = inputs.size(0)
-                    va_loss += loss.item() * bsz
-                    va_dice_sum += mean_dice.item() * bsz
-                    va_wt_sum += float(dice_scores[0].item()) * bsz
-                    va_tc_sum += float(dice_scores[1].item()) * bsz
-                    va_et_sum += float(dice_scores[2].item()) * bsz
-                    if is_brats2024 and len(dice_scores) >= 4:
-                        va_rc_sum += float(dice_scores[3].item()) * bsz
-                    n_va += bsz
+                # 3D 검증: 슬라이딩 윈도우 추론 (학습 아님)
+                # 모든 3D 모델은 전체 볼륨을 처리하기 위해 슬라이딩 윈도우 사용
+                if dim == '3d' and inputs.dim() == 5 and inputs.size(0) == 1:
+                    logits = sliding_window_inference_3d(
+                        model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
+                    )
+                else:
+                    logits = model(inputs)
+                # Deep Supervision wrapper가 적용되었지만 실제 출력이 Tensor인 경우 처리
+                if isinstance(criterion, DeepSupervisionWrapper) and not isinstance(logits, (list, tuple)):
+                    # wrapper를 사용하지 않고 base_loss 직접 사용
+                    loss = base_loss(logits, labels)
+                else:
+                    loss = criterion(logits, labels)
+                # Deep Supervision이 활성화된 경우 메인 출력만 사용
+                if isinstance(logits, (list, tuple)):
+                    logits_for_dice = logits[0]  # 메인 출력만 사용
+                else:
+                    logits_for_dice = logits
+                dice_scores = calculate_wt_tc_et_dice(logits_for_dice, labels, dataset_version=dataset_version)
+                # WT/TC/ET 평균 (BRATS2024는 RC 포함)
+                mean_dice = dice_scores.mean()
+                all_sample_dices.append(mean_dice.item())  # 디버깅
                 
-                # 디버깅: 모든 샘플의 Dice 통계 출력 (일반 모델만)
-                if is_main_process(rank) and len(all_sample_dices) > 0:
-                    all_dices_arr = np.array(all_sample_dices)
-                    print(f"\n[Val Epoch {epoch+1}] All samples Dice stats:")
-                    print(f"  샘플 수: {len(all_sample_dices)}")
-                    print(f"  평균: {all_dices_arr.mean():.10f}")
-                    print(f"  최소: {all_dices_arr.min():.10f}")
-                    print(f"  최대: {all_dices_arr.max():.10f}")
-                    print(f"  표준편차: {all_dices_arr.std():.10f}")
-                    print(f"  0.0317과의 차이: {abs(all_dices_arr.mean() - 0.0317):.10f}")
-            
-            va_loss /= max(1, n_va)
-            va_dice = va_dice_sum / max(1, n_va)
+                if not debug_printed:
+                    pred_arg = torch.argmax(logits, dim=1)
+                    n_classes = 5 if is_brats2024 else 4
+                    pred_counts = [int((pred_arg == c).sum().item()) for c in range(n_classes)]
+                    gt_counts = [int((labels == c).sum().item()) for c in range(n_classes)]
+                    if is_main_process(rank):
+                        try:
+                            dv = dice_scores.detach().cpu().tolist()
+                        except Exception:
+                            dv = []
+                        dice_str = "WT/TC/ET/RC" if is_brats2024 else "WT/TC/ET"
+                        print(f"Val sample {idx+1} stats | pred counts: {pred_counts} | gt counts: {gt_counts}")
+                        print(f"Val sample {idx+1} {dice_str} dice: {dice_scores.detach().cpu().tolist()}")
+                        print(f"Val sample {idx+1} mean_dice (fg only): {mean_dice.item():.10f}")
+                    debug_printed = True
+                bsz = inputs.size(0)
+                va_loss += loss.item() * bsz
+                va_dice_sum += mean_dice.item() * bsz
+                va_wt_sum += float(dice_scores[0].item()) * bsz
+                va_tc_sum += float(dice_scores[1].item()) * bsz
+                va_et_sum += float(dice_scores[2].item()) * bsz
+                if is_brats2024 and len(dice_scores) >= 4:
+                    va_rc_sum += float(dice_scores[3].item()) * bsz
+                n_va += bsz
             
             # 디버깅: 모든 샘플의 Dice 통계 출력
             if is_main_process(rank) and len(all_sample_dices) > 0:
@@ -689,10 +447,7 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01
                 print(f"  표준편차: {all_dices_arr.std():.10f}")
                 print(f"  0.0317과의 차이: {abs(all_dices_arr.mean() - 0.0317):.10f}")
         
-        # Cascade 모델의 경우 va_loss는 이미 평균값이므로 다시 나누지 않음
-        # 일반 모델의 경우만 va_loss를 나눔
-        if not is_cascade_model or val_base_dataset is None:
-            va_loss /= max(1, n_va)
+        va_loss /= max(1, n_va)
         va_dice = va_dice_sum / max(1, n_va)
         va_wt = va_wt_sum / max(1, n_va)
         va_tc = va_tc_sum / max(1, n_va)

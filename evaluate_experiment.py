@@ -26,10 +26,9 @@ from utils.experiment_utils import (
     INPUT_SIZE_2D, INPUT_SIZE_3D
 )
 from utils.runner import evaluate_model
-from utils.runner.cascade_evaluation import evaluate_segmentation_with_roi, load_roi_model_from_checkpoint
 from dataloaders import get_data_loaders
 from visualization import create_comprehensive_analysis, create_interactive_3d_plot
-from utils.gradcam_utils import generate_gradcam_for_model
+# Grad-CAM 유틸은 현재 코드베이스에서 사용하지 않음 (구현 제거됨)
 
 def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='3d', 
                                  dataset_version='brats2018', batch_size=1, num_workers=0,
@@ -57,57 +56,55 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     # 체크포인트를 먼저 로드해서 coord_type과 modalities 수 자동 감지
     state = torch.load(ckpt_path, map_location=device)
     
-    # Cascade 모델의 경우 첫 번째 레이어에서 입력 채널 수 감지
+    # 좌표 채널 사용 여부를 감지하기 위한 기본값
     coord_type = 'none'  # 기본값
     detected_n_modalities = 2  # 기본값 (T1CE, FLAIR)
     
-    if model_name.startswith('cascade_'):
-        # Cascade 모델의 첫 번째 레이어 찾기 (stem.conv1.0.conv2d.weight 등)
-        detected_channels = None
-        detected_key = None
-        for key in state.keys():
-            if 'weight' in key and ('stem.conv1' in key or 'stem' in key or 'conv1' in key):
-                if 'conv2d.weight' in key or 'weight' in key:
-                    # shape: [out_channels, in_channels, ...]
-                    detected_channels = state[key].shape[1]
-                    detected_key = key
-                    break
+    # 첫 번째 레이어에서 입력 채널 수를 감지하여 coord_type과 modalities 수를 추론
+    detected_channels = None
+    detected_key = None
+    for key in state.keys():
+        if 'weight' in key and ('stem.conv1' in key or 'stem' in key or 'conv1' in key):
+            # shape: [out_channels, in_channels, ...]
+            detected_channels = state[key].shape[1]
+            detected_key = key
+            break
+    
+    if detected_channels is not None:
+        if is_main_process(rank):
+            print(f"[Debug] Found first layer: {detected_key}, input channels: {detected_channels}")
         
-        if detected_channels is not None:
+        # 채널 수에 따라 coord_type과 modalities 수 추론
+        # 4 channels = 4 modalities, no coords
+        # 7 channels = 2 modalities + 3 simple coords
+        # 11 channels = 2 modalities + 9 hybrid coords
+        # 13 channels = 4 modalities + 9 hybrid coords
+        if detected_channels == 4:
+            coord_type = 'none'
+            detected_n_modalities = 4
             if is_main_process(rank):
-                print(f"[Debug] Found first layer: {detected_key}, input channels: {detected_channels}")
-            
-            # 채널 수에 따라 coord_type과 modalities 수 추론
-            # 4 channels = 4 modalities, no coords
-            # 7 channels = 2 modalities + 3 simple coords
-            # 11 channels = 2 modalities + 9 hybrid coords
-            # 13 channels = 4 modalities + 9 hybrid coords
-            if detected_channels == 4:
-                coord_type = 'none'
-                detected_n_modalities = 4
-                if is_main_process(rank):
-                    print(f"Detected {detected_channels} input channels -> 4 modalities, coord_type='none'")
-            elif detected_channels == 7:
-                coord_type = 'simple'
-                detected_n_modalities = 2
-                if is_main_process(rank):
-                    print(f"Detected {detected_channels} input channels -> 2 modalities + 3 simple coords")
-            elif detected_channels == 11:
-                coord_type = 'hybrid'
-                detected_n_modalities = 2
-                if is_main_process(rank):
-                    print(f"Detected {detected_channels} input channels -> 2 modalities + 9 hybrid coords")
-            elif detected_channels == 13:
-                coord_type = 'hybrid'
-                detected_n_modalities = 4
-                if is_main_process(rank):
-                    print(f"Detected {detected_channels} input channels -> 4 modalities + 9 hybrid coords")
-            else:
-                if is_main_process(rank):
-                    print(f"Warning: Unexpected input channels {detected_channels}. Using defaults (2 modalities, coord_type='none')")
+                print(f"Detected {detected_channels} input channels -> 4 modalities, coord_type='none'")
+        elif detected_channels == 7:
+            coord_type = 'simple'
+            detected_n_modalities = 2
+            if is_main_process(rank):
+                print(f"Detected {detected_channels} input channels -> 2 modalities + 3 simple coords")
+        elif detected_channels == 11:
+            coord_type = 'hybrid'
+            detected_n_modalities = 2
+            if is_main_process(rank):
+                print(f"Detected {detected_channels} input channels -> 2 modalities + 9 hybrid coords")
+        elif detected_channels == 13:
+            coord_type = 'hybrid'
+            detected_n_modalities = 4
+            if is_main_process(rank):
+                print(f"Detected {detected_channels} input channels -> 4 modalities + 9 hybrid coords")
         else:
             if is_main_process(rank):
-                print(f"[Debug] Could not find first layer in checkpoint. Available keys (first 10): {list(state.keys())[:10]}")
+                print(f"Warning: Unexpected input channels {detected_channels}. Using defaults (2 modalities, coord_type='none')")
+    else:
+        if is_main_process(rank):
+            print(f"[Debug] Could not find first layer in checkpoint. Available keys (first 10): {list(state.keys())[:10]}")
     
     # 감지된 modalities 수로 n_channels 및 use_4modalities 업데이트
     # 주의: get_model은 n_channels에 modalities 수만 전달하고, coord_type을 통해 coord channels를 별도로 처리합니다
@@ -116,14 +113,6 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     
     if is_main_process(rank):
         print(f"[Debug] Creating model with n_channels={n_channels}, coord_type={coord_type}, use_4modalities={use_4modalities}")
-        if model_name.startswith('cascade_'):
-            if coord_type == 'hybrid':
-                expected_total = n_channels + 9
-            elif coord_type == 'simple':
-                expected_total = n_channels + 3
-            else:
-                expected_total = n_channels
-            print(f"[Debug] Expected total input channels: {expected_total} (n_image_channels={n_channels} + n_coord_channels={9 if coord_type == 'hybrid' else 3 if coord_type == 'simple' else 0})")
     
     # 데이터 로더 생성 (체크포인트에서 감지한 use_4modalities 사용)
     # preprocessed_base_dir이 제공되면 버전별 디렉토리로 변환
@@ -209,16 +198,12 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
                 print(f"Switching RepLK blocks to deploy mode...")
             real_model.switch_to_deploy()
     
-    # 파라미터 및 FLOPs 계산
-    # Cascade 모델의 경우 실제 입력 채널 수는 n_channels + n_coord_channels
-    if model_name.startswith('cascade_'):
-        if coord_type == 'hybrid':
-            actual_input_channels = n_channels + 9
-        elif coord_type == 'simple':
-            actual_input_channels = n_channels + 3
-        else:  # 'none'
-            actual_input_channels = n_channels
-    else:
+    # 파라미터 및 FLOPs 계산 (coord_type에 따라 실제 입력 채널 수 계산)
+    if coord_type == 'hybrid':
+        actual_input_channels = n_channels + 9
+    elif coord_type == 'simple':
+        actual_input_channels = n_channels + 3
+    else:  # 'none'
         actual_input_channels = n_channels
     
     total_params = sum(p.numel() for p in real_model.parameters())
@@ -288,121 +273,15 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
             pam_inference_mean = sum(pam_inference_list) / len(pam_inference_list)
             print(f"PAM (Inference, batch_size=1): {pam_inference_mean / 1024**2:.2f} MB (mean of {len(pam_inference_list)} runs)")
     
-    # Test set 평가
-    # Cascade 모델은 ROI 기반 평가만 수행, 일반 모델은 evaluate_model 사용
-    if model_name.startswith('cascade_'):
-        # Cascade 모델은 ROI 기반 평가만 수행 (rank 0에서만)
-        if not is_main_process(rank):
-            return ([], [])
-        
-        # ROI 모델 경로 찾기
-        possible_roi_model_names = ['roi_unet3d_small', 'roi_mobileunetr3d_tiny', 'roi_mobileunetr3d_small']
-        roi_model_name = None
-        roi_weight_path = None
-        tried_paths = []  # 에러 메시지용
-        
-        # 1. results_dir에서 ROI 모델 체크포인트 찾기
-        for candidate_roi_name in possible_roi_model_names:
-            roi_checkpoint_patterns = [
-                os.path.join(results_dir, f"{candidate_roi_name}_seed_{seed}_best.pth"),
-                os.path.join(results_dir, f"{candidate_roi_name}_seed_{seed}_fold_{fold_idx}_best.pth") if use_5fold and fold_idx is not None else None,
-            ]
-            tried_paths.extend([p for p in roi_checkpoint_patterns if p])
-            for pattern in roi_checkpoint_patterns:
-                if pattern and os.path.exists(pattern):
-                    roi_weight_path = pattern
-                    roi_model_name = candidate_roi_name
-                    break
-            if roi_weight_path:
-                break
-        
-        # 2. 기본 경로 시도
-        if not roi_weight_path:
-            for candidate_roi_name in possible_roi_model_names:
-                default_path = f"models/weights/cascade/roi_model/{candidate_roi_name}/seed_{seed}/weights/best.pth"
-                tried_paths.append(default_path)
-                if os.path.exists(default_path):
-                    roi_weight_path = default_path
-                    roi_model_name = candidate_roi_name
-                    break
-        
-        if not roi_weight_path or not os.path.exists(roi_weight_path):
-            # ROI 모델을 찾지 못한 경우 에러 발생
-            error_msg = f"[Cascade] Error: ROI model not found for cascade model {model_name}.\n"
-            error_msg += f"  Tried paths:\n"
-            for path in tried_paths:
-                error_msg += f"    - {path}\n"
-            error_msg += f"\n  Cascade models require ROI-based evaluation.\n"
-            error_msg += f"  Please ensure the ROI model checkpoint exists at one of the above paths."
-            print(error_msg)
-            raise FileNotFoundError(error_msg)
-        
-        # ROI 모델 로드
-        # ROI 모델은 항상 4채널(no coords) 또는 2채널(no coords) 고정으로 사용
-        roi_model, use_4modalities = load_roi_model_from_checkpoint(
-            roi_model_name,
-            roi_weight_path,
-            device,
-        )
-        
-        real_model = model.module if hasattr(model, 'module') else model
-        # preprocessed_dir 설정
-        cascade_preprocessed_dir = None
-        if preprocessed_base_dir:
-            if use_5fold:
-                cascade_preprocessed_dir = fold_split_dir if fold_split_dir else os.path.join(preprocessed_base_dir, f'{dataset_version.upper()}_5fold_splits', f'fold_{fold_idx}') if fold_idx is not None else os.path.join(preprocessed_base_dir, f'{dataset_version.upper()}_5fold_splits')
-            else:
-                cascade_preprocessed_dir = os.path.join(preprocessed_base_dir, dataset_version.upper())
-        
-        # coord_type에 따라 include_coords와 coord_encoding_type 결정
-        if coord_type == 'none':
-            include_coords = False
-            coord_encoding_type = 'simple'  # 사용 안 하지만 기본값
-        elif coord_type == 'simple':
-            include_coords = True
-            coord_encoding_type = 'simple'
-        elif coord_type == 'hybrid':
-            include_coords = True
-            coord_encoding_type = 'hybrid'
-        else:
-            # 기본값: simple
-            include_coords = True
-            coord_encoding_type = 'simple'
-        
-        # Cascade ROI 기반 평가 수행
-        # ROI 모델은 항상 4채널(no coords) 고정
-        # Segmentation 모델만 coord_type에 따라 동작
-        metrics = evaluate_segmentation_with_roi(
-            seg_model=real_model,
-            roi_model=roi_model,
-            data_dir=data_path,
-            dataset_version=dataset_version,
-            seed=seed,
-            roi_resize=(64, 64, 64),
-            crop_size=(96, 96, 96),
-            include_coords=include_coords,  # coord_type에 따라 결정
-            coord_encoding_type=coord_encoding_type,  # coord_type에 따라 결정
-            use_5fold=use_5fold,
-            fold_idx=detected_fold_idx if fold_split_dir else (fold_idx if use_5fold else None),
-            fold_split_dir=fold_split_dir,
-            crops_per_center=1,
-            crop_overlap=0.5,
-            use_blending=True,
-            results_dir=results_dir,
-            model_name=model_name,
-            preprocessed_dir=cascade_preprocessed_dir,
-            roi_use_4modalities=use_4modalities,
-        )
-    else:
-        # 일반 모델은 evaluate_model 사용
-        metrics = evaluate_model(
-            model, test_loader, device, model_name, 
-            distributed=distributed, world_size=world_size,
-            sw_patch_size=(128, 128, 128), sw_overlap=0.5, 
-            results_dir=results_dir,
-            coord_type=coord_type,  # 체크포인트에서 감지한 coord_type 전달
-            dataset_version=dataset_version
-        )
+    # Test set 평가는 모든 모델에 대해 공통 슬라이딩 윈도우 파이프라인을 사용
+    metrics = evaluate_model(
+        model, test_loader, device, model_name, 
+        distributed=distributed, world_size=world_size,
+        sw_patch_size=(128, 128, 128), sw_overlap=0.5, 
+        results_dir=results_dir,
+        coord_type=coord_type,  # 체크포인트에서 감지한 coord_type 전달
+        dataset_version=dataset_version
+    )
     
     # Grad-CAM 생성 (rank 0에서만, 3D 모델만)
     # TODO: Grad-CAM 기능은 아직 안정화되지 않아 주석 처리됨

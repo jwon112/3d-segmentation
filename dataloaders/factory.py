@@ -14,7 +14,6 @@ from torch.utils.data.distributed import DistributedSampler
 
 from .brats_base import BratsDataset3D, BratsDataset2D, split_brats_dataset
 from .patch_3d import BratsPatchDataset3D
-from .cascade import get_cascade_data_loaders
 
 
 def get_data_loaders(
@@ -63,46 +62,8 @@ def get_data_loaders(
     else:
         raise ValueError(f"Unknown coord_type: {coord_type}. Must be 'none', 'simple', or 'hybrid'")
     
-    # Note: 모든 모델은 cascade 접두사와 무관하게 기본 파이프라인(nnU-Net 스타일) 사용
-    # Cascade 파이프라인(ROI 기반 크롭)을 사용하려면 --use_cascade_pipeline 플래그 사용
-    # cascade_ 접두사는 모델 아키텍처 식별용으로만 사용됨
-    # (ViT 계열 모델은 입력 해상도 제약으로 인해 cascade 파이프라인 권장)
-        cascade_loaders = get_cascade_data_loaders(
-            data_dir=data_dir,
-            roi_batch_size=batch_size,
-            seg_batch_size=batch_size,
-            num_workers=num_workers,
-            max_samples=max_samples,
-            dataset_version=dataset_version,
-            seed=seed,
-            use_5fold=use_5fold,
-            fold_idx=fold_idx,
-            fold_split_dir=fold_split_dir,
-            roi_resize=(64, 64, 64),  # ROI 모델 기본 크기
-            seg_crop_size=(96, 96, 96),  # Segmentation 모델 기본 크기
-            include_coords=include_coords,
-            coord_encoding_type=coord_encoding_type,
-            center_jitter=0,  # 학습 시에는 jitter 없음 (또는 옵션으로 추가 가능)
-            distributed=distributed,
-            world_size=world_size,
-            rank=rank,
-            use_mri_augmentation=use_mri_augmentation,
-            anisotropy_augment=anisotropy_augment,
-            train_crops_per_center=train_crops_per_center,
-            train_crop_overlap=train_crop_overlap,
-            use_4modalities=use_4modalities,
-            preprocessed_dir=preprocessed_dir,
-        )
-        # Segmentation 데이터로더만 반환 (일반 get_data_loaders와 동일한 형식)
-        seg_loaders = cascade_loaders['seg']
-        return (
-            seg_loaders['train'],
-            seg_loaders['val'],
-            seg_loaders['test'],
-            seg_loaders['train_sampler'],
-            seg_loaders['val_sampler'],
-            seg_loaders['test_sampler'],
-        )
+    # Note: 현재는 모든 모델이 nnUNet 스타일 기본 파이프라인만 사용하며,
+    # 과거 cascade(ROI→Seg) 파이프라인은 제거되었습니다.
     if seed is not None:
         random.seed(seed)
         np.random.seed(seed)

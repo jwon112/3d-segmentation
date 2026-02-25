@@ -17,133 +17,13 @@ from metrics import calculate_wt_tc_et_dice  # , calculate_wt_tc_et_hd95  # HD95
 from dataloaders import get_coord_map
 from models.modules.se_modules import SEBlock3D
 from models.modules.cbam_modules import CBAM3D, ChannelAttention3D
-from utils.runner.cascade_evaluation import evaluate_segmentation_with_roi, load_roi_model_from_checkpoint
 
 
 def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model', distributed: bool = False, world_size: int = 1,
                    sw_patch_size=(128, 128, 128), sw_overlap=0.5, results_dir: str = None, coord_type: str = 'none', dataset_version: str = 'brats2021',
                    data_dir: str = None, seed: int = None, use_5fold: bool = False, fold_idx: int = None, 
                    fold_split_dir: str = None, preprocessed_dir: str = None, crops_per_center: int = 1, crop_overlap: float = 0.5, use_blending: bool = True, batch_size: int = 1, roi_batch_size=None):
-    """모델 평가 함수
-    
-    Cascade 모델인 경우 자동으로 ROI 기반 평가를 수행합니다.
-    Cascade 모델 평가를 위해서는 data_dir, seed 등의 추가 파라미터가 필요합니다.
-    """
-    # Cascade 모델인 경우 자동으로 ROI 기반 평가 수행
-    if model_name.startswith('cascade_'):
-        # ROI 기반 평가에 필요한 파라미터 확인
-        if data_dir is None or seed is None:
-            raise ValueError(
-                f"Cascade models require data_dir and seed parameters for ROI-based evaluation. "
-                f"Please provide data_dir and seed when calling evaluate_model for cascade models."
-            )
-        
-        # ROI 모델 경로 찾기
-        possible_roi_model_names = ['roi_unet3d_small', 'roi_mobileunetr3d_tiny', 'roi_mobileunetr3d_small']
-        roi_model_name = None
-        roi_weight_path = None
-        
-        # 1. results_dir에서 ROI 모델 체크포인트 찾기
-        if results_dir:
-            for candidate_roi_name in possible_roi_model_names:
-                roi_checkpoint_patterns = [
-                    os.path.join(results_dir, f"{candidate_roi_name}_seed_{seed}_best.pth"),
-                    os.path.join(results_dir, f"{candidate_roi_name}_seed_{seed}_fold_{fold_idx}_best.pth") if use_5fold and fold_idx is not None else None,
-                ]
-                for pattern in roi_checkpoint_patterns:
-                    if pattern and os.path.exists(pattern):
-                        roi_weight_path = pattern
-                        roi_model_name = candidate_roi_name
-                        break
-                if roi_weight_path:
-                    break
-        
-        # 2. 기본 경로 시도
-        if not roi_weight_path:
-            for candidate_roi_name in possible_roi_model_names:
-                default_path = f"models/weights/cascade/roi_model/{candidate_roi_name}/seed_{seed}/weights/best.pth"
-                if os.path.exists(default_path):
-                    roi_weight_path = default_path
-                    roi_model_name = candidate_roi_name
-                    break
-        
-        if not roi_weight_path or not os.path.exists(roi_weight_path):
-            # ROI 모델을 찾지 못한 경우 에러 발생
-            error_msg = f"[Cascade] Error: ROI model not found for cascade model {model_name}.\n"
-            error_msg += f"  Cascade models require ROI-based evaluation.\n"
-            error_msg += f"  Please ensure the ROI model checkpoint exists."
-            raise FileNotFoundError(error_msg)
-        
-        # ROI 모델 로드
-        # ROI 모델은 항상 4채널(no coords) 또는 2채널(no coords) 고정으로 사용
-        roi_model, use_4modalities = load_roi_model_from_checkpoint(
-            roi_model_name,
-            roi_weight_path,
-            device,
-        )
-        
-        real_model = model.module if hasattr(model, 'module') else model
-        
-        # coord_type에 따라 include_coords와 coord_encoding_type 결정
-        if coord_type == 'none':
-            include_coords = False
-            coord_encoding_type = 'simple'  # 사용 안 하지만 기본값
-        elif coord_type == 'simple':
-            include_coords = True
-            coord_encoding_type = 'simple'
-        elif coord_type == 'hybrid':
-            include_coords = True
-            coord_encoding_type = 'hybrid'
-        else:
-            # 기본값: simple
-            include_coords = True
-            coord_encoding_type = 'simple'
-        
-        # Cascade ROI 기반 평가 수행
-        # ROI 모델은 항상 4채널(no coords) 고정
-        # Segmentation 모델만 coord_type에 따라 동작
-        cascade_metrics = evaluate_segmentation_with_roi(
-            seg_model=real_model,
-            roi_model=roi_model,
-            data_dir=data_dir,
-            dataset_version=dataset_version,
-            seed=seed,
-            roi_resize=(64, 64, 64),
-            crop_size=(96, 96, 96),
-            include_coords=include_coords,  # coord_type에 따라 결정
-            coord_encoding_type=coord_encoding_type,  # coord_type에 따라 결정
-            use_5fold=use_5fold,
-            fold_idx=fold_idx,
-            fold_split_dir=fold_split_dir,
-            crops_per_center=crops_per_center,
-            crop_overlap=crop_overlap,
-            use_blending=use_blending,
-            results_dir=results_dir,
-            model_name=model_name,
-            preprocessed_dir=preprocessed_dir,
-            roi_use_4modalities=use_4modalities,
-            batch_size=batch_size,
-            roi_batch_size=roi_batch_size,
-        )
-        
-        # cascade_metrics를 evaluate_model과 동일한 형식으로 변환
-        result = {
-            'dice': cascade_metrics.get('mean', 0.0),
-            'wt': cascade_metrics.get('wt', 0.0),
-            'tc': cascade_metrics.get('tc', 0.0),
-            'et': cascade_metrics.get('et', 0.0),
-            'hd95_wt': None,
-            'hd95_tc': None,
-            'hd95_et': None,
-            'hd95_mean': None,
-            'precision': None,
-            'recall': None,
-        }
-        if dataset_version == 'brats2024' and 'rc' in cascade_metrics:
-            result['rc'] = cascade_metrics.get('rc', 0.0)
-        
-        return result
-    
+    """모델 평가 함수 (nnUNet 스타일 단일 파이프라인 기준)."""
     model.eval()
     real_model = model.module if hasattr(model, 'module') else model
     test_dice = 0.0
@@ -267,11 +147,6 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                         if "out of memory" in str(e).lower():
                             if rank0:
                                 print(f"Warning: OOM during CBAM/SE weight collection, using sliding window (weights may not be collected)")
-                            # Cascade 모델인 경우 좌표 추가
-                            if model_name.startswith('cascade_') and coord_type != 'none':
-                                coord_map = get_coord_map(inputs.shape[2:], device=device, encoding_type=coord_type)
-                                coord_map = coord_map.unsqueeze(0)
-                                inputs = torch.cat([inputs, coord_map], dim=1)
                             logits = sliding_window_inference_3d(
                                 model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
                             )
@@ -290,26 +165,16 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                             # 어텐션 가중치 저장 (평균 가중치 사용)
                             avg_weights = attention_dict['average'].cpu().numpy()  # [B, 4]
                             all_attention_weights.append(avg_weights[0])  # 첫 번째 샘플 (batch_size=1)
-                        except RuntimeError as e:
-                            # 메모리 부족 시 슬라이딩 윈도우 사용 (어텐션 수집 불가)
-                            if "out of memory" in str(e).lower():
-                                print(f"Warning: OOM during attention collection, using sliding window without attention")
-                                # Cascade 모델인 경우 좌표 추가
-                                if model_name.startswith('cascade_') and coord_type != 'none':
-                                    coord_map = get_coord_map(inputs.shape[2:], device=device, encoding_type=coord_type)
-                                    coord_map = coord_map.unsqueeze(0)
-                                    inputs = torch.cat([inputs, coord_map], dim=1)
-                                logits = sliding_window_inference_3d(
-                                    model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
-                                )
-                            else:
-                                raise
+                    except RuntimeError as e:
+                        # 메모리 부족 시 슬라이딩 윈도우 사용 (어텐션 수집 불가)
+                        if "out of memory" in str(e).lower():
+                            print(f"Warning: OOM during attention collection, using sliding window without attention")
+                            logits = sliding_window_inference_3d(
+                                model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
+                            )
+                        else:
+                            raise
                     else:
-                        # Cascade 모델인 경우 좌표 추가
-                        if model_name.startswith('cascade_') and coord_type != 'none':
-                            coord_map = get_coord_map(inputs.shape[2:], device=device, encoding_type=coord_type)
-                            coord_map = coord_map.unsqueeze(0)
-                            inputs = torch.cat([inputs, coord_map], dim=1)
                         logits = sliding_window_inference_3d(
                             model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
                         )
@@ -325,23 +190,12 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                         if "out of memory" in str(e).lower():
                             if rank0:
                                 print(f"Warning: OOM during MobileViT attention collection, using sliding window without attention")
-                            # Cascade 모델인 경우 좌표 추가
-                            if model_name.startswith('cascade_') and coord_type != 'none':
-                                coord_map = get_coord_map(inputs.shape[2:], device=device, encoding_type=coord_type)
-                                coord_map = coord_map.unsqueeze(0)
-                                inputs = torch.cat([inputs, coord_map], dim=1)
                             logits = sliding_window_inference_3d(
                                 model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
                             )
                         else:
                             raise
                 else:
-                    # Cascade 모델인 경우 좌표 추가
-                    if model_name.startswith('cascade_') and coord_type != 'none':
-                        # 전체 볼륨에 좌표 추가
-                        coord_map = get_coord_map(inputs.shape[2:], device=device, encoding_type=coord_type)
-                        coord_map = coord_map.unsqueeze(0)  # (1, C_coord, H, W, D)
-                        inputs = torch.cat([inputs, coord_map], dim=1)  # (1, C+C_coord, H, W, D)
                     logits = sliding_window_inference_3d(
                         model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
                     )
