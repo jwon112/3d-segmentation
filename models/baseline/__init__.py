@@ -1,32 +1,33 @@
 """
-3D Segmentation Models
-
-- baseline/: reference/paper models (UNet3D, UNETR, Swin UNETR, MobileUNETR, SegFormer3D, modal comparison)
-- custom/: project-specific variants (dual-branch 등)
-- modules/: shared building blocks
-- channel_configs.py: shared channel configs
+Baseline / reference models (paper implementations).
 """
 
-from .baseline import (
+from .model_3d_unet import (
     UNet3D_Medium,
     UNet3D_Small,
     DoubleConv3D,
     Down3D,
     Up3D,
     OutConv3D,
+    _make_norm3d,
+    _make_activation,
+)
+from .model_unetr import (
     UNETR,
     UNETR_Simplified,
     PatchEmbedding3D as UNETRPatchEmbedding,
     PositionalEncoding3D,
     TransformerBlock,
+)
+from .model_swin_unetr import (
     SwinUNETR,
     SwinUNETR_Simplified,
     PatchEmbedding3D as SwinPatchEmbedding,
     WindowAttention3D,
     SwinTransformerBlock3D,
     PatchMerging3D,
-    MobileUNETR,
 )
+from .mobileunetr import MobileUNETR
 
 __all__ = [
     "UNet3D_Medium",
@@ -35,6 +36,8 @@ __all__ = [
     "Down3D",
     "Up3D",
     "OutConv3D",
+    "_make_norm3d",
+    "_make_activation",
     "UNETR",
     "UNETR_Simplified",
     "UNETRPatchEmbedding",

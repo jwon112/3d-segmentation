@@ -6,7 +6,7 @@ ConvNeXt 스타일의 3D 모듈들
 import torch
 import torch.nn as nn
 
-from ..model_3d_unet import _make_norm3d
+from ..baseline.model_3d_unet import _make_norm3d
 
 
 class ConvNeXtBlock3D(nn.Module):

@@ -13,52 +13,14 @@ from typing import List, Dict, Optional
 # Size suffix를 지원하는 모델 prefix들 (xs, s, m, l 모두 지원)
 SIZE_SUFFIX_MODELS = {
     'unet3d_': ['xs', 's', 'm', 'l'],
-    'unet3d_stride_': ['xs', 's', 'm', 'l'],
-    'dualbranch_01_unet_': ['xs', 's', 'm', 'l'],
-    'dualbranch_02_unet_': ['xs', 's', 'm', 'l'],
-    'dualbranch_03_unet_': ['xs', 's', 'm', 'l'],
     'dualbranch_04_unet_': ['xs', 's', 'm', 'l'],
     'dualbranch_05_unet_': ['xs', 's', 'm', 'l'],
     'dualbranch_06_unet_': ['xs', 's', 'm', 'l'],
     'dualbranch_07_unet_': ['xs', 's', 'm', 'l'],
-    'dualbranch_10_unet_': ['xs', 's', 'm', 'l'],
-    'dualbranch_11_unet_': ['xs', 's', 'm', 'l'],
     'dualbranch_13_unet_': ['xs', 's', 'm', 'l'],
-    'dualbranch_mobilenetv2_dilated_': ['xs', 's', 'm', 'l'],
-    'dualbranch_mobilenetv2_dilated_fixed_': ['xs', 's', 'm', 'l'],
-    'dualbranch_16_shufflenet_hybrid_': ['xs', 's', 'm', 'l'],
-    'dualbranch_16_shufflenet_hybrid_ln_': ['xs', 's', 'm', 'l'],
-    'dualbranch_17_shufflenet_pamlite_': ['xs', 's', 'm', 'l'],
-    'dualbranch_17_shufflenet_pamlite_v3_': ['xs', 's', 'm', 'l'],
-    'dualbranch_18_shufflenet_v1_': ['xs', 's', 'm', 'l'],
-    'dualbranch_18_shufflenet_v1_stage3fused_': ['xs', 's', 'm', 'l'],
-    'dualbranch_18_shufflenet_v1_stage3fused_fixed_decoder_': ['xs', 's', 'm', 'l'],
-    'dualbranch_18_shufflenet_v1_stage3fused_half_decoder_': ['xs', 's', 'm', 'l'],
     'dualbranch_19_shufflenet_v2_stage3fused_': ['xs', 's', 'm', 'l'],
     'dualbranch_19_shufflenet_v2_stage3fused_fixed_decoder_': ['xs', 's', 'm', 'l'],
     'dualbranch_19_shufflenet_v2_stage3fused_half_decoder_': ['xs', 's', 'm', 'l'],
-    'quadbranch_unet_': ['xs', 's', 'm', 'l'],
-    'quadbranch_channel_centralized_concat_': ['xs', 's', 'm', 'l'],
-    'quadbranch_channel_distributed_concat_': ['xs', 's', 'm', 'l'],
-    'quadbranch_channel_distributed_conv_': ['xs', 's', 'm', 'l'],
-    'quadbranch_spatial_centralized_concat_': ['xs', 's', 'm', 'l'],
-    'quadbranch_spatial_distributed_concat_': ['xs', 's', 'm', 'l'],
-    'quadbranch_spatial_distributed_conv_': ['xs', 's', 'm', 'l'],
-    # ShuffleNetV2 계열 모델들 (CNN 기반, cascade 접두사 불필요 - 완전히 같은 아키텍처)
-    'shufflenet_v2_': ['xs', 's', 'm', 'l'],
-    'shufflenet_v2_p3d_': ['xs', 's', 'm', 'l'],
-    'shufflenet_v2_lk_': ['xs', 's', 'm', 'l'],
-    'shufflenet_v2_p3d_lk_': ['xs', 's', 'm', 'l'],
-    'shufflenet_v2_lka_': ['xs', 's', 'm', 'l'],
-    'shufflenet_v2_lka_segnext_': ['xs', 's', 'm', 'l'],
-    'shufflenet_v2_p3d_lka_segnext_': ['xs', 's', 'm', 'l'],
-    'shufflenet_v2_mvit_': ['xs', 's', 'm', 'l'],
-    'shufflenet_v2_p3d_mvit_': ['xs', 's', 'm', 'l'],
-    # ViT 계열 모델들 (입력 해상도 제약, cascade 파이프라인 권장 - 주석 참고)
-    'cascade_patch_conv_transformer_': ['xs', 's', 'm', 'l'],  # Note: cascade 파이프라인 권장
-    'cascade_unetr_': ['xs', 's', 'm', 'l'],  # Note: cascade 파이프라인 권장
-    'cascade_swin_unetr_': ['xs', 's', 'm', 'l'],  # Note: cascade 파이프라인 권장
-    'cascade_unet3d_': ['xs', 's', 'm', 'l'],  # Note: unet3d_와 동일 (CoordConv 지원)
 }
 
 # Size suffix를 지원하는 dualbranch_14 backbone들
@@ -70,15 +32,13 @@ DUALBRANCH_14_BACKBONES = [
 # Size suffix를 지원하지 않는 모델들 (고정 이름)
 FIXED_NAME_MODELS = [
     'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d',
-    'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s',
-    'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s',
+    'unet3d_2modal_s', 'unet3d_4modal_s',
     'segformer3d',
-    'nnunet',  # nnU-Net 모델
 ]
 
 # 4개 모달리티를 사용하는 모델들
 MODELS_WITH_4_MODALITIES = [
-    'unet3d_4modal_s', 'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s',
+    'unet3d_4modal_s',
 ]
 
 
@@ -107,20 +67,13 @@ def get_all_available_models() -> List[str]:
 
 
 def validate_and_filter_models(models: Optional[List[str]]) -> List[str]:
-    """사용자가 지정한 모델들을 검증하고 필터링
-    
-    Note: CNN 계열 모델(ShuffleNetV2)의 경우 cascade 접두사는 자동으로 제거되어 처리됩니다.
-    """
+    """사용자가 지정한 모델들을 검증하고 필터링"""
     if models is None:
         return get_all_available_models()
     
     available_models = []
     for model_name in models:
-        # CNN 계열 모델의 cascade 접두사 자동 제거 (하위 호환성)
         original_name = model_name
-        if model_name.startswith('cascade_shufflenet_v2_'):
-            model_name = model_name.replace('cascade_shufflenet_v2_', 'shufflenet_v2_', 1)
-        
         # 고정 이름 모델인지 확인
         if model_name in FIXED_NAME_MODELS:
             available_models.append(original_name)  # 원본 이름 유지
@@ -165,13 +118,9 @@ def validate_and_filter_models(models: Optional[List[str]]) -> List[str]:
 
 
 def get_n_channels_for_model(model_name: str) -> int:
-    """모델 이름에 따라 필요한 입력 채널 수 반환
-    
-    Note: Cascade 모델도 기본값은 2 modalities입니다. 4 modalities를 사용하려면 --use_4modalities를 명시적으로 지정해야 합니다.
-    """
-    if model_name in MODELS_WITH_4_MODALITIES or model_name.startswith('quadbranch_'):
+    """모델 이름에 따라 필요한 입력 채널 수 반환. 4 modalities 사용 시 --use_4modalities 지정."""
+    if model_name in MODELS_WITH_4_MODALITIES:
         return 4
-    # cascade 모델도 기본값은 2 modalities
     return 2
 
 
@@ -182,37 +131,3 @@ def get_model_config(model_name: str) -> Dict:
         'use_4modalities': get_n_channels_for_model(model_name) == 4,
     }
 
-
-# ============================================================================
-# ROI Model Configuration
-# ============================================================================
-ROI_MODEL_CONFIGS: Dict[str, Dict] = {
-    'roi_mobileunetr3d_tiny': {
-        'img_size': (64, 64, 64),
-        'patch_size': (2, 2, 2),
-        'norm': 'bn',
-    },
-    'roi_unet3d_small': {
-        'norm': 'bn',
-        'base_channels': 16,
-        'depth': 4,
-    },
-}
-DEFAULT_ROI_MODEL = 'roi_mobileunetr3d_tiny'
-
-
-def get_available_roi_models() -> List[str]:
-    return list(ROI_MODEL_CONFIGS.keys())
-
-
-def validate_roi_model(model_name: Optional[str]) -> str:
-    if model_name is None:
-        return DEFAULT_ROI_MODEL
-    if model_name not in ROI_MODEL_CONFIGS:
-        raise ValueError(f"Unknown ROI model '{model_name}'. Available: {get_available_roi_models()}")
-    return model_name
-
-
-def get_roi_model_config(model_name: Optional[str]) -> Dict:
-    name = validate_roi_model(model_name)
-    return ROI_MODEL_CONFIGS[name]

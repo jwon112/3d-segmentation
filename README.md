@@ -11,25 +11,29 @@
 ├── models/                             # 모델 아키텍처
 │   ├── __init__.py
 │   ├── channel_configs.py             # 중앙 집중식 채널 설정 (_xs, _s, _m, _l)
-│   ├── model_3d_unet.py               # 3D U-Net (크기: xs, s, m, l)
-│   ├── model_3d_unet_stride.py        # 3D U-Net Stride (크기: xs, s, m, l)
-│   ├── model_3d_unet_modal_comparison.py  # 모달리티 비교 모델 (2modal, 4modal, quadbranch)
-│   ├── model_unetr.py                 # UNETR 모델
-│   ├── model_swin_unetr.py            # Swin UNETR 모델
-│   ├── mobileunetr.py                 # Mobile UNETR (2D)
-│   ├── mobileunetr_3d.py              # Mobile UNETR 3D
-│   ├── dualbranch_basic.py            # Dual-Branch 기본 (MaxPool, Stride, Dilated)
-│   ├── dualbranch_replk.py            # Dual-Branch RepLK (RepLK + MViT)
-│   ├── dualbranch_mobile.py           # Dual-Branch MobileNetV2 (Shuffle-inspired)
-│   ├── dualbranch_mvit.py             # Dual-Branch MobileViT Extended
-│   ├── dualbranch_14_unet.py          # Dual-Branch Backbone 비교 (MobileNetV2, GhostNet, ShuffleNetV2, ConvNeXt 등)
-│   └── modules/                       # 공통 모듈
-│       ├── __init__.py
-│       ├── replk_modules.py           # RepLK 관련 모듈
-│       ├── mvit_modules.py            # MobileViT 관련 모듈
-│       ├── ghostnet_modules.py        # GhostNet 관련 모듈
-│       ├── shufflenet_modules.py      # ShuffleNetV2 관련 모듈
-│       └── convnext_modules.py        # ConvNeXt 관련 모듈
+│   ├── baseline/                      # 참조/논문 모델
+│   │   ├── model_3d_unet.py           # 3D U-Net (xs, s, m, l)
+│   │   ├── model_3d_unet_modal_comparison.py  # 모달리티 비교 (2modal, 4modal)
+│   │   ├── model_unetr.py             # UNETR
+│   │   ├── model_swin_unetr.py        # Swin UNETR
+│   │   ├── mobileunetr.py            # Mobile UNETR (2D)
+│   │   ├── mobileunetr_3d.py         # Mobile UNETR 3D
+│   │   └── model_segformer3d.py       # SegFormer 3D
+│   ├── custom/                        # 프로젝트 커스텀 모델
+│   │   ├── dualbranch_replk.py        # Dual-Branch RepLK + MViT
+│   │   ├── dualbranch_mvit.py         # Dual-Branch MobileViT Extended
+│   │   ├── dualbranch_14_unet.py      # Dual-Branch Backbone 비교
+│   │   ├── dualbranch_shufflenet_v2.py  # Dual-Branch ShuffleNet V2
+│   │   └── architecture/cascade/     # Cascade / SegNeXt 등
+│   │       └── seg_model/
+│   └── modules/                       # 공통 빌딩 블록
+│       ├── dualbranch_blocks.py       # Dual-Branch 공통 블록
+│       ├── replk_modules.py           # RepLK
+│       ├── mvit_modules.py            # MobileViT
+│       ├── ghostnet_modules.py        # GhostNet
+│       ├── shufflenet_modules.py      # ShuffleNetV2
+│       ├── convnext_modules.py        # ConvNeXt
+│       └── ...
 ├── utils/                              # 유틸리티 함수
 │   ├── __init__.py
 │   ├── experiment_utils.py            # 실험 유틸리티 (모델 생성, PAM 계산, 슬라이딩 윈도우 등)
@@ -54,7 +58,6 @@
 │   └── factory.py                      # 설정 기반 DataLoader 팩토리
 │   └── runner/                         # 실험 실행 모듈 (리팩토링됨)
 │       ├── __init__.py                 # 모든 함수 re-export
-│       ├── roi_training.py             # ROI 모델 학습
 │       ├── training.py                 # 메인 모델 학습
 │       ├── evaluation.py               # 모델 평가
 │       └── experiment_orchestrator.py  # 통합 실험 실행
@@ -62,8 +65,6 @@
 ├── data/                               # 데이터셋
 ├── integrated_experiment.py            # 통합 실험 스크립트 (CLI 진입점)
 ├── evaluate_experiment.py              # 체크포인트 평가 스크립트
-├── train_roi.py                        # ROI 탐지 모델 전용 학습/평가 스크립트
-├── data_loader.py                      # 하위 호환용 래퍼 (내부적으로 dataloaders 사용, 신규 코드는 dataloaders 사용 권장)
 └── requirements.txt                    # 의존성 패키지
 ```
 
@@ -124,7 +125,7 @@ python integrated_experiment.py --epochs 10 --batch_size 1 --seeds 24 42 123
 
 #### 특정 모델만 실험
 ```bash
-python integrated_experiment.py --epochs 10 --models unet3d_s dualbranch_01_unet_s
+python integrated_experiment.py --epochs 10 --models unet3d_s dualbranch_04_unet_s
 ```
 
 #### BRATS2018 데이터셋 사용
@@ -200,11 +201,6 @@ torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> -
 - `unet3d_s`: 3D U-Net Small
 - `unet3d_m`: 3D U-Net Medium
 - `unet3d_l`: 3D U-Net Large
-- `unet3d_stride_xs`: 3D U-Net Stride Extra Small (Stride Conv downsampling)
-- `unet3d_stride_s`: 3D U-Net Stride Small
-- `unet3d_stride_m`: 3D U-Net Stride Medium
-- `unet3d_stride_l`: 3D U-Net Stride Large
-
 **크기별 채널 증가**: 각 크기가 2배씩 증가 (xs → s → m → l)
 
 #### Transformer 기반 모델
@@ -214,15 +210,10 @@ torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> -
 - `mobile_unetr_3d`: Mobile UNETR 3D
 
 #### Dual-Branch 모델 (T1ce, FLAIR 이중 분기, 크기: xs, s, m, l)
-- `dualbranch_01_unet_{xs|s|m|l}`: 기본 Dual-Branch (MaxPool)
-- `dualbranch_02_unet_{xs|s|m|l}`: Stride Conv 버전
-- `dualbranch_03_unet_{xs|s|m|l}`: Dilated Conv (FLAIR만)
 - `dualbranch_04_unet_{xs|s|m|l}`: RepLK 13x13x13 (FLAIR만)
 - `dualbranch_05_unet_{xs|s|m|l}`: RepLK + FFN2
 - `dualbranch_06_unet_{xs|s|m|l}`: RepLK + MViT Stage 4,5
 - `dualbranch_07_unet_{xs|s|m|l}`: RepLK + MViT Stage 5만
-- `dualbranch_mobilenetv2_dilated_{xs|s|m|l}`: MobileNetV2 듀얼 분기 (Shuffle-inspired, Stage3 Fused)
-- `dualbranch_mobilenetv2_dilated_fixed_{xs|s|m|l}`: MobileNetV2 듀얼 분기 (Fixed Decoder 변형)
 - `dualbranch_13_unet_{xs|s|m|l}`: MobileViT Extended
 - `dualbranch_14_mobilenetv2_expand2_{xs|s|m|l}`: MobileNetV2 (expand_ratio=2)
 - `dualbranch_14_ghostnet_{xs|s|m|l}`: GhostNet
@@ -231,15 +222,13 @@ torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> -
 - `dualbranch_14_shufflenetv2_{xs|s|m|l}`: ShuffleNetV2
 - `dualbranch_14_shufflenetv2_dilated_{xs|s|m|l}`: ShuffleNetV2 Dilated
 - `dualbranch_14_shufflenetv2_lk_{xs|s|m|l}`: ShuffleNetV2 Large Kernel
+- `dualbranch_19_shufflenet_v2_stage3fused_{xs|s|m|l}`: ShuffleNet V2 Stage3 Fused
 
-**예시**: `dualbranch_01_unet_s`, `dualbranch_01_unet_m`, `dualbranch_14_ghostnet_l` 등
+**예시**: `dualbranch_04_unet_s`, `dualbranch_14_ghostnet_l` 등
 
 #### 모달리티 비교 모델
 - `unet3d_2modal_s`: 단일 분기, 2채널 (T1ce, FLAIR) concat
 - `unet3d_4modal_s`: 단일 분기, 4채널 (T1, T1ce, T2, FLAIR) concat
-- `dualbranch_2modal_unet_s`: 2개 분기 (T1ce, FLAIR)
-- `quadbranch_4modal_unet_s`: 4개 분기 (T1, T1ce, T2, FLAIR) - 어텐션 없음
-- `quadbranch_4modal_attention_unet_s`: 4개 분기 + 채널 어텐션
 
 ### 데이터셋 경로 설정
 
@@ -513,11 +502,11 @@ torch.distributed.DistStoreError: use_libuv was requested but PyTorch was built 
 ## 🛠️ 커스터마이징
 
 ### 새로운 모델 추가
-1. `models/` 폴더에 새 모델 파일 생성
-2. `models/__init__.py`에 모델 import 추가
+1. 참조 모델은 `models/baseline/`, 커스텀/변형은 `models/custom/`에 추가
+2. `models/__init__.py` 또는 `models/baseline/__init__.py`에 re-export 추가
 3. `utils/experiment_utils.py`의 `get_model()` 함수에 모델 케이스 추가
-4. 크기별 채널 설정이 필요한 경우 `models/channel_configs.py`에 추가
-5. 공통 모듈은 `models/modules/` 폴더에 추가
+4. 크기별 채널 설정은 `models/channel_configs.py`에 추가
+5. 공통 블록은 `models/modules/`에 추가 (baseline/custom 모두 참조)
 
 ### 실험 설정 변경
 - `integrated_experiment.py`의 기본 파라미터 수정
@@ -565,7 +554,7 @@ torch.distributed.DistStoreError: use_libuv was requested but PyTorch was built 
 - 데이터 경로 확인
 - NIfTI 파일 형식 확인
 - 파일명 패턴 확인 (t1ce, flair, seg)
-- `from dataloaders import get_data_loaders` 등 새 패키지 경로 사용 여부 확인 (`data_loader.py`는 하위 호환 래퍼)
+- `from dataloaders import get_data_loaders` 사용 여부 확인
 
 #### 데이터 로더 사용 예시
 
@@ -583,7 +572,7 @@ train_loader, val_loader, test_loader, train_sampler, val_sampler, test_sampler 
 )
 ```
 
-`data_loader.py`는 기존 코드와의 하위 호환을 위한 래퍼로만 남아 있으며, 새로운 스크립트에서는 `from dataloaders import ...` 사용을 권장합니다.
+데이터 로더는 `dataloaders` 패키지의 `get_data_loaders`를 사용합니다.
 
 ### NCCL Timeout 오류
 - NCCL timeout 증가: `export NCCL_TIMEOUT=1800`

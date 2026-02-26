@@ -21,5 +21,8 @@ thop>=0.0.31
 # nnUNet PlainConvUNet를 직접 사용하기 위한 외부 아키텍처 라이브러리
 dynamic-network-architectures>=0.4.1,<0.5
 
+# 3D baseline (UNETR, SwinUNETR) 외부 로드용
+monai>=1.3.0
+
 
 

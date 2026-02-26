@@ -24,8 +24,6 @@ def create_result_dict(
     best_val_tc: float,
     best_val_et: float,
     best_epoch: int,
-    cascade_metrics: Optional[Dict] = None,
-    roi_model_name: Optional[str] = None,
     coord_type: str = 'none',
     best_val_rc: Optional[float] = None
 ) -> Dict:
@@ -57,18 +55,6 @@ def create_result_dict(
     if is_brats2024:
         result['test_rc'] = metrics.get('rc', None)
         result['val_rc'] = best_val_rc if best_val_rc is not None else 0.0
-    if cascade_metrics:
-        cascade_dict = {
-            'cascade_dice': cascade_metrics.get('mean'),
-            'cascade_wt': cascade_metrics.get('wt'),
-            'cascade_tc': cascade_metrics.get('tc'),
-            'cascade_et': cascade_metrics.get('et'),
-        }
-        if is_brats2024 and 'rc' in cascade_metrics:
-            cascade_dict['cascade_rc'] = cascade_metrics.get('rc')
-        result.update(cascade_dict)
-    if roi_model_name:
-        result['roi_model_name'] = roi_model_name
     result['coord_type'] = coord_type
     return result
 

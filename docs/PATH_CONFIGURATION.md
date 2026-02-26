@@ -33,22 +33,12 @@ elif dataset_name == 'brats2020_kaggle':
 
 ### 3. 데이터 로더 경로 처리
 
-**파일**: `data_loader.py`
-**위치**: Line 34-69
-```python
-# BraTS2021 데이터셋 확인
-brats2021_dir = os.path.join(self.data_dir, 'BraTS2021_Training_Data')
-if os.path.exists(brats2021_dir):
-    # 로드
-
-# BraTS2020 Kaggle 데이터셋 확인
-training_dir = os.path.join(self.data_dir, 'MICCAI_BraTS2020_TrainingData')
-```
+**패키지**: `dataloaders` (`brats_base.py`, `factory.py` 등)
 
 **설명**:
-- `self.data_dir`: 데이터 루트 경로
-- 각 데이터셋의 하위 디렉토리를 자동 감지
-- 우선순위: BraTS2021 > BraTS2020 Kaggle > BraTS2020 표준
+- `get_data_loaders(data_dir=...)`에 넘기는 `data_dir`이 데이터 루트 경로
+- 각 데이터셋의 하위 디렉토리를 자동 감지 (BraTS2021_Training_Data, MICCAI_BraTS2020_TrainingData 등)
+- 사용 시 `from dataloaders import get_data_loaders` 로 호출
 
 ### 4. 결과 저장 경로
 

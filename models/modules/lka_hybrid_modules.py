@@ -19,7 +19,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from ..model_3d_unet import _make_norm3d, _make_activation
+from ..baseline.model_3d_unet import _make_norm3d, _make_activation
 from .cbam_modules import ChannelAttention3D
 
 

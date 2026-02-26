@@ -40,7 +40,7 @@ if __name__ == "__main__":
     parser.add_argument('--seeds', nargs='+', type=int, default=[24], 
                        help='Random seeds for experiments')
     parser.add_argument('--models', nargs='+', type=str, default=None,
-                       help='Specific models to train (default: unet3d_s,unet3d_m,unet3d_stride_s,unet3d_stride_m,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_01_unet_s,dualbranch_01_unet_m,dualbranch_02_unet_s,dualbranch_02_unet_m,dualbranch_03_unet_s,dualbranch_03_unet_m)')
+                       help='Specific models to train (default: unet3d_s,unet3d_m,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_04_unet_s,dualbranch_14_shufflenetv2_s)')
     parser.add_argument('--datasets', nargs='+', type=str, default=None,
                        help='Datasets to use: brats2021, auto (default: brats2021)')
     parser.add_argument('--dim', type=str, default='2d', choices=['2d', '3d'],
@@ -96,7 +96,7 @@ if __name__ == "__main__":
         print(f"Epochs: {args.epochs}")
         print(f"Batch size: {args.batch_size}")
         print(f"Seeds: {args.seeds}")
-        print(f"Models: {args.models if args.models else 'unet3d_s,unet3d_m,unet3d_stride_s,unet3d_stride_m,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_01_unet_s,dualbranch_01_unet_m,dualbranch_02_unet_s,dualbranch_02_unet_m,dualbranch_03_unet_s,dualbranch_03_unet_m'}")
+        print(f"Models: {args.models if args.models else 'unet3d_s,unet3d_m,unetr,swin_unetr,mobile_unetr,mobile_unetr_3d,dualbranch_04_unet_s,dualbranch_14_shufflenetv2_s'}")
         print(f"Datasets: {args.datasets if args.datasets else 'brats2021 (auto-detected)'}")
         print(f"Dataset version: {args.dataset_version}")
         print(f"Dimension: {args.dim}")

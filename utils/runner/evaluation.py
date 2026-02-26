@@ -78,8 +78,8 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
         example_dir = os.path.join(results_dir, f'qualitative_examples_{model_name}')
         os.makedirs(example_dir, exist_ok=True)
     
-    # 모달리티별 어텐션 가중치 수집 (quadbranch_4modal_attention_unet_s만)
-    collect_attention = (model_name == 'quadbranch_4modal_attention_unet_s')
+    # 모달리티별 어텐션 가중치 수집 (해당 모델 제거됨)
+    collect_attention = False
     all_attention_weights = []  # 각 샘플별 어텐션 가중치 저장
     
     # MobileViT attention 가중치 수집 (모델에 MobileViT 블록이 있으면 자동 수집)

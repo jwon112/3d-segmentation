@@ -11,17 +11,17 @@ RepLK (Reparameterizable Large Kernel) Dual-Branch UNet Models
 import torch
 import torch.nn as nn
 
-from .model_3d_unet import DoubleConv3D, Up3D, OutConv3D
-from .dualbranch_basic import Down3DStride
-from .channel_configs import get_dualbranch_channels
-from .modules.replk_modules import (
+from ..baseline.model_3d_unet import DoubleConv3D, Up3D, OutConv3D
+from ..modules.dualbranch_blocks import Down3DStride
+from ..channel_configs import get_dualbranch_channels
+from ..modules.replk_modules import (
     RepLKBlock3D,
     Transition3D,
     ConvFFN3D,
     Down3DStrideRepLK,
     Down3DStrideRepLK_FFN2,
 )
-from .modules.mvit_modules import Down3DStrideMViT
+from ..modules.mvit_modules import Down3DStrideMViT
 
 
 # ============================================================================

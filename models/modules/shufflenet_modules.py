@@ -6,7 +6,7 @@ ShuffleNetV1 및 ShuffleNetV2 스타일의 3D 모듈들
 import torch
 import torch.nn as nn
 
-from ..model_3d_unet import _make_norm3d, _make_activation
+from ..baseline.model_3d_unet import _make_norm3d, _make_activation
 from .cbam_modules import ChannelAttention3D
 from .lka_hybrid_modules import LKAHybridCBAM3D
 

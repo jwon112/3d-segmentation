@@ -14,11 +14,6 @@ import math
 from datetime import timedelta
 from typing import Dict, Optional, Tuple
 
-from models.architecture.cascade.roi_model import (
-    build_roi_mobileunetr3d,
-    build_roi_unet3d_small,
-)
-
 # Global input size configuration
 # 2D models use 256x256 for stable down/upsampling (avoid odd sizes)
 INPUT_SIZE_2D = (256, 256)
@@ -513,7 +508,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     """모델 생성 함수
     
     Args:
-        model_name: 모델 이름 (예: 'dualbranch_01_unet_s', 'unet3d_m', 'shufflenet_v2_p3d_lka_segnext_s')
+        model_name: 모델 이름 (예: 'dualbranch_04_unet_s', 'unet3d_m', 'dualbranch_19_shufflenet_v2_stage3fused_s')
         n_channels: 입력 채널 수
         n_classes: 출력 클래스 수
         dim: '2d' 또는 '3d'
@@ -525,9 +520,6 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         ImportError: 모델 모듈을 import할 수 없는 경우
         RuntimeError: 모델 생성 중 오류가 발생한 경우
     
-    Note:
-        CNN 계열 모델(ShuffleNetV2 등)의 경우 cascade 접두사는 자동으로 제거되어 처리됩니다.
-        예: cascade_shufflenet_v2_p3d_lka_segnext_s -> shufflenet_v2_p3d_lka_segnext_s
     """
     # 파라미터 검증
     if not model_name:
@@ -544,12 +536,6 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         raise ValueError(f"norm must be one of ['bn', 'in', 'gn', 'ln'], got '{norm}'")
     if coord_type not in ['none', 'simple', 'hybrid']:
         raise ValueError(f"coord_type must be one of ['none', 'simple', 'hybrid'], got '{coord_type}'")
-    
-    # CNN 계열 모델의 cascade 접두사 자동 제거 (하위 호환성)
-    # ShuffleNetV2 계열은 cascade 접두사와 무관하게 동일한 아키텍처 사용
-    original_model_name = model_name
-    if model_name.startswith('cascade_shufflenet_v2_'):
-        model_name = model_name.replace('cascade_shufflenet_v2_', 'shufflenet_v2_', 1)
     
     # coord_type에 따라 include_coords와 n_coord_channels 결정
     if coord_type == 'none':
@@ -572,36 +558,12 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     
     # 지원하는 모델 목록 정의 (패턴 기반)
     SUPPORTED_MODEL_PATTERNS = [
-        'unet3d_', 'unet3d_stride_', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'segformer3d',
-        'dualbranch_01_unet_', 'dualbranch_02_unet_', 'dualbranch_03_unet_', 'dualbranch_04_unet_',
-        'dualbranch_05_unet_', 'dualbranch_06_unet_', 'dualbranch_07_unet_', 'dualbranch_10_unet_',
-        'dualbranch_11_unet_', 'dualbranch_13_unet_', 'dualbranch_14_',
-        'dualbranch_16_shufflenet_hybrid_', 'dualbranch_mobilenetv2_dilated_',
-        'dualbranch_mobilenetv2_dilated_fixed_',
-        'dualbranch_16_shufflenet_hybrid_ln_', 'dualbranch_17_shufflenet_pamlite_',
-        'dualbranch_17_shufflenet_pamlite_v3_', 'dualbranch_18_shufflenet_v1_',
-        'dualbranch_18_shufflenet_v1_stage3fused_',
+        'unet3d_', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'segformer3d',
+        'dualbranch_04_unet_', 'dualbranch_05_unet_', 'dualbranch_06_unet_', 'dualbranch_07_unet_',
+        'dualbranch_13_unet_', 'dualbranch_14_',
         'dualbranch_19_shufflenet_v2_stage3fused_',
-        'cascade_shufflenet_v2_',
-        'cascade_shufflenet_v2_p3d_',
-        'cascade_shufflenet_v2_lk_',
-        'cascade_shufflenet_v2_p3d_lk_',
-        'cascade_shufflenet_v2_lka_',
-        'cascade_shufflenet_v2_lka_segnext_',
-        'cascade_shufflenet_v2_mvit_',
-        'cascade_shufflenet_v2_p3d_mvit_',
-        'cascade_patch_conv_transformer_',  # New: Patch Conv + Transformer
-        'cascade_unet3d_',  # Baseline: Standard 3D U-Net
-        'cascade_unetr_',  # Baseline: UNETR (with size suffix)
-        'cascade_swin_unetr_',  # Baseline: SwinUNETR (with size suffix)
-        'quadbranch_unet_', 'quadbranch_channel_centralized_concat_',
-        'quadbranch_channel_distributed_concat_', 'quadbranch_channel_distributed_conv_',
-        'quadbranch_spatial_centralized_concat_', 'quadbranch_spatial_distributed_concat_',
-        'quadbranch_spatial_distributed_conv_',
         # 특정 모델 이름 (패턴이 아닌 정확한 이름)
-        'nnunet',
-        'unet3d_2modal_s', 'unet3d_4modal_s', 'dualbranch_2modal_unet_s',
-        'quadbranch_4modal_unet_s', 'quadbranch_4modal_attention_unet_s'
+        'unet3d_2modal_s', 'unet3d_4modal_s',
     ]
     
     # 모델 이름 검증
@@ -615,22 +577,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         raise ValueError(
             f"Unknown model: '{model_name}'\n"
             f"Supported model patterns: {', '.join(SUPPORTED_MODEL_PATTERNS)}\n"
-            f"Note: Most models support size suffixes: _xs, _s, _m, _l (e.g., 'dualbranch_18_shufflenet_v1_s')"
-        )
-    
-    # nnUNet PlainConvUNet을 직접 사용하는 별칭 모델
-    # 'nnunet'이라는 이름으로 호출하면 unet3d_s (InstanceNorm, 3D) 설정을 그대로 사용
-    if model_name == 'nnunet':
-        # 내부적으로는 동일한 get_model 로직을 재사용하여 PlainConvUNet 생성
-        return get_model(
-            model_name='unet3d_s',
-            n_channels=n_channels,
-            n_classes=n_classes,
-            dim=dim,
-            patch_size=patch_size,
-            use_pretrained=use_pretrained,
-            norm='in',            # nnUNet 스타일 InstanceNorm
-            coord_type=coord_type
+            f"Note: Most models support size suffixes: _xs, _s, _m, _l (e.g., 'dualbranch_14_shufflenetv2_s')"
         )
     
     # Helper function for consistent error handling
@@ -657,7 +604,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     
     # 2D 입력인 경우 3D로 확장 (unsqueeze depth dimension)
     # nnUNet 공식 PlainConvUNet(외부 패키지)을 사용하여 3D U-Net을 생성
-    if model_name.startswith('unet3d_') and not model_name.startswith('unet3d_stride_'):
+    if model_name.startswith('unet3d_'):
         if dim == '2d':
             # 2D 데이터는 depth 차원 추가가 필요하지만,
             # PlainConvUNet은 3D Conv를 사용하므로 여기서는 3D 전용으로 제한
@@ -725,60 +672,69 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             return model
         
         return _create_model_with_error_handling(model_name, _create_unet3d_plainconv)
-    elif model_name.startswith('unet3d_stride_'):
-        # UNet3D variant with stride-2 conv downsampling - Support xs, s, m, l sizes
-        try:
-            base_name, size = parse_model_size(model_name)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_unet3d_stride():
-            from models.model_3d_unet_stride import UNet3D_Stride
-            return UNet3D_Stride(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
-        return _create_model_with_error_handling(model_name, _create_unet3d_stride)
     elif model_name == 'unetr':
-        # dim에 따라 img_size 설정
         if dim == '2d':
             img_size = INPUT_SIZE_2D
-            # patch_size가 지정되지 않으면 기본값 사용 (2D)
             if patch_size is None:
-                patch_size = (16, 16)  # 논문 권장값 (16, 16, 16)의 2D 버전
+                patch_size = (16, 16)
+            def _create_unetr():
+                from models import UNETR_Simplified
+                return UNETR_Simplified(
+                    img_size=img_size,
+                    patch_size=patch_size,
+                    in_channels=n_channels,
+                    out_channels=n_classes,
+                )
         else:
+            # 3D: MONAI UNETR 로드 (가중치 없이 train from scratch)
             img_size = (240, 240, 155)
-            # patch_size가 지정되지 않으면 기본값 사용 (3D)
-            if patch_size is None:
-                patch_size = (16, 16, 16)  # 논문 권장값
-        
-        def _create_unetr():
-            from models import UNETR_Simplified
-            return UNETR_Simplified(
-                img_size=img_size, 
-                patch_size=patch_size,
-                in_channels=n_channels, 
-                out_channels=n_classes
-            )
+            norm_name = "instance" if norm == 'in' else "batch"
+            def _create_unetr():
+                try:
+                    from monai.networks.nets import UNETR
+                except ImportError as e:
+                    raise ImportError(
+                        f"MONAI is required for 3D UNETR. Install: pip install monai>=1.3.0. {e}"
+                    )
+                return UNETR(
+                    in_channels=n_channels,
+                    out_channels=n_classes,
+                    img_size=img_size,
+                    spatial_dims=3,
+                    feature_size=16,
+                    norm_name=norm_name,
+                )
         return _create_model_with_error_handling(model_name, _create_unetr)
     elif model_name == 'swin_unetr':
-        # dim에 따라 img_size 설정
         if dim == '2d':
             img_size = INPUT_SIZE_2D
-            # patch_size가 지정되지 않으면 기본값 사용 (2D)
             if patch_size is None:
                 patch_size = (4, 4)
+            def _create_swin_unetr():
+                from models import SwinUNETR_Simplified
+                return SwinUNETR_Simplified(
+                    img_size=img_size,
+                    patch_size=patch_size,
+                    in_channels=n_channels,
+                    out_channels=n_classes,
+                )
         else:
+            # 3D: MONAI SwinUNETR 로드 (가중치 없이 train from scratch)
             img_size = (240, 240, 155)
-            # patch_size가 지정되지 않으면 기본값 사용 (3D)
-            if patch_size is None:
-                patch_size = (4, 4, 4)
-        
-        def _create_swin_unetr():
-            from models import SwinUNETR_Simplified
-            return SwinUNETR_Simplified(
-                img_size=img_size, 
-                patch_size=patch_size,
-                in_channels=n_channels, 
-                out_channels=n_classes
-            )
+            def _create_swin_unetr():
+                try:
+                    from monai.networks.nets import SwinUNETR
+                except ImportError as e:
+                    raise ImportError(
+                        f"MONAI is required for 3D SwinUNETR. Install: pip install monai>=1.3.0. {e}"
+                    )
+                return SwinUNETR(
+                    img_size=img_size,
+                    in_channels=n_channels,
+                    out_channels=n_classes,
+                    feature_size=24,
+                    spatial_dims=3,
+                )
         return _create_model_with_error_handling(model_name, _create_swin_unetr)
     elif model_name == 'mobile_unetr':
         # MobileUNETR는 2D 전용 모델
@@ -811,7 +767,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             patch_size = (2, 2, 2)  # 3D에서 권장값
         
         def _create_mobile_unetr_3d():
-            from models.mobileunetr_3d import MobileUNETR_3D_Wrapper
+            from models.baseline.mobileunetr_3d import MobileUNETR_3D_Wrapper
             return MobileUNETR_3D_Wrapper(
                 img_size=img_size,
                 patch_size=patch_size,
@@ -825,7 +781,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             raise ValueError("SegFormer3D is only supported for 3D data (dim='3d')")
         
         def _create_segformer3d():
-            from models.model_segformer3d import SegFormer3D
+            from models.baseline.model_segformer3d import SegFormer3D
             return SegFormer3D(
                 in_channels=n_channels,
                 sr_ratios=[4, 2, 1, 1],
@@ -841,51 +797,30 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 decoder_dropout=0.0,
             )
         return _create_model_with_error_handling(model_name, _create_segformer3d)
-    elif model_name.startswith('dualbranch_01_unet_'):
-        # Dual-branch 3D UNet (v0.1) - Support xs, s, m, l sizes
-        try:
-            base_name, size = parse_model_size(model_name)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_dualbranch_01():
-            from models.dualbranch_basic import DualBranchUNet3D
-            return DualBranchUNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
-        return _create_model_with_error_handling(model_name, _create_dualbranch_01)
-    elif model_name.startswith('dualbranch_02_unet_'):
-        # Dual-branch 3D UNet (v0.2) - stride-2 convolutional downsampling - Support xs, s, m, l sizes
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_basic import DualBranchUNet3D_Stride
-        return DualBranchUNet3D_Stride(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
-    elif model_name.startswith('dualbranch_03_unet_'):
-        # Dual-branch 3D UNet (v0.3) - dilated conv for FLAIR branch - Support xs, s, m, l sizes
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_basic import DualBranchUNet3D_StrideDilated
-        return DualBranchUNet3D_StrideDilated(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
     elif model_name.startswith('dualbranch_04_unet_'):
         # Dual-branch UNet with RepLK (13x13x13) for FLAIR branch - Support xs, s, m, l sizes
         base_name, size = parse_model_size(model_name)
-        from models.dualbranch_replk import DualBranchUNet3D_StrideLK
+        from models.custom.dualbranch_replk import DualBranchUNet3D_StrideLK
         return DualBranchUNet3D_StrideLK(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
     elif model_name.startswith('dualbranch_05_unet_'):
         # Dual-branch UNet with RepLK + FFN2 (expansion_ratio=2) - Support xs, s, m, l sizes
         base_name, size = parse_model_size(model_name)
-        from models.dualbranch_replk import DualBranchUNet3D_StrideLK_FFN2
+        from models.custom.dualbranch_replk import DualBranchUNet3D_StrideLK_FFN2
         return DualBranchUNet3D_StrideLK_FFN2(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
     elif model_name.startswith('dualbranch_06_unet_'):
         # Dual-branch UNet with RepLK + FFN2 + MViT Stage 4,5 - Support xs, s, m, l sizes
         base_name, size = parse_model_size(model_name)
-        from models.dualbranch_replk import DualBranchUNet3D_StrideLK_FFN2_MViT
+        from models.custom.dualbranch_replk import DualBranchUNet3D_StrideLK_FFN2_MViT
         return DualBranchUNet3D_StrideLK_FFN2_MViT(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
     elif model_name.startswith('dualbranch_07_unet_'):
         # Dual-branch UNet with RepLK + FFN2 + MViT Stage 5만 - Support xs, s, m, l sizes
         base_name, size = parse_model_size(model_name)
-        from models.dualbranch_replk import DualBranchUNet3D_StrideLK_FFN2_MViT_Stage5
+        from models.custom.dualbranch_replk import DualBranchUNet3D_StrideLK_FFN2_MViT_Stage5
         return DualBranchUNet3D_StrideLK_FFN2_MViT_Stage5(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
     elif model_name.startswith('dualbranch_13_unet_'):
         # Dual-branch UNet with MobileViT extended to FLAIR branch Stage 3,4 + MViT Stage5 - Support xs, s, m, l sizes
         base_name, size = parse_model_size(model_name)
-        from models.dualbranch_mvit import DualBranchUNet3D_MViT_Extended
+        from models.custom.dualbranch_mvit import DualBranchUNet3D_MViT_Extended
         return DualBranchUNet3D_MViT_Extended(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
     # PAM comparison experiments - different backbones (dualbranch_14)
     elif model_name.startswith('dualbranch_14_'):
@@ -923,89 +858,11 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             
             if backbone in backbone_map:
                 class_name = backbone_map[backbone]
-                from models import dualbranch_14_unet
+                from models.custom import dualbranch_14_unet
                 model_class = getattr(dualbranch_14_unet, class_name)
                 return model_class(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
             else:
                 raise ValueError(f"Unknown backbone in dualbranch_14: {backbone}")
-    elif model_name.startswith('dualbranch_mobilenetv2_dilated_fixed_'):
-        # Stage3-fused MobileNetV2 dual-branch UNet with fixed decoder channels
-        size = model_name.split('dualbranch_mobilenetv2_dilated_fixed_')[-1]
-        from models.dualbranch_mobile import DualBranchUNet3D_MobileNetV2
-        return DualBranchUNet3D_MobileNetV2(
-            n_channels=n_channels,
-            n_classes=n_classes,
-            norm=norm,
-            size=size,
-            fixed_decoder=True,
-        )
-    elif model_name.startswith('dualbranch_mobilenetv2_dilated_'):
-        # Stage3-fused MobileNetV2 dual-branch UNet (standard decoder)
-        size = model_name.split('dualbranch_mobilenetv2_dilated_')[-1]
-        from models.dualbranch_mobile import DualBranchUNet3D_MobileNetV2
-        return DualBranchUNet3D_MobileNetV2(
-            n_channels=n_channels,
-            n_classes=n_classes,
-            norm=norm,
-            size=size,
-            fixed_decoder=False,
-        )
-    elif model_name.startswith('dualbranch_16_shufflenet_hybrid_'):
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_16_unet import DualBranchUNet3D_ShuffleHybrid
-        return DualBranchUNet3D_ShuffleHybrid(
-            n_channels=n_channels,
-            n_classes=n_classes,
-            norm=norm,
-            size=size,
-            log_hybrid_stats=True,
-        )
-    elif model_name.startswith('dualbranch_18_shufflenet_v1_stage3fused_'):
-        # Dual-branch UNet with ShuffleNet V1 - Stage 3 fused at down4 (4-stage structure) - Support xs, s, m, l sizes
-        # Support variants: _fixed_decoder_*, _half_decoder_*, or default
-        try:
-            # Check for fixed_decoder or half_decoder suffix
-            fixed_decoder = False
-            half_decoder = False
-            
-            if '_fixed_decoder_' in model_name:
-                fixed_decoder = True
-                # Extract size after _fixed_decoder_
-                size_part = model_name.split('_fixed_decoder_')[-1]
-                size = size_part.split('_')[0] if '_' in size_part else size_part
-            elif '_half_decoder_' in model_name:
-                half_decoder = True
-                # Extract size after _half_decoder_
-                size_part = model_name.split('_half_decoder_')[-1]
-                size = size_part.split('_')[0] if '_' in size_part else size_part
-            else:
-                # Default: extract size normally
-                base_name, size = parse_model_size(model_name)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_shufflenet_v1_stage3fused():
-            from models.dualbranch_shufflenet import DualBranchUNet3D_ShuffleNetV1_Stage3Fused
-            return DualBranchUNet3D_ShuffleNetV1_Stage3Fused(
-                n_channels=n_channels, 
-                n_classes=n_classes, 
-                norm=norm, 
-                size=size,
-                fixed_decoder=fixed_decoder,
-                half_decoder=half_decoder
-            )
-        return _create_model_with_error_handling(model_name, _create_shufflenet_v1_stage3fused)
-    elif model_name.startswith('dualbranch_18_shufflenet_v1_'):
-        # Dual-branch UNet with ShuffleNet V1 + SE blocks - Support xs, s, m, l sizes
-        try:
-            base_name, size = parse_model_size(model_name)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_shufflenet_v1():
-            from models.dualbranch_shufflenet import DualBranchUNet3D_ShuffleNetV1
-            return DualBranchUNet3D_ShuffleNetV1(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
-        return _create_model_with_error_handling(model_name, _create_shufflenet_v1)
     elif model_name.startswith('dualbranch_19_shufflenet_v2_stage3fused_'):
         # Dual-branch UNet with ShuffleNet V2 - Stage 3 fused at down4 (4-stage structure) - Support xs, s, m, l sizes
         # Support variants: _fixed_decoder_*, _half_decoder_*, or default
@@ -1031,7 +888,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
         
         def _create_shufflenet_v2_stage3fused():
-            from models.dualbranch_shufflenet_v2 import DualBranchUNet3D_ShuffleNetV2_Stage3Fused
+            from models.custom.dualbranch_shufflenet_v2 import DualBranchUNet3D_ShuffleNetV2_Stage3Fused
             return DualBranchUNet3D_ShuffleNetV2_Stage3Fused(
                 n_channels=n_channels, 
                 n_classes=n_classes, 
@@ -1041,419 +898,19 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 half_decoder=half_decoder
             )
         return _create_model_with_error_handling(model_name, _create_shufflenet_v2_stage3fused)
-    elif model_name.startswith('dualbranch_16_shufflenet_hybrid_ln_'):
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_16_unet import DualBranchUNet3D_ShuffleHybrid_AllLN
-        return DualBranchUNet3D_ShuffleHybrid_AllLN(
-            n_channels=n_channels,
-            n_classes=n_classes,
-            norm=norm,
-            size=size,
-            log_hybrid_stats=True,
-        )
-    elif model_name.startswith('dualbranch_17_shufflenet_pamlite_'):
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_17_unet import DualBranchUNet3D_ShufflePamLite
-        return DualBranchUNet3D_ShufflePamLite(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
-    elif model_name.startswith('dualbranch_17_shufflenet_pamlite_v3_'):
-        base_name, size = parse_model_size(model_name)
-        from models.dualbranch_17_unet import DualBranchUNet3D_ShufflePamLiteV3
-        return DualBranchUNet3D_ShufflePamLiteV3(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
     # 모달리티 비교 실험 모델들
     elif model_name == 'unet3d_2modal_s':
         # 단일 분기, 2채널 (t1ce, flair) concat
-        from models.model_3d_unet_modal_comparison import UNet3D_2Modal_Small
+        from models.baseline.model_3d_unet_modal_comparison import UNet3D_2Modal_Small
         return UNet3D_2Modal_Small(n_classes=n_classes, norm=norm)
     elif model_name == 'unet3d_4modal_s':
         # 단일 분기, 4채널 (t1, t1ce, t2, flair) concat
-        from models.model_3d_unet_modal_comparison import UNet3D_4Modal_Small
+        from models.baseline.model_3d_unet_modal_comparison import UNet3D_4Modal_Small
         return UNet3D_4Modal_Small(n_classes=n_classes, norm=norm)
-    elif model_name == 'dualbranch_2modal_unet_s':
-        # 2개 분기 (t1ce, flair) - dualbranch_01_unet_s와 동일 (MaxPool 기반)
-        from models.dualbranch_basic import DualBranchUNet3D
-        return DualBranchUNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm, size='s')
-    elif model_name == 'quadbranch_4modal_unet_s':
-        # 4개 분기 (t1, t1ce, t2, flair) - 어텐션 없음
-        from models.model_3d_unet_modal_comparison import QuadBranchUNet3D_4Modal_Small
-        return QuadBranchUNet3D_4Modal_Small(n_classes=n_classes, norm=norm)
-    elif model_name == 'quadbranch_4modal_attention_unet_s':
-        # 4개 분기 (t1, t1ce, t2, flair) - 채널 어텐션 포함
-        from models.model_3d_unet_modal_comparison import QuadBranchUNet3D_4Modal_Attention_Small
-        return QuadBranchUNet3D_4Modal_Attention_Small(n_classes=n_classes, norm=norm)
-    # Quad-Branch UNet models (new implementation)
-    elif model_name.startswith('quadbranch_unet_'):
-        # 기본 Quad-Branch UNet (attention 없음)
-        base_name, size = parse_model_size(model_name)
-        from models.quadbranch_unet import QuadBranchUNet3D
-        return QuadBranchUNet3D(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
-    elif model_name.startswith('quadbranch_channel_centralized_concat_'):
-        # Channel Attention (Centralized, Concat only)
-        base_name, size = parse_model_size(model_name)
-        from models.quadbranch_unet_attention import QuadBranchUNet3D_Channel_Centralized_Concat
-        return QuadBranchUNet3D_Channel_Centralized_Concat(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size, reduction=8)
-    elif model_name.startswith('quadbranch_channel_distributed_concat_'):
-        # Channel Attention (Distributed, Concat only)
-        base_name, size = parse_model_size(model_name)
-        from models.quadbranch_unet_attention import QuadBranchUNet3D_Channel_Distributed_Concat
-        return QuadBranchUNet3D_Channel_Distributed_Concat(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size, reduction=16)
-    elif model_name.startswith('quadbranch_channel_distributed_conv_'):
-        # Channel Attention (Distributed, Conv fusion)
-        base_name, size = parse_model_size(model_name)
-        from models.quadbranch_unet_attention import QuadBranchUNet3D_Channel_Distributed_Conv
-        return QuadBranchUNet3D_Channel_Distributed_Conv(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size, reduction=16)
-    elif model_name.startswith('quadbranch_spatial_centralized_concat_'):
-        # Spatial Attention (Centralized, Concat only)
-        base_name, size = parse_model_size(model_name)
-        from models.quadbranch_unet_attention import QuadBranchUNet3D_Spatial_Centralized_Concat
-        return QuadBranchUNet3D_Spatial_Centralized_Concat(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
-    elif model_name.startswith('quadbranch_spatial_distributed_concat_'):
-        # Spatial Attention (Distributed, Concat only)
-        base_name, size = parse_model_size(model_name)
-        from models.quadbranch_unet_attention import QuadBranchUNet3D_Spatial_Distributed_Concat
-        return QuadBranchUNet3D_Spatial_Distributed_Concat(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
-    elif model_name.startswith('quadbranch_spatial_distributed_conv_'):
-        # Spatial Attention (Distributed, Conv fusion)
-        base_name, size = parse_model_size(model_name)
-        from models.quadbranch_unet_attention import QuadBranchUNet3D_Spatial_Distributed_Conv
-        return QuadBranchUNet3D_Spatial_Distributed_Conv(n_channels=n_channels, n_classes=n_classes, norm=norm, bilinear=False, size=size)
-    # ShuffleNetV2 계열 모델들 (CNN 기반, cascade 접두사는 이미 제거됨)
-    elif model_name.startswith('shufflenet_v2_p3d_lka_segnext_'):
-        # ShuffleNet V2 encoder with P3D + Hybrid LKA + SegNeXt-style decoder
-        # Input: n_channels (coord_type에 따라 결정)
-        # Support xs, s, m, l sizes
-        try:
-            # Remove p3d_lka_segnext_ for size parsing
-            base_name_for_parsing = model_name.replace('shufflenet_v2_p3d_lka_segnext_', 'shufflenet_v2_')
-            base_name, size = parse_model_size(base_name_for_parsing)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_shufflenet_v2_p3d_lka_segnext():
-            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_segnext_p3d_lka
-            return build_cascade_shufflenet_v2_segnext_p3d_lka(
-                n_image_channels=n_channels,
-                n_coord_channels=n_coord_channels,
-                n_classes=n_classes,
-                norm=norm,
-                size=size,
-                include_coords=include_coords,
-            )
-        return _create_model_with_error_handling(model_name, _create_shufflenet_v2_p3d_lka_segnext)
-    elif model_name.startswith('shufflenet_v2_lka_segnext_'):
-        # ShuffleNet V2 encoder with Hybrid LKA + SegNeXt-style decoder
-        # Input: n_channels (coord_type에 따라 결정)
-        # Support xs, s, m, l sizes
-        try:
-            # Remove lka_segnext_ for size parsing
-            base_name_for_parsing = model_name.replace('shufflenet_v2_lka_segnext_', 'shufflenet_v2_')
-            base_name, size = parse_model_size(base_name_for_parsing)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_shufflenet_v2_lka_segnext():
-            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_segnext_lka
-            return build_cascade_shufflenet_v2_segnext_lka(
-                n_image_channels=n_channels,
-                n_coord_channels=n_coord_channels,
-                n_classes=n_classes,
-                norm=norm,
-                size=size,
-                include_coords=include_coords,
-            )
-        return _create_model_with_error_handling(model_name, _create_shufflenet_v2_lka_segnext)
-    elif model_name.startswith('shufflenet_v2_p3d_mvit_'):
-        # ShuffleNet V2 UNet with P3D + MobileViT (P3D convolutions + MobileViT at Stage 4)
-        # Input: n_channels (coord_type에 따라 결정)
-        # Support xs, s, m, l sizes
-        try:
-            # Remove p3d_mvit_ for size parsing
-            base_name_for_parsing = model_name.replace('shufflenet_v2_p3d_mvit_', 'shufflenet_v2_')
-            base_name, size = parse_model_size(base_name_for_parsing)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_shufflenet_v2_p3d_mvit():
-            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_unet3d_p3d_mvit
-            return build_cascade_shufflenet_v2_unet3d_p3d_mvit(
-                n_image_channels=n_channels,
-                n_coord_channels=n_coord_channels,
-                n_classes=n_classes,
-                norm=norm,
-                size=size,
-                include_coords=include_coords,
-            )
-        return _create_model_with_error_handling(model_name, _create_shufflenet_v2_p3d_mvit)
-    elif model_name.startswith('shufflenet_v2_mvit_'):
-        # ShuffleNet V2 UNet with MobileViT at Stage 4
-        # Input: n_channels (coord_type에 따라 결정)
-        # Support xs, s, m, l sizes
-        try:
-            # Remove mvit_ for size parsing
-            base_name_for_parsing = model_name.replace('shufflenet_v2_mvit_', 'shufflenet_v2_')
-            base_name, size = parse_model_size(base_name_for_parsing)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_shufflenet_v2_mvit():
-            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_unet3d_mvit
-            return build_cascade_shufflenet_v2_unet3d_mvit(
-                n_image_channels=n_channels,
-                n_coord_channels=n_coord_channels,
-                n_classes=n_classes,
-                norm=norm,
-                size=size,
-                include_coords=include_coords,
-            )
-        return _create_model_with_error_handling(model_name, _create_shufflenet_v2_mvit)
-    elif model_name.startswith('shufflenet_v2_p3d_lk_'):
-        # ShuffleNet V2 UNet with P3D + Large Kernel (P3D convolutions + 7x7x7 x2 at Stage 4)
-        # Input: n_channels (coord_type에 따라 결정)
-        # Support xs, s, m, l sizes
-        try:
-            # Remove p3d_lk_ for size parsing
-            base_name_for_parsing = model_name.replace('shufflenet_v2_p3d_lk_', 'shufflenet_v2_')
-            base_name, size = parse_model_size(base_name_for_parsing)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_shufflenet_v2_p3d_lk():
-            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_unet3d_p3d_lk
-            return build_cascade_shufflenet_v2_unet3d_p3d_lk(
-                n_image_channels=n_channels,
-                n_coord_channels=n_coord_channels,
-                n_classes=n_classes,
-                norm=norm,
-                size=size,
-                include_coords=include_coords,
-            )
-        return _create_model_with_error_handling(model_name, _create_shufflenet_v2_p3d_lk)
-    elif model_name.startswith('shufflenet_v2_lk_'):
-        # ShuffleNet V2 UNet with Large Kernel (7x7x7 x2 at Stage 4)
-        # Input: n_channels (coord_type에 따라 결정)
-        # Support xs, s, m, l sizes
-        try:
-            # Remove lk_ for size parsing
-            base_name_for_parsing = model_name.replace('shufflenet_v2_lk_', 'shufflenet_v2_')
-            base_name, size = parse_model_size(base_name_for_parsing)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_shufflenet_v2_lk():
-            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_unet3d_lk
-            return build_cascade_shufflenet_v2_unet3d_lk(
-                n_image_channels=n_channels,
-                n_coord_channels=n_coord_channels,
-                n_classes=n_classes,
-                norm=norm,
-                size=size,
-                include_coords=include_coords,
-            )
-        return _create_model_with_error_handling(model_name, _create_shufflenet_v2_lk)
-    elif model_name.startswith('shufflenet_v2_lka_'):
-        # ShuffleNet V2 UNet with Hybrid LKA at Stage 3 & 4 (UNet-style decoder)
-        # Input: n_channels (coord_type에 따라 결정)
-        # Support xs, s, m, l sizes
-        try:
-            # Remove lka_ for size parsing
-            base_name_for_parsing = model_name.replace('shufflenet_v2_lka_', 'shufflenet_v2_')
-            base_name, size = parse_model_size(base_name_for_parsing)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_shufflenet_v2_lka():
-            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_unet3d_lka_hybrid
-            return build_cascade_shufflenet_v2_unet3d_lka_hybrid(
-                n_image_channels=n_channels,
-                n_coord_channels=n_coord_channels,
-                n_classes=n_classes,
-                norm=norm,
-                size=size,
-                include_coords=include_coords,
-            )
-        return _create_model_with_error_handling(model_name, _create_shufflenet_v2_lka)
-    elif model_name.startswith('cascade_patch_conv_transformer_'):
-        # Patch Conv + Transformer UNet
-        # cascade 접두사는 아키텍처 식별용 (데이터 로더와 무관)
-        # Note: ViT 계열 모델은 입력 해상도 제약으로 인해 cascade 파이프라인(--use_cascade_pipeline) 사용 권장
-        # Input: n_channels (coord_type에 따라 결정)
-        # Support xs, s, m, l sizes
-        try:
-            base_name, size = parse_model_size(model_name)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_cascade_patch_conv_transformer():
-            from models.architecture.cascade.seg_model import build_cascade_patch_conv_transformer_unet3d
-            # coord_type에 따라 include_coords 결정
-            return build_cascade_patch_conv_transformer_unet3d(
-                n_image_channels=n_channels,
-                n_coord_channels=n_coord_channels,
-                n_classes=n_classes,
-                norm=norm,
-                size=size,
-                include_coords=include_coords,
-            )
-        return _create_model_with_error_handling(model_name, _create_cascade_patch_conv_transformer)
-    elif model_name.startswith('shufflenet_v2_p3d_'):
-        # ShuffleNet V2 UNet with P3D (Pseudo-3D) convolutions
-        # Input: n_channels (coord_type에 따라 결정)
-        # Support xs, s, m, l sizes
-        try:
-            # Remove p3d_ for size parsing
-            base_name_for_parsing = model_name.replace('shufflenet_v2_p3d_', 'shufflenet_v2_')
-            base_name, size = parse_model_size(base_name_for_parsing)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_shufflenet_v2_p3d():
-            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_unet3d_p3d
-            return build_cascade_shufflenet_v2_unet3d_p3d(
-                n_image_channels=n_channels,
-                n_coord_channels=n_coord_channels,
-                n_classes=n_classes,
-                norm=norm,
-                size=size,
-                include_coords=include_coords,
-            )
-        return _create_model_with_error_handling(model_name, _create_shufflenet_v2_p3d)
-    elif model_name.startswith('shufflenet_v2_'):
-        # ShuffleNet V2 UNet (single branch)
-        # Input: n_channels (coord_type에 따라 결정)
-        # Support xs, s, m, l sizes
-        try:
-            base_name, size = parse_model_size(model_name)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_shufflenet_v2():
-            from models.architecture.cascade.seg_model import build_cascade_shufflenet_v2_unet3d
-            return build_cascade_shufflenet_v2_unet3d(
-                n_image_channels=n_channels,
-                n_coord_channels=n_coord_channels,
-                n_classes=n_classes,
-                norm=norm,
-                size=size,
-                include_coords=include_coords,
-            )
-        return _create_model_with_error_handling(model_name, _create_shufflenet_v2)
-    elif model_name.startswith('cascade_unet3d_'):
-        # Baseline: Standard 3D U-Net
-        # cascade 접두사는 아키텍처 식별용 (데이터 로더와 무관)
-        # Input: n_channels (coord_type에 따라 결정)
-        # Support xs, s, m, l sizes
-        try:
-            base_name, size = parse_model_size(model_name)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_cascade_unet3d():
-            from models.architecture.cascade.seg_model import build_cascade_unet3d
-            # coord_type에 따라 include_coords 결정
-            return build_cascade_unet3d(
-                n_image_channels=n_channels,
-                n_coord_channels=n_coord_channels,
-                n_classes=n_classes,
-                norm=norm,
-                size=size,
-                include_coords=include_coords,
-            )
-        return _create_model_with_error_handling(model_name, _create_cascade_unet3d)
-    elif model_name.startswith('cascade_unetr_'):
-        # Baseline: UNETR
-        # cascade 접두사는 아키텍처 식별용 (데이터 로더와 무관)
-        # Note: ViT 계열 모델은 입력 해상도 제약으로 인해 cascade 파이프라인(--use_cascade_pipeline) 사용 권장
-        # Input: n_channels (coord_type에 따라 결정)
-        # Support xs, s, m, l sizes
-        try:
-            base_name, size = parse_model_size(model_name)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_cascade_unetr():
-            from models.architecture.cascade.seg_model import build_cascade_unetr
-            # 96^3 input -> patch_size (12, 12, 12) gives 8^3 patches
-            # coord_type에 따라 include_coords 결정
-            return build_cascade_unetr(
-                n_image_channels=n_channels,
-                n_coord_channels=n_coord_channels,
-                n_classes=n_classes,
-                patch_size=(12, 12, 12),  # 96 / 8 = 12
-                mlp_ratio=4.0,
-                dropout=0.1,
-                include_coords=include_coords,
-                size=size,
-            )
-        return _create_model_with_error_handling(model_name, _create_cascade_unetr)
-    elif model_name.startswith('cascade_swin_unetr_'):
-        # Baseline: SwinUNETR
-        # cascade 접두사는 아키텍처 식별용 (데이터 로더와 무관)
-        # Note: ViT 계열 모델은 입력 해상도 제약으로 인해 cascade 파이프라인(--use_cascade_pipeline) 사용 권장
-        # Input: n_channels (coord_type에 따라 결정)
-        # Support xs, s, m, l sizes
-        try:
-            base_name, size = parse_model_size(model_name)
-        except Exception as e:
-            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
-        
-        def _create_cascade_swin_unetr():
-            from models.architecture.cascade.seg_model import build_cascade_swin_unetr
-            # 96^3 input -> patch_size (4, 4, 4) gives 24^3 patches
-            # coord_type에 따라 include_coords 결정
-            return build_cascade_swin_unetr(
-                n_image_channels=n_channels,
-                n_coord_channels=n_coord_channels,
-                n_classes=n_classes,
-                patch_size=(4, 4, 4),  # 96 / 24 = 4
-                window_size=7,
-                mlp_ratio=4.0,
-                qkv_bias=True,
-                drop_rate=0.0,
-                attn_drop_rate=0.0,
-                drop_path_rate=0.1,
-                include_coords=include_coords,
-                size=size,
-            )
-        return _create_model_with_error_handling(model_name, _create_cascade_swin_unetr)
     # 이 코드는 실행되지 않아야 함 (검증 단계에서 이미 처리됨)
     # 하지만 방어적 프로그래밍을 위해 남겨둠
     raise RuntimeError(
         f"Internal error: Model '{model_name}' passed validation but was not handled. "
         f"This should not happen. Please report this issue."
     )
-
-
-def get_roi_model(
-    model_name: str,
-    n_channels: int = 7,
-    n_classes: int = 2,
-    roi_model_cfg: Optional[Dict] = None,
-) -> torch.nn.Module:
-    """ROI 탐지 모델 생성 (Cascade 1단계용)."""
-    if not model_name:
-        raise ValueError("ROI model name cannot be empty")
-    cfg = roi_model_cfg.copy() if roi_model_cfg else {}
-    img_size = tuple(cfg.pop('img_size', (64, 64, 64)))
-    patch_size = tuple(cfg.pop('patch_size', (2, 2, 2)))
-    norm = cfg.pop('norm', 'bn')
-    model_name = model_name.lower()
-
-    if model_name.startswith('roi_mobileunetr3d'):
-        return build_roi_mobileunetr3d(
-            img_size=img_size,
-            patch_size=patch_size,
-            in_channels=n_channels,
-            out_channels=n_classes,
-        )
-    if model_name == 'roi_unet3d_small':
-        base_channels = cfg.pop('base_channels', 16)
-        depth = cfg.pop('depth', 4)
-        return build_roi_unet3d_small(
-            in_channels=n_channels,
-            out_channels=n_classes,
-            norm=norm,
-            base_channels=base_channels,
-            depth=depth,
-        )
-
-    raise ValueError(f"Unknown ROI model '{model_name}'.")
 

@@ -1,13 +1,12 @@
 import torch
 import torch.nn as nn
 
-from .dualbranch_mobile import MobileNetV2Block3D
-from .dualbranch_basic import Down3DStrideDilated
-from .model_3d_unet import Up3D, OutConv3D, DoubleConv3D, _make_norm3d
-from .channel_configs import get_dualbranch_channels, get_dualbranch_channels_stage4_fused
-from .modules.mvit_modules import Down3DStrideMViT
-from .modules.ghostnet_modules import GhostBottleneck3D, Down3DGhostNet
-from .modules.shufflenet_modules import (
+from ..modules.dualbranch_blocks import MobileNetV2Block3D, Down3DStrideDilated
+from ..baseline.model_3d_unet import Up3D, OutConv3D, DoubleConv3D, _make_norm3d
+from ..channel_configs import get_dualbranch_channels, get_dualbranch_channels_stage4_fused
+from ..modules.mvit_modules import Down3DStrideMViT
+from ..modules.ghostnet_modules import GhostBottleneck3D, Down3DGhostNet
+from ..modules.shufflenet_modules import (
     ShuffleNetV2Unit3D,
     ShuffleNetV2Unit3D_Dilated,
     ShuffleNetV2Unit3D_LK,
@@ -16,8 +15,8 @@ from .modules.shufflenet_modules import (
     Down3DShuffleNetV2_LK,
     channel_shuffle_3d,
 )
-from .modules.convnext_modules import ConvNeXtBlock3D, Down3DConvNeXt
-from .modules.cross_attention_3d import BidirectionalCrossAttentionTransformer3D
+from ..modules.convnext_modules import ConvNeXtBlock3D, Down3DConvNeXt
+from ..modules.cross_attention_3d import BidirectionalCrossAttentionTransformer3D
 
 
 def _concat_shuffle(tensors, groups: int = 2) -> torch.Tensor:

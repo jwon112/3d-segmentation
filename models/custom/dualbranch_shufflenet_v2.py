@@ -11,10 +11,10 @@ ShuffleNet V2 기반 Dual-Branch UNet 모델
 import torch
 import torch.nn as nn
 
-from .modules.shufflenet_modules import ShuffleNetV2Unit3D, Down3DShuffleNetV2, channel_shuffle_3d, MultiScaleDilatedDepthwise3D
-from .modules.cbam_modules import CBAM3D
-from .model_3d_unet import Up3D, OutConv3D, _make_norm3d, DoubleConv3D, _make_activation
-from .channel_configs import get_dualbranch_channels_stage3_fused, get_activation_type
+from ..modules.shufflenet_modules import ShuffleNetV2Unit3D, Down3DShuffleNetV2, channel_shuffle_3d, MultiScaleDilatedDepthwise3D
+from ..modules.cbam_modules import CBAM3D
+from ..baseline.model_3d_unet import Up3D, OutConv3D, _make_norm3d, DoubleConv3D, _make_activation
+from ..channel_configs import get_dualbranch_channels_stage3_fused, get_activation_type
 import torch.nn.functional as F
 
 
