@@ -13,6 +13,7 @@ from typing import List, Dict, Optional
 # Size suffix를 지원하는 모델 prefix들 (xs, s, m, l 모두 지원)
 SIZE_SUFFIX_MODELS = {
     'unet3d_': ['xs', 's', 'm', 'l'],
+    'mamba3d_': ['xs', 's', 'm', 'l'],
     'dualbranch_04_unet_': ['xs', 's', 'm', 'l'],
     'dualbranch_05_unet_': ['xs', 's', 'm', 'l'],
     'dualbranch_06_unet_': ['xs', 's', 'm', 'l'],
@@ -21,6 +22,7 @@ SIZE_SUFFIX_MODELS = {
     'dualbranch_19_shufflenet_v2_stage3fused_': ['xs', 's', 'm', 'l'],
     'dualbranch_19_shufflenet_v2_stage3fused_fixed_decoder_': ['xs', 's', 'm', 'l'],
     'dualbranch_19_shufflenet_v2_stage3fused_half_decoder_': ['xs', 's', 'm', 'l'],
+    'dgmn3d_': ['xs', 's', 'm', 'l'],
 }
 
 # Size suffix를 지원하는 dualbranch_backbone 백본 종류
@@ -36,9 +38,17 @@ FIXED_NAME_MODELS = [
     'segformer3d',
 ]
 
-# 4개 모달리티를 사용하는 모델들
+# 4개 모달리티를 사용하는 모델들 (데이터 로더에서 use_4modalities=True 필요)
 MODELS_WITH_4_MODALITIES = [
     'unet3d_4modal_s',
+    'mamba3d_xs',
+    'mamba3d_s',
+    'mamba3d_m',
+    'mamba3d_l',
+    'dgmn3d_xs',
+    'dgmn3d_s',
+    'dgmn3d_m',
+    'dgmn3d_l',
 ]
 
 

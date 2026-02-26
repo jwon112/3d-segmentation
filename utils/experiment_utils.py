@@ -556,8 +556,9 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     # 지원하는 모델 목록 정의 (패턴 기반)
     SUPPORTED_MODEL_PATTERNS = [
         'unet3d_', 'unetr', 'swin_unetr', 'mobile_unetr_3d', 'segformer3d',
+        'mamba3d_',
         'dualbranch_04_unet_', 'dualbranch_05_unet_', 'dualbranch_06_unet_', 'dualbranch_07_unet_',
-        'dualbranch_13_unet_', 'dualbranch_backbone_',
+        'dualbranch_13_unet_', 'dualbranch_backbone_', 'dgmn3d_',
         'dualbranch_19_shufflenet_v2_stage3fused_',
         # 특정 모델 이름 (패턴이 아닌 정확한 이름)
         'unet3d_2modal_s', 'unet3d_4modal_s',
@@ -658,6 +659,90 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             return model
         
         return _create_model_with_error_handling(model_name, _create_unet3d_plainconv)
+    elif model_name.startswith('mamba3d_'):
+        # Pure Mamba-2 3D baseline (no gating or multi-scale fusion)
+        try:
+            base_name, size = parse_model_size(model_name)
+        except Exception as e:
+            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
+
+        if size == 'xs':
+            base_channels = 32
+        elif size == 's':
+            base_channels = 48
+        elif size == 'm':
+            base_channels = 64
+        elif size == 'l':
+            base_channels = 80
+        else:
+            raise ValueError(f"Unknown Mamba3D size '{size}' for model '{model_name}'")
+
+        def _create_mamba3d():
+            from models.custom.mamba3d import Mamba3D
+            return Mamba3D(
+                n_channels=n_channels,
+                n_classes=n_classes,
+                base_channels=base_channels,
+                use_mamba=True,
+            )
+
+        return _create_model_with_error_handling(model_name, _create_mamba3d)
+    elif model_name.startswith('dgmn3d_'):
+        # Dynamic Gated Mamba Network (DGMN3D) - 3D only, with gating ablations
+        try:
+            base_name, size = parse_model_size(model_name)
+        except Exception as e:
+            raise ValueError(f"Failed to parse model size from '{model_name}': {e}")
+
+        # Map size to base_channels
+        if size == 'xs':
+            base_channels = 16
+        elif size == 's':
+            base_channels = 32
+        elif size == 'm':
+            base_channels = 48
+        elif size == 'l':
+            base_channels = 64
+        else:
+            raise ValueError(f"Unknown DGMN3D size '{size}' for model '{model_name}'")
+
+        # Gating / fusion configuration based on base_name
+        # - dgmn3d_nogate_* : no GLU, no spatial, concat-linear fusion
+        # - dgmn3d_gate1_*  : GLU only, concat-linear fusion
+        # - dgmn3d_gate2_*  : GLU + spatial, concat-linear fusion
+        # - dgmn3d_full_*   : GLU + spatial, softmax_attention fusion
+        if base_name == 'dgmn3d_nogate':
+            use_glu = False
+            use_spatial = False
+            fusion_type = 'concat_linear'
+        elif base_name == 'dgmn3d_gate1':
+            use_glu = True
+            use_spatial = False
+            fusion_type = 'concat_linear'
+        elif base_name == 'dgmn3d_gate2':
+            use_glu = True
+            use_spatial = True
+            fusion_type = 'concat_linear'
+        elif base_name in ('dgmn3d_full', 'dgmn3d'):
+            use_glu = True
+            use_spatial = True
+            fusion_type = 'softmax_attention'
+        else:
+            raise ValueError(f"Unknown DGMN3D variant '{base_name}' in model '{model_name}'")
+
+        def _create_dgmn3d():
+            from models.custom.dgmn import DGMN3D
+            return DGMN3D(
+                n_channels=n_channels,
+                n_classes=n_classes,
+                base_channels=base_channels,
+                use_mamba=True,
+                use_glu=use_glu,
+                use_spatial=use_spatial,
+                fusion_type=fusion_type,
+            )
+
+        return _create_model_with_error_handling(model_name, _create_dgmn3d)
     elif model_name == 'unetr':
         # 3D: MONAI UNETR 로드 (가중치 없이 train from scratch)
         img_size = (240, 240, 155)

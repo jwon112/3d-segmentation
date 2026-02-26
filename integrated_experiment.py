@@ -40,7 +40,7 @@ if __name__ == "__main__":
     parser.add_argument('--seeds', nargs='+', type=int, default=[24], 
                        help='Random seeds for experiments')
     parser.add_argument('--models', nargs='+', type=str, default=None,
-                       help='Specific models to train (default: unet3d_s,unet3d_m,unetr,swin_unetr,mobile_unetr_3d,dualbranch_04_unet_s,dualbranch_backbone_shufflenetv2_s)')
+                       help='Specific models to train (default: unet3d_s,unet3d_m,unetr,swin_unetr,mobile_unetr_3d,dgmn3d_s,dualbranch_04_unet_s,dualbranch_backbone_shufflenetv2_s)')
     parser.add_argument('--datasets', nargs='+', type=str, default=None,
                        help='Datasets to use: brats2021, auto (default: brats2021)')
     parser.add_argument('--use_pretrained', action='store_true', default=False,
@@ -94,7 +94,7 @@ if __name__ == "__main__":
         print(f"Epochs: {args.epochs}")
         print(f"Batch size: {args.batch_size}")
         print(f"Seeds: {args.seeds}")
-        print(f"Models: {args.models if args.models else 'unet3d_s,unet3d_m,unetr,swin_unetr,mobile_unetr_3d,dualbranch_04_unet_s,dualbranch_backbone_shufflenetv2_s'}")
+        print(f\"Models: {args.models if args.models else 'unet3d_s,unet3d_m,unetr,swin_unetr,mobile_unetr_3d,dgmn3d_s,dualbranch_04_unet_s,dualbranch_backbone_shufflenetv2_s'}\")
         print(f"Datasets: {args.datasets if args.datasets else 'brats2021 (auto-detected)'}")
         print(f"Dataset version: {args.dataset_version}")
         print(f"Loss function: {'nnU-Net style (Soft Dice Squared + Dice 70%%/CE 30%%)' if use_nnunet_loss else 'Standard (Dice 50%%/CE 50%%)'}")

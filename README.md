@@ -198,11 +198,11 @@ torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> -
 - `unet3d_l`: 3D U-Net Large
 **크기별 채널 증가**: 각 크기가 2배씩 증가 (xs → s → m → l)
 
-#### Transformer 기반 모델
-- `unetr`: UNETR
-- `swin_unetr`: Swin UNETR
-- `mobile_unetr`: Mobile UNETR (2D 전용)
-- `mobile_unetr_3d`: Mobile UNETR 3D
+#### Transformer / Mamba 기반 모델
+- `unetr`: UNETR (MONAI 외부 로드)
+- `swin_unetr`: Swin UNETR (MONAI 외부 로드)
+- `mobile_unetr_3d`: Mobile UNETR 3D (in-repo)
+- `dgmn3d_{xs|s|m|l}`: Dynamic Gated Mamba Network (DGMN3D)
 
 #### Dual-Branch 모델 (T1ce, FLAIR 이중 분기, 크기: xs, s, m, l)
 - `dualbranch_04_unet_{xs|s|m|l}`: RepLK 13x13x13 (FLAIR만)
