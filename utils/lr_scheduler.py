@@ -1,8 +1,6 @@
 """Learning Rate Schedulers for training."""
 
 from torch.optim.lr_scheduler import _LRScheduler
-import torch.optim as optim
-from typing import Union
 
 
 class PolyLRScheduler(_LRScheduler):
@@ -54,32 +52,3 @@ class PolyLRScheduler(_LRScheduler):
     def get_last_lr(self):
         """현재 학습률 반환"""
         return self._last_lr
-
-
-def get_reduce_lr_on_plateau_scheduler(optimizer, mode='min', factor=0.5, patience=3):
-    """ReduceLROnPlateau 스케줄러 생성
-    
-    검증 성능이 개선되지 않을 때 학습률을 감소시킵니다.
-    
-    Args:
-        optimizer: Optimizer
-        mode: 'min' (loss 감소) 또는 'max' (metric 증가)
-        factor: 학습률 감소 비율 (기본값 0.5 = 50% 감소)
-        patience: 개선 없이 기다릴 epoch 수 (기본값 3)
-    
-    Returns:
-        ReduceLROnPlateau scheduler
-    
-    Example:
-        >>> optimizer = optim.Adam(model.parameters(), lr=1e-2)
-        >>> scheduler = get_reduce_lr_on_plateau_scheduler(optimizer)
-        >>> for epoch in range(epochs):
-        ...     train(...)
-        ...     val_loss = validate(...)
-        ...     scheduler.step(val_loss)  # epoch 끝에서 호출
-    """
-    return optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode=mode, factor=factor, patience=patience
-    )
-
-

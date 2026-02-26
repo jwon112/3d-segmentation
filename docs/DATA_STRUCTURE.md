@@ -70,29 +70,18 @@ with h5py.File('volume_41_slice_0.h5', 'r') as f:
 
 ## 데이터 로더 구조
 
-### BratsDataset2D (2D 슬라이스)
-- **입력**: H5 슬라이스 파일
-- **출력**: `image (4, 64, 64)`, `mask (64, 64)`
-- **용도**: 슬라이스별 세그멘테이션
+이 프로젝트는 **3D 전용**입니다. 2D 슬라이스 데이터셋은 지원하지 않습니다.
 
 ### BratsDataset3D (3D 볼륨)
-- **입력**: H5 슬라이스들을 모아서 3D 볼륨 생성
-- **출력**: `image (4, 64, 64, 64)`, `mask (64, 64, 64)`
-- **용도**: 전체 볼륨 세그멘테이션
+- **입력**: H5 또는 NIfTI 볼륨
+- **출력**: `image (C, D, H, W)`, `mask (D, H, W)` (C=2 또는 4 모달리티)
+- **용도**: 3D 볼륨 세그멘테이션
 
 ### 사용 방법
 
 ```python
 from dataloaders import get_data_loaders
 
-# 2D 데이터 사용 (슬라이스 단위)
-train_loader, val_loader, test_loader = get_data_loaders(
-    data_dir='data',
-    batch_size=1,
-    dim='2d'  # 2D 슬라이스
-)
-
-# 3D 데이터 사용 (볼륨 단위)
 train_loader, val_loader, test_loader = get_data_loaders(
     data_dir='data',
     batch_size=1,

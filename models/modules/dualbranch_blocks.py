@@ -1,7 +1,7 @@
 """
 Shared building blocks for remaining dual-branch models.
 Extracted from dualbranch_basic and dualbranch_mobile (removed) for use by
-dualbranch_14_unet, dualbranch_mvit, dualbranch_replk.
+dualbranch_backbone_unet, dualbranch_mvit, dualbranch_replk.
 """
 
 from __future__ import annotations

@@ -513,7 +513,7 @@ def parse_model_size(model_name: str) -> Tuple[str, str]:
     Examples:
         'dualbranch_04_unet_s' -> ('dualbranch_04_unet', 's')
         'unet3d_m' -> ('unet3d', 'm')
-        'dualbranch_14_dilated_xs' -> ('dualbranch_14_dilated', 'xs')
+        'dualbranch_backbone_dilated_xs' -> ('dualbranch_backbone_dilated', 'xs')
     """
     size_suffixes = ['_xs', '_s', '_m', '_l']
     

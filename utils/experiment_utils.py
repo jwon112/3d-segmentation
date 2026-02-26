@@ -14,10 +14,7 @@ import math
 from datetime import timedelta
 from typing import Dict, Optional, Tuple
 
-# Global input size configuration
-# 2D models use 256x256 for stable down/upsampling (avoid odd sizes)
-INPUT_SIZE_2D = (256, 256)
-# 3D models keep dataset-native depth; adjust if needed
+# Global input size configuration (3D 전용)
 INPUT_SIZE_3D = (240, 240, 155)
 
 # Distributed training helpers
@@ -511,9 +508,9 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         model_name: 모델 이름 (예: 'dualbranch_04_unet_s', 'unet3d_m', 'dualbranch_19_shufflenet_v2_stage3fused_s')
         n_channels: 입력 채널 수
         n_classes: 출력 클래스 수
-        dim: '2d' 또는 '3d'
+        dim: '3d' (3D 전용)
         patch_size: 하이퍼파라미터 (None이면 모델별 기본값 사용)
-        use_pretrained: pretrained 가중치 사용 여부 (MobileUNETR의 경우)
+        use_pretrained: pretrained 가중치 사용 여부
     
     Raises:
         ValueError: 모델 이름이 알려지지 않았거나 비어있는 경우, 또는 파라미터가 유효하지 않은 경우
@@ -530,8 +527,8 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         raise ValueError(f"n_channels must be positive, got {n_channels}")
     if n_classes <= 0:
         raise ValueError(f"n_classes must be positive, got {n_classes}")
-    if dim not in ['2d', '3d']:
-        raise ValueError(f"dim must be '2d' or '3d', got '{dim}'")
+    if dim != '3d':
+        raise ValueError(f"Only 3D is supported (dim='3d'), got '{dim}'")
     if norm not in ['bn', 'in', 'gn', 'ln']:
         raise ValueError(f"norm must be one of ['bn', 'in', 'gn', 'ln'], got '{norm}'")
     if coord_type not in ['none', 'simple', 'hybrid']:
@@ -558,9 +555,9 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
     
     # 지원하는 모델 목록 정의 (패턴 기반)
     SUPPORTED_MODEL_PATTERNS = [
-        'unet3d_', 'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d', 'segformer3d',
+        'unet3d_', 'unetr', 'swin_unetr', 'mobile_unetr_3d', 'segformer3d',
         'dualbranch_04_unet_', 'dualbranch_05_unet_', 'dualbranch_06_unet_', 'dualbranch_07_unet_',
-        'dualbranch_13_unet_', 'dualbranch_14_',
+        'dualbranch_13_unet_', 'dualbranch_backbone_',
         'dualbranch_19_shufflenet_v2_stage3fused_',
         # 특정 모델 이름 (패턴이 아닌 정확한 이름)
         'unet3d_2modal_s', 'unet3d_4modal_s',
@@ -577,7 +574,7 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         raise ValueError(
             f"Unknown model: '{model_name}'\n"
             f"Supported model patterns: {', '.join(SUPPORTED_MODEL_PATTERNS)}\n"
-            f"Note: Most models support size suffixes: _xs, _s, _m, _l (e.g., 'dualbranch_14_shufflenetv2_s')"
+            f"Note: Most models support size suffixes: _xs, _s, _m, _l (e.g., 'dualbranch_backbone_shufflenetv2_s')"
         )
     
     # Helper function for consistent error handling
@@ -596,19 +593,8 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
                 f"Please check model configuration and parameters."
             )
     
-    # Import models (필요한 경우에만, lazy import)
-    UNETR_Simplified = None
-    SwinUNETR_Simplified = None
-    MobileUNETR = None
-    MobileUNETR_3D_Wrapper = None
-    
-    # 2D 입력인 경우 3D로 확장 (unsqueeze depth dimension)
-    # nnUNet 공식 PlainConvUNet(외부 패키지)을 사용하여 3D U-Net을 생성
+    # nnUNet 공식 PlainConvUNet(외부 패키지)을 사용하여 3D U-Net 생성
     if model_name.startswith('unet3d_'):
-        if dim == '2d':
-            # 2D 데이터는 depth 차원 추가가 필요하지만,
-            # PlainConvUNet은 3D Conv를 사용하므로 여기서는 3D 전용으로 제한
-            raise ValueError("PlainConvUNet 기반 'unet3d_' 모델은 dim='3d'에서만 지원됩니다.")
         try:
             base_name, size = parse_model_size(model_name)
         except Exception as e:
@@ -673,89 +659,43 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         
         return _create_model_with_error_handling(model_name, _create_unet3d_plainconv)
     elif model_name == 'unetr':
-        if dim == '2d':
-            img_size = INPUT_SIZE_2D
-            if patch_size is None:
-                patch_size = (16, 16)
-            def _create_unetr():
-                from models import UNETR_Simplified
-                return UNETR_Simplified(
-                    img_size=img_size,
-                    patch_size=patch_size,
-                    in_channels=n_channels,
-                    out_channels=n_classes,
+        # 3D: MONAI UNETR 로드 (가중치 없이 train from scratch)
+        img_size = (240, 240, 155)
+        norm_name = "instance" if norm == 'in' else "batch"
+        def _create_unetr():
+            try:
+                from monai.networks.nets import UNETR
+            except ImportError as e:
+                raise ImportError(
+                    f"MONAI is required for UNETR. Install: pip install monai>=1.3.0. {e}"
                 )
-        else:
-            # 3D: MONAI UNETR 로드 (가중치 없이 train from scratch)
-            img_size = (240, 240, 155)
-            norm_name = "instance" if norm == 'in' else "batch"
-            def _create_unetr():
-                try:
-                    from monai.networks.nets import UNETR
-                except ImportError as e:
-                    raise ImportError(
-                        f"MONAI is required for 3D UNETR. Install: pip install monai>=1.3.0. {e}"
-                    )
-                return UNETR(
-                    in_channels=n_channels,
-                    out_channels=n_classes,
-                    img_size=img_size,
-                    spatial_dims=3,
-                    feature_size=16,
-                    norm_name=norm_name,
-                )
-        return _create_model_with_error_handling(model_name, _create_unetr)
-    elif model_name == 'swin_unetr':
-        if dim == '2d':
-            img_size = INPUT_SIZE_2D
-            if patch_size is None:
-                patch_size = (4, 4)
-            def _create_swin_unetr():
-                from models import SwinUNETR_Simplified
-                return SwinUNETR_Simplified(
-                    img_size=img_size,
-                    patch_size=patch_size,
-                    in_channels=n_channels,
-                    out_channels=n_classes,
-                )
-        else:
-            # 3D: MONAI SwinUNETR 로드 (가중치 없이 train from scratch)
-            img_size = (240, 240, 155)
-            def _create_swin_unetr():
-                try:
-                    from monai.networks.nets import SwinUNETR
-                except ImportError as e:
-                    raise ImportError(
-                        f"MONAI is required for 3D SwinUNETR. Install: pip install monai>=1.3.0. {e}"
-                    )
-                return SwinUNETR(
-                    img_size=img_size,
-                    in_channels=n_channels,
-                    out_channels=n_classes,
-                    feature_size=24,
-                    spatial_dims=3,
-                )
-        return _create_model_with_error_handling(model_name, _create_swin_unetr)
-    elif model_name == 'mobile_unetr':
-        # MobileUNETR는 2D 전용 모델
-        if dim != '2d':
-            raise ValueError("MobileUNETR is only supported for 2D data (dim='2d')")
-        
-        # img_size 설정 (2D만) - 전역 설정 사용
-        img_size = INPUT_SIZE_2D
-        if patch_size is None:
-            patch_size = (16, 16)  # 2D에서 권장값
-        
-        def _create_mobile_unetr():
-            from models import MobileUNETR
-            return MobileUNETR(
-                img_size=img_size,
-                patch_size=patch_size,
+            return UNETR(
                 in_channels=n_channels,
                 out_channels=n_classes,
-                use_pretrained=use_pretrained
+                img_size=img_size,
+                spatial_dims=3,
+                feature_size=16,
+                norm_name=norm_name,
             )
-        return _create_model_with_error_handling(model_name, _create_mobile_unetr)
+        return _create_model_with_error_handling(model_name, _create_unetr)
+    elif model_name == 'swin_unetr':
+        # 3D: MONAI SwinUNETR 로드 (가중치 없이 train from scratch)
+        img_size = (240, 240, 155)
+        def _create_swin_unetr():
+            try:
+                from monai.networks.nets import SwinUNETR
+            except ImportError as e:
+                raise ImportError(
+                    f"MONAI is required for SwinUNETR. Install: pip install monai>=1.3.0. {e}"
+                )
+            return SwinUNETR(
+                img_size=img_size,
+                in_channels=n_channels,
+                out_channels=n_classes,
+                feature_size=24,
+                spatial_dims=3,
+            )
+        return _create_model_with_error_handling(model_name, _create_swin_unetr)
     elif model_name == 'mobile_unetr_3d':
         # MobileUNETR 3D 모델
         if dim != '3d':
@@ -822,10 +762,10 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
         base_name, size = parse_model_size(model_name)
         from models.custom.dualbranch_mvit import DualBranchUNet3D_MViT_Extended
         return DualBranchUNet3D_MViT_Extended(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
-    # PAM comparison experiments - different backbones (dualbranch_14)
-    elif model_name.startswith('dualbranch_14_'):
-        # Extract backbone type and size: dualbranch_14_mobilenetv2_expand2_s -> mobilenetv2_expand2, s
-        parts = model_name.split('_', 2)  # ['dualbranch', '14', 'mobilenetv2_expand2_s']
+    # PAM comparison experiments - different backbones (dualbranch_backbone)
+    elif model_name.startswith('dualbranch_backbone_'):
+        # Extract backbone type and size: dualbranch_backbone_mobilenetv2_expand2_s -> mobilenetv2_expand2, s
+        parts = model_name.split('_', 2)  # ['dualbranch', 'backbone', 'mobilenetv2_expand2_s']
         if len(parts) >= 3:
             backbone_and_size = parts[2]  # 'mobilenetv2_expand2_s'
             # Extract size suffix
@@ -858,11 +798,11 @@ def get_model(model_name, n_channels=4, n_classes=4, dim='3d', patch_size=None, 
             
             if backbone in backbone_map:
                 class_name = backbone_map[backbone]
-                from models.custom import dualbranch_14_unet
-                model_class = getattr(dualbranch_14_unet, class_name)
+                from models.custom import dualbranch_backbone_unet
+                model_class = getattr(dualbranch_backbone_unet, class_name)
                 return model_class(n_channels=n_channels, n_classes=n_classes, norm=norm, size=size)
             else:
-                raise ValueError(f"Unknown backbone in dualbranch_14: {backbone}")
+                raise ValueError(f"Unknown backbone in dualbranch_backbone: {backbone}")
     elif model_name.startswith('dualbranch_19_shufflenet_v2_stage3fused_'):
         # Dual-branch UNet with ShuffleNet V2 - Stage 3 fused at down4 (4-stage structure) - Support xs, s, m, l sizes
         # Support variants: _fixed_decoder_*, _half_decoder_*, or default

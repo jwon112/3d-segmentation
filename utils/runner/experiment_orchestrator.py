@@ -11,7 +11,7 @@ from datetime import datetime
 from utils.experiment_utils import (
     setup_distributed, cleanup_distributed, is_main_process,
     set_seed, calculate_flops, calculate_pam, calculate_inference_latency, get_model,
-    INPUT_SIZE_2D, INPUT_SIZE_3D
+    INPUT_SIZE_3D,
 )
 from dataloaders import get_data_loaders
 from visualization import create_comprehensive_analysis, create_interactive_3d_plot
@@ -29,24 +29,8 @@ from utils.runner.training import train_model
 from utils.runner.evaluation import evaluate_model
 
 
-def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, dim='2d', use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, use_nnunet_augmentation=False, train_crops_per_center=1, train_crop_overlap=0.5, anisotropy_augment: bool = False, coord_type: str = 'none', use_4modalities: bool = False, preprocessed_base_dir=None, results_dir=None, num_iterations_per_epoch=250, num_val_iterations_per_epoch=50):
-    """3D Segmentation 통합 실험 실행
-    
-    Args:
-        data_path: 데이터셋 루트 디렉토리 경로 (기본: 'data')
-        epochs: 훈련 에포크 수
-        batch_size: 배치 크기
-        use_nnunet_loss: If True, use nnU-Net style loss (Soft Dice with Squared Pred, Dice 70% + CE 30%)
-        seeds: 실험 시드 리스트
-        models: 사용할 모델 리스트 (기본: ['unet3d', 'unetr', 'swin_unetr', 'mobile_unetr'])
-        datasets: 사용할 데이터셋 리스트 (기본: ['brats2021'])
-                  지원: 'brats2021', 'auto' (자동 선택)
-        dim: 데이터 차원 '2d' 또는 '3d' (기본: '2d')
-        use_pretrained: pretrained 가중치 사용 여부 (기본: False, scratch 학습)
-        dataset_version: 데이터셋 버전 'brats2021' 또는 'brats2018' (기본: 'brats2018')
-        use_5fold: 5-fold cross-validation 사용 여부
-        results_dir: 실험 결과 저장 디렉토리 (None이면 새로 생성, 기존 경로 주면 재개)
-    """
+def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], models=None, datasets=None, use_pretrained=False, use_nnunet_loss=True, num_workers: int = 2, dataset_version='brats2018', use_5fold=False, use_mri_augmentation=False, use_nnunet_augmentation=False, train_crops_per_center=1, train_crop_overlap=0.5, anisotropy_augment: bool = False, coord_type: str = 'none', use_4modalities: bool = False, preprocessed_base_dir=None, results_dir=None, num_iterations_per_epoch=250, num_val_iterations_per_epoch=50):
+    """3D Segmentation 통합 실험 실행 (3D 전용)."""
     
     # coord_type에 따라 include_coords와 coord_encoding_type 결정
     if coord_type == 'none':
@@ -240,7 +224,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             batch_size=batch_size,
                             num_workers=num_workers,  # /dev/shm 2GB 환경에서 기본 2 권장
                             max_samples=None,  # 전체 데이터 사용
-                            dim=dim,  # 2D 또는 3D
+                            dim='3d',
                             dataset_version=dataset_version,  # 데이터셋 버전
                             seed=seed,  # 데이터 분할을 위한 seed
                             distributed=distributed,
@@ -252,7 +236,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             fold_split_dir=fold_split_dir,  # Fold별 디렉토리 경로
                             use_mri_augmentation=use_mri_augmentation,
                             use_nnunet_augmentation=use_nnunet_augmentation,
-                            model_name=model_name,  # Cascade 모델 감지를 위해 전달
+                            model_name=model_name,
                             train_crops_per_center=train_crops_per_center,  # 학습 시 multi-crop 샘플링
                             train_crop_overlap=train_crop_overlap,
                             anisotropy_augment=anisotropy_augment,
@@ -274,7 +258,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         n_classes = 5 if dataset_version == 'brats2024' else 4
                         if is_main_process(rank):
                             print(f"[Model Config] dataset_version={dataset_version}, n_classes={n_classes}")
-                        model = get_model(model_name, n_channels=n_channels, n_classes=n_classes, dim=dim, use_pretrained=use_pretrained, coord_type=coord_type)
+                        model = get_model(model_name, n_channels=n_channels, n_classes=n_classes, dim='3d', use_pretrained=use_pretrained, coord_type=coord_type)
                         if is_main_process(rank):
                             print(f"Model {model_name} created successfully.")
                     except Exception as e:
@@ -334,11 +318,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         print(f"Model size: {model_size_mb:.2f} MB")
                         print("=" * 50)
                     
-                    # 입력 크기 설정 (PAM, Latency 공용)
-                    if dim == '2d':
-                        input_size = (1, n_channels, *INPUT_SIZE_2D)
-                    else:
-                        input_size = (1, n_channels, *INPUT_SIZE_3D)
+                    # 입력 크기 설정 (PAM, Latency 공용) — 3D 전용
+                    input_size = (1, n_channels, *INPUT_SIZE_3D)
 
                     # PAM 계산 (모델 정보 출력 직후 바로 측정)
                     pam_train_list = []
@@ -346,10 +327,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     pam_train_stages = {}
                     pam_inference_stages = {}
                     if is_main_process(rank):
-                        if dim == '2d':
-                            pam_input_size = (1, n_channels, *INPUT_SIZE_2D)
-                        else:
-                            pam_input_size = (1, n_channels, 128, 128, 128)
+                        pam_input_size = (1, n_channels, 128, 128, 128)
                         try:
                             pam_train_list, pam_train_stages = calculate_pam(
                                 model, input_size=pam_input_size, mode='train', stage_wise=True, device=device
@@ -392,7 +370,7 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                     train_result = train_model(
                         model, train_loader, val_loader, test_loader, epochs, device=device, model_name=model_name, seed=seed,
                         train_sampler=train_sampler, rank=rank,
-                        sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim=dim, use_nnunet_loss=use_nnunet_loss,
+                        sw_patch_size=(128, 128, 128), sw_overlap=0.5, dim='3d', use_nnunet_loss=use_nnunet_loss,
                         results_dir=results_dir, ckpt_path=ckpt_path, train_crops_per_center=train_crops_per_center,
                         dataset_version=dataset_version,
                         num_iterations_per_epoch=num_iterations_per_epoch,
@@ -405,11 +383,8 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                         train_losses, val_dices, epoch_results, best_epoch, best_val_dice, best_val_wt, best_val_tc, best_val_et = train_result
                         best_val_rc = 0.0
                     
-                    # FLOPs 계산 (모델이 device에 있는 상태에서)
-                    if dim == '2d':
-                        flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_2D))
-                    else:
-                        flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
+                    # FLOPs 계산 (모델이 device에 있는 상태에서) — 3D 전용
+                    flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
                     if is_main_process(rank):
                         print(f"FLOPs: {flops:,}")
                     
@@ -475,20 +450,14 @@ def run_integrated_experiment(data_path, epochs=10, batch_size=1, seeds=[24], mo
                             if is_main_process(rank):
                                 print(f"RepLK blocks switched to deploy mode.")
                                 print(f"Parameters after deploy: {total_params:,} (branches fused)")
-                            # Recalculate FLOPs for deploy mode
-                            if dim == '2d':
-                                flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_2D))
-                            else:
-                                flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
+                            # Recalculate FLOPs for deploy mode — 3D 전용
+                            flops = calculate_flops(model, input_size=(1, n_channels, *INPUT_SIZE_3D))
                             if is_main_process(rank):
                                 print(f"FLOPs after deploy: {flops:,}")
                             # Recalculate PAM after deploy mode (may be different due to fused branches)
                             if is_main_process(rank):
                                 try:
-                                    if dim == '2d':
-                                        input_size_after_deploy = (1, actual_n_channels, *INPUT_SIZE_2D)
-                                    else:
-                                        input_size_after_deploy = (1, actual_n_channels, *INPUT_SIZE_3D)
+                                    input_size_after_deploy = (1, actual_n_channels, *INPUT_SIZE_3D)
                                     pam_inference_list_after_deploy, _ = calculate_pam(
                                         model, input_size=input_size_after_deploy, mode='inference', stage_wise=True, device=device
                                     )

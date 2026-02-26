@@ -133,8 +133,6 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01
     early_stopping_patience = 50  # 50 epoch 동안 개선 없으면 중단
     is_brats2024 = (dataset_version == 'brats2024')
     
-    # Cascade/ROI 기반 학습 로직은 더 이상 사용하지 않음 (nnUNet 스타일 단일 파이프라인만 유지)
-    
     # 체크포인트 저장 경로 (실험 결과 폴더 내부)
     if results_dir is None:
         results_dir = "experiment_result"
@@ -218,8 +216,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01
                 # 기존 방식 (단일 crop)
                 inputs = inputs.to(device)
                 
-                # 모델 입력 shape 조정 (일부 모델은 depth 차원 추가 필요)
-                if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
+                # 3D 전용: 4D 입력이 오면 depth 차원 추가
+                if len(inputs.shape) == 4:
                     inputs = inputs.unsqueeze(2)
                 
                 _ = model(inputs)  # forward만 수행하여 running stats 업데이트
@@ -279,10 +277,8 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01
             # 각 crop이 별도의 샘플로 취급되므로 일반적인 단일 crop 처리
             inputs, labels = inputs.to(device), labels.to(device)
             
-            # MobileUNETR 2D는 2D 입력을 그대로 사용 (depth 차원 추가 안함)
-            # mobile_unetr_3d는 3D 입력을 그대로 사용
-            # 다른 모델들은 3D 입력 필요 (depth 차원 추가)
-            if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
+            # 3D 전용: 4D 입력이 오면 depth 차원 추가
+            if len(inputs.shape) == 4:
                 inputs = inputs.unsqueeze(2)  # Add depth dimension (B, C, H, W) -> (B, C, 1, H, W)
                 labels = labels.unsqueeze(2)
             
@@ -362,11 +358,9 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01
         va_loss = va_dice_sum = n_va = 0.0
         va_wt_sum = va_tc_sum = va_et_sum = va_rc_sum = 0.0
         
-        # nnUNet 스타일 단일 검증 경로만 사용
         with torch.no_grad():
             debug_printed = False
-            all_sample_dices = []  # 디버깅: 모든 샘플의 Dice 수집
-            # nnUNet 방식: 고정 iteration per epoch 사용
+            all_sample_dices = []
             val_iter = iter(val_loader)
             for idx in tqdm(range(num_val_iterations_per_epoch), desc=f"Val   {epoch+1}/{epochs}", leave=False):
                 try:
@@ -381,15 +375,14 @@ def train_model(model, train_loader, val_loader, test_loader, epochs=10, lr=0.01
                     inputs, labels = batch_data
                 inputs, labels = inputs.to(device), labels.to(device)
 
-                # MobileUNETR 2D는 2D 입력을 그대로 사용
-                # mobile_unetr_3d는 3D 입력을 그대로 사용
-                if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
+                # 3D 전용: 4D 입력이 오면 depth 차원 추가
+                if len(inputs.shape) == 4:
                     inputs = inputs.unsqueeze(2)
                     labels = labels.unsqueeze(2)
 
                 # 3D 검증: 슬라이딩 윈도우 추론 (학습 아님)
                 # 모든 3D 모델은 전체 볼륨을 처리하기 위해 슬라이딩 윈도우 사용
-                if dim == '3d' and inputs.dim() == 5 and inputs.size(0) == 1:
+                if inputs.dim() == 5 and inputs.size(0) == 1:
                     logits = sliding_window_inference_3d(
                         model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name
                     )

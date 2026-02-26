@@ -23,15 +23,15 @@ SIZE_SUFFIX_MODELS = {
     'dualbranch_19_shufflenet_v2_stage3fused_half_decoder_': ['xs', 's', 'm', 'l'],
 }
 
-# Size suffix를 지원하는 dualbranch_14 backbone들
-DUALBRANCH_14_BACKBONES = [
+# Size suffix를 지원하는 dualbranch_backbone 백본 종류
+DUALBRANCH_BACKBONE_TYPES = [
     'mobilenetv2_expand2', 'ghostnet', 'dilated', 'convnext', 
     'shufflenetv2', 'shufflenetv2_crossattn', 'shufflenetv2_dilated', 'shufflenetv2_lk'
 ]
 
 # Size suffix를 지원하지 않는 모델들 (고정 이름)
 FIXED_NAME_MODELS = [
-    'unetr', 'swin_unetr', 'mobile_unetr', 'mobile_unetr_3d',
+    'unetr', 'swin_unetr', 'mobile_unetr_3d',
     'unet3d_2modal_s', 'unet3d_4modal_s',
     'segformer3d',
 ]
@@ -55,10 +55,10 @@ def get_all_available_models() -> List[str]:
         for size in sizes:
             available_models.append(f"{prefix}{size}")
     
-    # dualbranch_14 모델들 생성
-    for backbone in DUALBRANCH_14_BACKBONES:
+    # dualbranch_backbone 모델들 생성
+    for backbone in DUALBRANCH_BACKBONE_TYPES:
         for size in ['xs', 's', 'm', 'l']:
-            available_models.append(f"dualbranch_14_{backbone}_{size}")
+            available_models.append(f"dualbranch_backbone_{backbone}_{size}")
     
     # 고정 이름 모델들 추가
     available_models.extend(FIXED_NAME_MODELS)
@@ -97,15 +97,15 @@ def validate_and_filter_models(models: Optional[List[str]]) -> List[str]:
                     is_valid = True
                     break
         
-        # dualbranch_14 모델인지 확인
-        if not is_valid and model_name.startswith('dualbranch_14_'):
+        # dualbranch_backbone 모델인지 확인
+        if not is_valid and model_name.startswith('dualbranch_backbone_'):
             parts = model_name.split('_', 2)
             if len(parts) >= 3:
                 backbone_and_size = parts[2]
                 for size in ['xs', 's', 'm', 'l']:
                     if backbone_and_size.endswith(f'_{size}'):
                         backbone = backbone_and_size[:-len(f'_{size}')]
-                        if backbone in DUALBRANCH_14_BACKBONES:
+                        if backbone in DUALBRANCH_BACKBONE_TYPES:
                             is_valid = True
                             break
         

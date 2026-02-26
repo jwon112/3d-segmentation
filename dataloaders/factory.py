@@ -12,7 +12,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
-from .brats_base import BratsDataset3D, BratsDataset2D, split_brats_dataset
+from .brats_base import BratsDataset3D, split_brats_dataset
 from .patch_3d import BratsPatchDataset3D
 
 
@@ -43,10 +43,10 @@ def get_data_loaders(
     coord_type: str = 'none',
     preprocessed_dir: Optional[str] = None,
 ):
-    """공통 get_data_loaders 진입점 (기존 data_loader.get_data_loaders와 동일 인터페이스).
+    """공통 get_data_loaders 진입점 (3D 전용).
     
     Args:
-        model_name: 모델 이름. cascade 모델인 경우 자동으로 cascade 데이터로더 사용.
+        model_name: 모델 이름 (선택, 로깅/확장용).
         coord_type: 좌표 인코딩 타입 ('none', 'simple', 'hybrid')
     """
     # coord_type에 따라 include_coords와 coord_encoding_type 결정
@@ -62,8 +62,6 @@ def get_data_loaders(
     else:
         raise ValueError(f"Unknown coord_type: {coord_type}. Must be 'none', 'simple', or 'hybrid'")
     
-    # Note: 현재는 모든 모델이 nnUNet 스타일 기본 파이프라인만 사용하며,
-    # 과거 cascade(ROI→Seg) 파이프라인은 제거되었습니다.
     if seed is not None:
         random.seed(seed)
         np.random.seed(seed)
@@ -75,52 +73,49 @@ def get_data_loaders(
     # fold_split_dir이 지정된 경우: fold별 디렉토리에서 직접 로드 (use_5fold와 무관)
     # use_5fold=False여도 fold_split_dir을 지정하면 해당 fold의 train/val/test를 사용
     if fold_split_dir:
-        if dim == '2d':
-            raise NotImplementedError("2D dataset with 5-fold splits is not yet supported")
-        else:
-            # fold_idx가 지정되지 않았으면 기본값 0 사용
-            if fold_idx is None:
-                fold_idx = 0
-            # Fold별 디렉토리에서 직접 로드
-            train_dataset = BratsDataset3D(
-                data_dir,
-                split='train',
-                max_samples=max_samples,
-                dataset_version=dataset_version,
-                use_4modalities=use_4modalities,
-                max_cache_size=0,
-                fold_split_dir=fold_split_dir,
-                fold_idx=fold_idx,
-            )
-            val_dataset = BratsDataset3D(
-                data_dir,
-                split='val',
-                max_samples=max_samples,
-                dataset_version=dataset_version,
-                use_4modalities=use_4modalities,
-                max_cache_size=0,
-                fold_split_dir=fold_split_dir,
-                fold_idx=fold_idx,
-            )
-            test_dataset = BratsDataset3D(
-                data_dir,
-                split='test',
-                max_samples=max_samples,
-                dataset_version=dataset_version,
-                use_4modalities=use_4modalities,
-                max_cache_size=0,
-                fold_split_dir=fold_split_dir,
-                fold_idx=fold_idx,
-            )
+        if dim != '3d':
+            raise ValueError("Only 3D is supported (dim='3d')")
+        # fold_idx가 지정되지 않았으면 기본값 0 사용
+        if fold_idx is None:
+            fold_idx = 0
+        # Fold별 디렉토리에서 직접 로드
+        train_dataset = BratsDataset3D(
+            data_dir,
+            split='train',
+            max_samples=max_samples,
+            dataset_version=dataset_version,
+            use_4modalities=use_4modalities,
+            max_cache_size=0,
+            fold_split_dir=fold_split_dir,
+            fold_idx=fold_idx,
+        )
+        val_dataset = BratsDataset3D(
+            data_dir,
+            split='val',
+            max_samples=max_samples,
+            dataset_version=dataset_version,
+            use_4modalities=use_4modalities,
+            max_cache_size=0,
+            fold_split_dir=fold_split_dir,
+            fold_idx=fold_idx,
+        )
+        test_dataset = BratsDataset3D(
+            data_dir,
+            split='test',
+            max_samples=max_samples,
+            dataset_version=dataset_version,
+            use_4modalities=use_4modalities,
+            max_cache_size=0,
+            fold_split_dir=fold_split_dir,
+            fold_idx=fold_idx,
+        )
     else:
-        # 일반 모드: 기존 방식대로 분할
-        if dim == '2d':
-            dataset_class = BratsDataset2D
-            full_dataset = dataset_class(data_dir, split='train', max_samples=max_samples, dataset_version=dataset_version)
-        else:
-            dataset_class = BratsDataset3D
-            # Training용: 캐싱 비활성화 (순수 I/O 성능 측정)
-            full_dataset = dataset_class(
+        # 일반 모드: 3D 전용
+        if dim != '3d':
+            raise ValueError("Only 3D is supported (dim='3d')")
+        dataset_class = BratsDataset3D
+        # Training용: 캐싱 비활성화 (순수 I/O 성능 측정)
+        full_dataset = dataset_class(
                 data_dir,
                 split='train',
                 max_samples=max_samples,
@@ -142,62 +137,39 @@ def get_data_loaders(
             seed=seed,
         )
 
-    if dim == '3d':
-        # Subset인 경우 원본 전체 데이터셋이 아닌 Subset 자체를 사용해야 함
-        # train_dataset.dataset은 원본 전체 데이터셋을 가리키므로 사용하면 안 됨
-        train_base_dataset = train_dataset
-        
-        # Debug: train_base_dataset의 실제 타입과 길이 확인
-        if rank == 0 or rank is None:
-            print(f"[Debug] train_base_dataset type: {type(train_base_dataset)}")
-            print(f"[Debug] train_base_dataset length: {len(train_base_dataset)}")
-            if hasattr(train_base_dataset, 'dataset'):
-                print(f"[Debug] train_base_dataset.dataset type: {type(train_base_dataset.dataset)}")
-                print(f"[Debug] train_base_dataset.dataset length: {len(train_base_dataset.dataset)}")
-            if hasattr(train_base_dataset, 'indices'):
-                print(f"[Debug] train_base_dataset.indices length: {len(train_base_dataset.indices)}")
-        
-        # Validation/Test dataset은 전체 볼륨을 로드하므로 캐시를 비활성화하여 메모리 사용량 최소화
-        if hasattr(val_dataset, 'dataset'):
-            if hasattr(val_dataset.dataset, 'max_cache_size'):
-                val_dataset.dataset.max_cache_size = 0
-        if hasattr(test_dataset, 'dataset'):
-            if hasattr(test_dataset.dataset, 'max_cache_size'):
-                test_dataset.dataset.max_cache_size = 0
-        
-        # Train dataset 캐싱 활성화: BratsPatchDataset3D의 _volume_cache만 사용 (중복 방지)
-        # Subset인 경우 내부 dataset의 max_cache_size를 설정
-        if hasattr(train_base_dataset, 'dataset') and hasattr(train_base_dataset.dataset, 'max_cache_size'):
-            train_base_dataset.dataset.max_cache_size = 0
-        elif hasattr(train_base_dataset, 'max_cache_size'):
-            train_base_dataset.max_cache_size = 0
-        
-        # samples_per_volume 자동 계산 (patch_size에 따라)
-        # 96³: 8 samples, 128³: 3 samples (8:3 비율)
-        patch_size = (128, 128, 128)  # 기본값
-        if patch_size[0] == 96:
-            samples_per_volume = 8
-        elif patch_size[0] == 128:
-            samples_per_volume = 3
-        else:
-            samples_per_volume = 16  # 기본값 (다른 크기의 경우)
-        
-        train_dataset = BratsPatchDataset3D(
-            base_dataset=train_base_dataset,
-            patch_size=patch_size,
-            samples_per_volume=samples_per_volume,  # 자동 계산된 값 사용
-            augment=use_mri_augmentation if not use_nnunet_augmentation else False,  # nnUNet augmentation 사용 시 기존 augmentation 비활성화
-            anisotropy_augment=anisotropy_augment,
-            nnunet_augmentation=use_nnunet_augmentation,
-            max_cache_size=50,  # 캐싱 활성화: 에포크 내/간 효과로 wait_time 감소
-        )
-        
-        # Debug: BratsPatchDataset3D 생성 후 길이 확인 (rank 0에서만)
-        if rank == 0 or rank is None:
-            from utils.experiment_utils import is_main_process
-            if is_main_process(rank if rank is not None else 0):
-                print(f"[Debug] BratsPatchDataset3D length: {len(train_dataset)}")
-                print(f"[Debug] Expected length: {len(train_base_dataset)} * 16 = {len(train_base_dataset) * 16}")
+    train_base_dataset = train_dataset
+
+    # Val/Test는 전체 볼륨 로드 → 캐시 비활성화로 메모리 절약
+    if hasattr(val_dataset, 'dataset'):
+        if hasattr(val_dataset.dataset, 'max_cache_size'):
+            val_dataset.dataset.max_cache_size = 0
+    if hasattr(test_dataset, 'dataset'):
+        if hasattr(test_dataset.dataset, 'max_cache_size'):
+            test_dataset.dataset.max_cache_size = 0
+
+    # Train dataset 캐싱: BratsPatchDataset3D 사용
+    if hasattr(train_base_dataset, 'dataset') and hasattr(train_base_dataset.dataset, 'max_cache_size'):
+        train_base_dataset.dataset.max_cache_size = 0
+    elif hasattr(train_base_dataset, 'max_cache_size'):
+        train_base_dataset.max_cache_size = 0
+
+    patch_size = (128, 128, 128)
+    if patch_size[0] == 96:
+        samples_per_volume = 8
+    elif patch_size[0] == 128:
+        samples_per_volume = 3
+    else:
+        samples_per_volume = 16
+
+    train_dataset = BratsPatchDataset3D(
+        base_dataset=train_base_dataset,
+        patch_size=patch_size,
+        samples_per_volume=samples_per_volume,
+        augment=use_mri_augmentation if not use_nnunet_augmentation else False,
+        anisotropy_augment=anisotropy_augment,
+        nnunet_augmentation=use_nnunet_augmentation,
+        max_cache_size=50,
+    )
 
     train_sampler = val_sampler = test_sampler = None
     if distributed and world_size is not None and rank is not None:
@@ -206,44 +178,32 @@ def get_data_loaders(
         test_sampler = DistributedSampler(test_dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=False)
 
     def _worker_init_fn(worker_id):
-        # 각 worker마다 고유한 seed 설정 (재현성 보장)
-        # base_seed + worker_id를 사용하여 각 worker가 다른 seed를 가지도록 함
-        base_seed = (seed if seed is not None else 0)
-        worker_seed = base_seed + worker_id
-        torch.manual_seed(worker_seed)
-        np.random.seed(worker_seed)
-        random.seed(worker_seed)
+        base_seed = (seed if seed is not None else 0) + worker_id
+        torch.manual_seed(base_seed)
+        np.random.seed(base_seed)
+        random.seed(base_seed)
 
-    _generator = None
-    if seed is not None:
-        _generator = torch.Generator()
-        _generator.manual_seed(seed)
+    _generator = torch.Generator().manual_seed(seed) if seed is not None else None
+    nw = num_workers if num_workers is not None else 8
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=(train_sampler is None),
-        num_workers=(num_workers if num_workers is not None else 8),
+        num_workers=nw,
         pin_memory=True,
         sampler=train_sampler,
-        persistent_workers=((num_workers if num_workers is not None else 8) > 0),
-        prefetch_factor=(8 if (num_workers if num_workers is not None else 8) > 0 else None),
+        persistent_workers=(nw > 0),
+        prefetch_factor=(8 if nw > 0 else None),
         worker_init_fn=_worker_init_fn,
         generator=_generator,
     )
 
-    # Validation/Test는 전체 볼륨을 로드하므로 메모리 사용량이 큼
-    # num_workers와 prefetch_factor를 줄여서 OOM 방지
-    v_workers = 2
-    t_workers = 2
-    val_bs = 1 if dim == '3d' else batch_size
-    test_bs = 1 if dim == '3d' else batch_size
-
     val_loader = DataLoader(
         val_dataset,
-        batch_size=val_bs,
+        batch_size=1,
         shuffle=False,
-        num_workers=3,  # val 데이터로더에 num_workers 사용
+        num_workers=3,
         pin_memory=True,
         sampler=val_sampler,
         persistent_workers=True,
@@ -253,9 +213,9 @@ def get_data_loaders(
     )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=test_bs,
+        batch_size=1,
         shuffle=False,
-        num_workers=3,  # test 데이터로더에 num_workers 사용
+        num_workers=3,
         pin_memory=True,
         sampler=test_sampler,
         persistent_workers=True,

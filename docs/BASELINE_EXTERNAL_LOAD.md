@@ -2,6 +2,13 @@
 
 Baseline은 우리가 직접 구현하지 않고 **외부 라이브러리(MONAI, Hugging Face 등)에서 모델만 로드**하고, **가중치는 로드하지 않고 train from scratch** 하는 방식을 권장할 수 있다.
 
+---
+
+## 용어: nnUNet "모델" 제거 vs "nnU-Net 스타일" 유지
+
+- **nnUNet 모델 제거**: 이전에 사용하던 **nnUNet 네트워크**(PlainConvUNet 등) 생성 분기와 **nnUNet 비교 스크립트**(`compare_with_nnunet.py`)를 제거했다는 뜻이다. 즉, “nnUNet이라는 이름의 모델”은 이 코드베이스에서 더 이상 쓰지 않는다.
+- **nnU-Net 스타일 유지**: **Loss**(`combined_loss_nnunet_style`, Soft Dice + CE 비율 등)와 **증강/학습 설정**(`use_nnunet_augmentation`, PolyLR, 고정 iteration 등)은 “nnU-Net 스타일”로 그대로 두었다. 모델 이름이 nnUNet이 아니라도, 학습 방식만 nnU-Net 논문과 비슷하게 맞춘 것이다.
+
 - **장점**: 코드 양 감소, 유지보수·오류 가능성 감소.
 - **유일한 고려**: 외부에서 로드한 모델이 **우리 학습 파이프라인과 제대로 맞물리는지** 확인하는 것.
 
@@ -11,11 +18,11 @@ Baseline은 우리가 직접 구현하지 않고 **외부 라이브러리(MONAI,
 
 ## 1. 입력(Input)
 
-- **Shape**: `(B, C, D, H, W)` (3D) 또는 `(B, C, H, W)` (2D).  
+- **Shape**: `(B, C, D, H, W)` (3D 전용).  
   우리 데이터로더는 보통 `C=4` (BraTS), `B`는 배치 크기.
-- **의미**: 채널 수(`n_channels`), `dim='2d'`/`'3d'`에 맞는 차원 수.
+- **의미**: 채널 수(`n_channels`)만 맞추면 됨. 이 프로젝트는 3D만 지원한다.
 
-→ 외부 모델의 `in_channels`(및 2D/3D)를 우리 `n_channels`·`dim`과 맞추면 됨.
+→ 외부 모델의 `in_channels`를 우리 `n_channels`와 맞추면 됨.
 
 ---
 
@@ -75,6 +82,6 @@ Baseline은 우리가 직접 구현하지 않고 **외부 라이브러리(MONAI,
 ## 적용 현황
 
 - **unet3d_***: `dynamic_network_architectures.PlainConvUNet` 로드 (기존과 동일).
-- **unetr (3D)**: `monai.networks.nets.UNETR` 로드. 2D는 기존 `UNETR_Simplified` 유지.
-- **swin_unetr (3D)**: `monai.networks.nets.SwinUNETR` 로드. 2D는 기존 `SwinUNETR_Simplified` 유지.
+- **unetr**: `monai.networks.nets.UNETR` 로드 (in-repo `model_unetr.py` 삭제됨).
+- **swin_unetr**: `monai.networks.nets.SwinUNETR` 로드 (in-repo `model_swin_unetr.py` 삭제됨).
 - **mobile_unetr_3d**, **segformer3d**: MONAI에 동일 3D 모델 없음 → 현재는 in-repo 구현 유지.

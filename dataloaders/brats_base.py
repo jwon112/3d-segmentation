@@ -1,7 +1,7 @@
 """
 BraTS base datasets and split helpers.
 
-3D/2D BraTS 볼륨 로드, 정규화, train/val/test 분할 로직을 포함합니다.
+3D BraTS 볼륨 로드, 정규화, train/val/test 분할 로직을 포함합니다.
 """
 
 import os
@@ -483,175 +483,6 @@ class BratsDataset3D(Dataset):
         return result
 
 
-class BratsDataset2D(Dataset):
-    """2D BraTS 데이터셋 (Height, Width) - 슬라이스 단위"""
-
-    def __init__(self, data_dir, split='train', max_samples=None, dataset_version='brats2021', preprocessed_dir=None):
-        self.data_dir = data_dir
-        self.split = split
-        self.max_samples = max_samples
-        self.dataset_version = dataset_version
-        # 전처리된 데이터 디렉토리
-        # 1. 파라미터로 지정된 경우
-        # 2. 환경변수로 지정된 경우
-        # 3. 기본값: 프로젝트 루트의 data/ 디렉토리
-        if preprocessed_dir:
-            self.preprocessed_dir = preprocessed_dir
-        elif os.environ.get('BRATS_PREPROCESSED_DIR'):
-            self.preprocessed_dir = os.environ.get('BRATS_PREPROCESSED_DIR')
-        else:
-            # 기본값: 프로젝트 루트의 data/ 디렉토리
-            default_dir = get_default_preprocessed_dir(dataset_version)
-            self.preprocessed_dir = default_dir if default_dir and os.path.exists(default_dir) else None
-        self.volumes = self._load_samples()
-        self.samples = []
-        # 파일 이름 캐시 (lazy caching을 위해 초기화)
-        self._file_names_cache = {}
-        for volume in self.volumes:
-            files = os.listdir(volume)
-            t1_file = [f for f in files if 't1.nii' in f.lower() and 'seg' not in f and 't1ce' not in f][0]
-            t1ce_file = [f for f in files if 't1ce' in f.lower()][0]
-            flair_file = [f for f in files if 'flair.nii' in f.lower()][0]
-            seg_file = [f for f in files if 'seg' in f.lower()][0]
-            # 파일 이름 캐싱
-            self._file_names_cache[volume] = (t1ce_file, flair_file, seg_file)
-            t1 = nib.load(os.path.join(volume, t1_file)).get_fdata()
-            depth = t1.shape[2]
-            for slice_idx in range(depth):
-                self.samples.append((volume, slice_idx))
-        if max_samples and len(self.samples) > max_samples:
-            self.samples = self.samples[:max_samples]
-
-    def _load_samples(self):
-        samples = []
-        if self.dataset_version == 'brats2021':
-            brats2021_dir = os.path.join(self.data_dir, 'BRATS2021', 'BraTS2021_Training_Data')
-            if not os.path.exists(brats2021_dir):
-                raise FileNotFoundError(
-                    f"BraTS2021 dataset not found at {brats2021_dir}\n"
-                    f"Please ensure the dataset is extracted in the correct directory."
-                )
-            print(f"Loading BraTS2021 dataset for 2D slices from {brats2021_dir}")
-            for patient_dir in sorted(os.listdir(brats2021_dir)):
-                patient_path = os.path.join(brats2021_dir, patient_dir)
-                if os.path.isdir(patient_path):
-                    samples.append(patient_path)
-            if not samples:
-                raise ValueError(f"No patient data found in {brats2021_dir}")
-        elif self.dataset_version == 'brats2018':
-            brats2018_dir = os.path.join(self.data_dir, 'BRATS2018', 'MICCAI_BraTS_2018_Data_Training')
-            if not os.path.exists(brats2018_dir):
-                raise FileNotFoundError(
-                    f"BraTS2018 dataset not found at {brats2018_dir}\n"
-                    f"Please ensure the dataset is extracted in the correct directory."
-                )
-            hgg_dir = os.path.join(brats2018_dir, 'HGG')
-            lgg_dir = os.path.join(brats2018_dir, 'LGG')
-            print(f"Loading BraTS2018 dataset for 2D slices from {brats2018_dir}")
-            if os.path.exists(hgg_dir):
-                for patient_dir in sorted(os.listdir(hgg_dir)):
-                    patient_path = os.path.join(hgg_dir, patient_dir)
-                    if os.path.isdir(patient_path):
-                        samples.append(patient_path)
-                print(f"  Found {len([s for s in samples if hgg_dir in s])} HGG samples")
-            lgg_count = 0
-            if os.path.exists(lgg_dir):
-                for patient_dir in sorted(os.listdir(lgg_dir)):
-                    patient_path = os.path.join(lgg_dir, patient_dir)
-                    if os.path.isdir(patient_path):
-                        samples.append(patient_path)
-                        lgg_count += 1
-                print(f"  Found {lgg_count} LGG samples")
-            if not samples:
-                raise ValueError(f"No patient data found in {brats2018_dir} (checked HGG and LGG folders)")
-        else:
-            raise ValueError(f"Unknown dataset_version: {self.dataset_version}. Must be 'brats2021' or 'brats2018'")
-        return samples
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        patient_dir, slice_idx = self.samples[idx]
-        return self._load_nifti_slice(patient_dir, slice_idx)
-
-    def _load_nifti_slice(self, patient_dir, slice_idx):
-        # 전처리된 데이터 우선 로드 (HDF5)
-        # 1. 별도 디렉토리 확인 (환경변수 또는 파라미터로 지정)
-        if self.preprocessed_dir:
-            patient_name = os.path.basename(patient_dir)
-            preprocessed_path = os.path.join(self.preprocessed_dir, f"{patient_name}.h5")
-        else:
-            # 2. 각 샘플 폴더 내부 확인 (하위 호환성)
-            preprocessed_path = os.path.join(patient_dir, 'preprocessed.h5')
-        
-        if HAS_H5PY and os.path.exists(preprocessed_path):
-            try:
-                with h5py.File(preprocessed_path, 'r') as f:
-                    image_vol = torch.from_numpy(f['image'][:]).float()  # (C, H, W, D)
-                    mask_vol = torch.from_numpy(f['mask'][:]).long()      # (H, W, D)
-                
-                # H5 파일은 항상 4 modalities (T1, T1CE, T2, FLAIR)로 저장되어 있음
-                # use_4modalities에 따라 필요한 모달리티만 선택
-                # H5 파일 순서: [T1, T1CE, T2, FLAIR] = [0, 1, 2, 3]
-                # 2 modalities 사용 시: T1CE (index 1)와 FLAIR (index 3)만 선택
-                if not self.use_4modalities:
-                    # T1CE와 FLAIR만 선택 (indices 1, 3)
-                    image_vol = image_vol[[1, 3], :, :, :]  # (2, H, W, D)
-                
-                # 슬라이스 추출
-                image_slice = image_vol[:, :, :, slice_idx]  # (C, H, W)
-                mask_slice = mask_vol[:, :, slice_idx]        # (H, W)
-                
-                # 라벨 매핑 (이미 전처리에서 처리되었지만 안전을 위해)
-                mask_slice = torch.where(mask_slice == 4, torch.tensor(3).long(), mask_slice)
-                
-                # 리사이즈 (240 -> 256)
-                if image_slice.shape[1] == 240 or image_slice.shape[2] == 240:
-                    image_slice = image_slice.unsqueeze(0)
-                    image_slice = torch.nn.functional.interpolate(image_slice, size=(256, 256), mode='bilinear', align_corners=False)
-                    image_slice = image_slice.squeeze(0)
-                    mask_slice = mask_slice.unsqueeze(0).unsqueeze(0)
-                    mask_slice = torch.nn.functional.interpolate(mask_slice.float(), size=(256, 256), mode='nearest')
-                    mask_slice = mask_slice.squeeze(0).squeeze(0).long()
-                
-                return image_slice, mask_slice
-            except Exception as e:
-                # 전처리된 데이터 로드 실패 시 원본 로드로 fallback
-                pass
-        
-        # 원본 NIfTI 파일 로드 (fallback 또는 전처리된 데이터가 없는 경우)
-        # 파일 이름 캐싱 (lazy caching)
-        if patient_dir not in self._file_names_cache:
-            files = os.listdir(patient_dir)
-            t1ce_file = [f for f in files if 't1ce' in f.lower()][0]
-            flair_file = [f for f in files if 'flair.nii' in f.lower()][0]
-            seg_file = [f for f in files if 'seg' in f.lower()][0]
-            self._file_names_cache[patient_dir] = (t1ce_file, flair_file, seg_file)
-        else:
-            t1ce_file, flair_file, seg_file = self._file_names_cache[patient_dir]
-        
-        t1ce = nib.load(os.path.join(patient_dir, t1ce_file)).get_fdata()
-        flair = nib.load(os.path.join(patient_dir, flair_file)).get_fdata()
-        seg = nib.load(os.path.join(patient_dir, seg_file)).get_fdata()
-        t1ce = _normalize_volume_np(t1ce)
-        flair = _normalize_volume_np(flair)
-        image = np.stack([t1ce, flair], axis=0)
-        image_slice = image[:, :, :, slice_idx]
-        mask_slice = seg[:, :, slice_idx]
-        image_t = torch.from_numpy(image_slice).float()
-        mask_t = torch.from_numpy(mask_slice).long()
-        mask_t = torch.where(mask_t == 4, torch.tensor(3).long(), mask_t)
-        if image_t.shape[1] == 240 or image_t.shape[2] == 240:
-            image_t = image_t.unsqueeze(0)
-            image_t = torch.nn.functional.interpolate(image_t, size=(256, 256), mode='bilinear', align_corners=False)
-            image_t = image_t.squeeze(0)
-            mask_t = mask_t.unsqueeze(0).unsqueeze(0)
-            mask_t = torch.nn.functional.interpolate(mask_t.float(), size=(256, 256), mode='nearest')
-            mask_t = mask_t.squeeze(0).squeeze(0).long()
-        return image_t, mask_t
-
-
 def split_brats_dataset(
     full_dataset: Dataset,
     data_dir: str,
@@ -818,7 +649,6 @@ def get_brats_base_datasets(
 __all__ = [
     "_normalize_volume_np",
     "BratsDataset3D",
-    "BratsDataset2D",
     "split_brats_dataset",
     "get_brats_base_datasets",
 ]

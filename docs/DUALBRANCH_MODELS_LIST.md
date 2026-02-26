@@ -61,9 +61,9 @@ ablation 정리 시 하나씩 쳐낼 때 참고용입니다.
 
 ---
 
-## 5. `dualbranch_14_unet.py` — Backbone 비교 (PAM/backbone ablation)
+## 5. `dualbranch_backbone_unet.py` — Backbone 비교 (PAM/backbone ablation)
 
-**실험 이름**: `dualbranch_14_<backbone>_<size>` (예: `dualbranch_14_shufflenetv2_s`)
+**실험 이름**: `dualbranch_backbone_<backbone>_<size>` (예: `dualbranch_backbone_shufflenetv2_s`)
 
 | backbone 키 | 클래스 | 설명 |
 |-------------|--------|------|
@@ -89,7 +89,7 @@ ablation 정리 시 하나씩 쳐낼 때 참고용입니다.
 | `dualbranch_16_shufflenet_hybrid_ln_` | `DualBranchUNet3D_ShuffleHybrid_AllLN` | 동일 + All LayerNorm 변형 |
 
 - **사이즈**: `_xs`, `_s`, `_m`, `_l`  
-- **의존**: `dualbranch_14_unet` (Stem3x3), `shufflenet_modules`, `shufflenet_hybrid_modules`
+- **의존**: `dualbranch_backbone_unet` (Stem3x3), `shufflenet_modules`, `shufflenet_hybrid_modules`
 
 ---
 
@@ -106,7 +106,7 @@ ablation 정리 시 하나씩 쳐낼 때 참고용입니다.
 | `dualbranch_17_shufflenet_pamlite_v3_` | `DualBranchUNet3D_ShufflePamLiteV3` | PAM-lite V3 (Hybrid V3 블록) |
 
 - **사이즈**: `_xs`, `_s`, `_m`, `_l`  
-- **의존**: `dualbranch_14_unet` (Stem3x3), `shufflenet_pamlite_modules`, `shufflenet_hybrid_modules`
+- **의존**: `dualbranch_backbone_unet` (Stem3x3), `shufflenet_pamlite_modules`, `shufflenet_hybrid_modules`
 
 ---
 
@@ -147,7 +147,7 @@ ablation 정리 시 하나씩 쳐낼 때 참고용입니다.
 | `dualbranch_replk.py` | 04, 05, 06, 07 |
 | `dualbranch_mobile.py` | dualbranch_mobilenetv2_dilated_*, dualbranch_mobilenetv2_dilated_fixed_* |
 | `dualbranch_mvit.py` | 13 |
-| `dualbranch_14_unet.py` | dualbranch_14_* (backbone 8종) |
+| `dualbranch_backbone_unet.py` | dualbranch_backbone_* (backbone 8종) |
 | `dualbranch_16_unet.py` | 16_shufflenet_hybrid, 16_shufflenet_hybrid_ln |
 | `dualbranch_17_unet.py` | 17_shufflenet_pamlite, 17_shufflenet_pamlite_v3 |
 | `dualbranch_shufflenet.py` | 18_shufflenet_v1, 18_shufflenet_v1_stage3fused |
@@ -157,9 +157,9 @@ ablation 정리 시 하나씩 쳐낼 때 참고용입니다.
 
 ## 의존 관계 (쳐낼 때 참고)
 
-- **dualbranch_14_unet.py**: `dualbranch_mobile`, `dualbranch_basic`, `channel_configs`, `modules`(mvit, ghostnet, shufflenet, convnext, cross_attention_3d)  
-- **dualbranch_16_unet.py**: `dualbranch_14_unet`(Stem3x3), shufflenet_modules, shufflenet_hybrid_modules  
-- **dualbranch_17_unet.py**: `dualbranch_14_unet`(Stem3x3), shufflenet_pamlite_modules, shufflenet_hybrid_modules  
+- **dualbranch_backbone_unet.py**: `dualbranch_mobile`, `dualbranch_basic`, `channel_configs`, `modules`(mvit, ghostnet, shufflenet, convnext, cross_attention_3d)  
+- **dualbranch_16_unet.py**: `dualbranch_backbone_unet`(Stem3x3), shufflenet_modules, shufflenet_hybrid_modules  
+- **dualbranch_17_unet.py**: `dualbranch_backbone_unet`(Stem3x3), shufflenet_pamlite_modules, shufflenet_hybrid_modules  
 - **dualbranch_mvit.py**: `dualbranch_mobile`
 
 모델을 하나씩 제거할 때는 `utils/experiment_utils.py`의 `create_model()`, `utils/experiment_config.py`의 prefix/사이즈 목록, 그리고 `evaluate_experiment.py` / `experiment_orchestrator.py`의 dualbranch_04~07 등 prefix 하드코딩도 함께 정리해야 합니다.

@@ -22,7 +22,7 @@ from models.modules.cbam_modules import CBAM3D, ChannelAttention3D
 def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model', distributed: bool = False, world_size: int = 1,
                    sw_patch_size=(128, 128, 128), sw_overlap=0.5, results_dir: str = None, coord_type: str = 'none', dataset_version: str = 'brats2021',
                    data_dir: str = None, seed: int = None, use_5fold: bool = False, fold_idx: int = None, 
-                   fold_split_dir: str = None, preprocessed_dir: str = None, crops_per_center: int = 1, crop_overlap: float = 0.5, use_blending: bool = True, batch_size: int = 1, roi_batch_size=None):
+                   fold_split_dir: str = None, preprocessed_dir: str = None, crops_per_center: int = 1, crop_overlap: float = 0.5, use_blending: bool = True, batch_size: int = 1):
     """모델 평가 함수 (nnUNet 스타일 단일 파이프라인 기준)."""
     model.eval()
     real_model = model.module if hasattr(model, 'module') else model
@@ -67,55 +67,14 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                 # 블록 내부의 ChannelAttention3D도 수집 (예: ShuffleNetV1Unit3D 내부)
                 channel_attention_blocks.append((name, module))
                 channel_attention_data[name] = []
-        if rank0:
-            print(f"[CBAM Debug] Found {len(cbam_blocks)} CBAM blocks: {[name for name, _ in cbam_blocks]}")
-            if channel_attention_blocks:
-                print(f"[CBAM Debug] Found {len(channel_attention_blocks)} ChannelAttention3D blocks (inside units): {[name for name, _ in channel_attention_blocks]}")
+        if rank0 and (cbam_blocks or channel_attention_blocks):
+            print(f"[CBAM] blocks: {len(cbam_blocks)}, channel: {len(channel_attention_blocks)}")
     example_dir = None
     example_limit = 10
     examples_saved = 0
     if save_examples:
         example_dir = os.path.join(results_dir, f'qualitative_examples_{model_name}')
         os.makedirs(example_dir, exist_ok=True)
-    
-    # 모달리티별 어텐션 가중치 수집 (해당 모델 제거됨)
-    collect_attention = False
-    all_attention_weights = []  # 각 샘플별 어텐션 가중치 저장
-    
-    # MobileViT attention 가중치 수집 (모델에 MobileViT 블록이 있으면 자동 수집)
-    collect_mvit_attention = (results_dir is not None) and rank0
-    all_mvit_attention_weights = []  # 각 샘플별 MobileViT attention 가중치 저장
-    mvit_blocks_found = []
-    if collect_mvit_attention:
-        # MobileViT 블록이 모델에 있는지 확인
-        try:
-            from models.modules.mvit_modules import MobileViT3DBlock, MobileViT3DBlockV3
-            for name, module in real_model.named_modules():
-                if isinstance(module, (MobileViT3DBlock, MobileViT3DBlockV3)):
-                    mvit_blocks_found.append((name, module))
-            
-            # 모델의 forward 메서드가 return_attention을 지원하는지 확인
-            import inspect
-            sig = inspect.signature(real_model.forward)
-            has_return_attention = 'return_attention' in sig.parameters
-            
-            if len(mvit_blocks_found) > 0 and has_return_attention:
-                if rank0:
-                    print(f"[MobileViT Debug] Found {len(mvit_blocks_found)} MobileViT blocks: {[name for name, _ in mvit_blocks_found]}")
-                    print(f"[MobileViT Debug] Model supports return_attention parameter")
-            elif len(mvit_blocks_found) > 0 and not has_return_attention:
-                # MobileViT 블록은 있지만 return_attention을 지원하지 않음
-                collect_mvit_attention = False
-                if rank0:
-                    print(f"[MobileViT Debug] Found {len(mvit_blocks_found)} MobileViT blocks but model does not support return_attention")
-            else:
-                collect_mvit_attention = False
-        except ImportError:
-            collect_mvit_attention = False
-        except Exception as e:
-            if rank0:
-                print(f"[MobileViT Debug] Error checking for MobileViT blocks: {e}")
-            collect_mvit_attention = False
     
     with torch.no_grad():
         seg_cmap = ListedColormap(['black', '#ff0000', '#00ff00', '#0000ff'])
@@ -128,8 +87,8 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                 inputs, labels = batch_data
             inputs, labels = inputs.to(device), labels.to(device)
             
-            # 2D/3D 분기: 2D 모델은 그대로, 3D 모델은 depth 차원 추가
-            if model_name not in ['mobile_unetr', 'mobile_unetr_3d'] and len(inputs.shape) == 4:
+            # 3D 전용: 4D 입력이 오면 depth 차원 추가
+            if len(inputs.shape) == 4:
                 inputs = inputs.unsqueeze(2)
                 labels = labels.unsqueeze(2)
             
@@ -152,65 +111,12 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
                             )
                         else:
                             raise
-                elif collect_attention:
-                    # 어텐션 가중치 수집을 위해 슬라이딩 윈도우에서 직접 호출
-                    # 슬라이딩 윈도우는 어텐션 가중치를 평균내야 하므로, 여기서는 전체 볼륨에 대해 직접 호출
-                    real_model = model.module if hasattr(model, 'module') else model
-                    if hasattr(real_model, 'forward') and 'return_attention' in real_model.forward.__code__.co_varnames:
-                        # 전체 볼륨에 대해 직접 forward (슬라이딩 윈도우 없이, 메모리 허용 시)
-                        # 실제로는 슬라이딩 윈도우를 사용하되, 각 패치의 어텐션을 평균내야 함
-                        # 간단하게 전체 볼륨에 대해 직접 호출 (메모리 허용 시)
-                        try:
-                            logits, attention_dict = real_model(inputs, return_attention=True)
-                            # 어텐션 가중치 저장 (평균 가중치 사용)
-                            avg_weights = attention_dict['average'].cpu().numpy()  # [B, 4]
-                            all_attention_weights.append(avg_weights[0])  # 첫 번째 샘플 (batch_size=1)
-                    except RuntimeError as e:
-                        # 메모리 부족 시 슬라이딩 윈도우 사용 (어텐션 수집 불가)
-                        if "out of memory" in str(e).lower():
-                            print(f"Warning: OOM during attention collection, using sliding window without attention")
-                            logits = sliding_window_inference_3d(
-                                model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
-                            )
-                        else:
-                            raise
-                    else:
-                        logits = sliding_window_inference_3d(
-                            model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
-                        )
-                elif collect_mvit_attention:
-                    # MobileViT attention 가중치 수집 (이미 위에서 모듈 존재 및 return_attention 지원 확인됨)
-                    try:
-                        # 전체 볼륨에 대해 직접 forward (메모리 허용 시)
-                        logits, attention_dict = real_model(inputs, return_attention=True)
-                        # MobileViT attention 가중치 저장
-                        all_mvit_attention_weights.append(attention_dict)
-                    except RuntimeError as e:
-                        # 메모리 부족 시 슬라이딩 윈도우 사용 (attention 수집 불가)
-                        if "out of memory" in str(e).lower():
-                            if rank0:
-                                print(f"Warning: OOM during MobileViT attention collection, using sliding window without attention")
-                            logits = sliding_window_inference_3d(
-                                model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
-                            )
-                        else:
-                            raise
                 else:
                     logits = sliding_window_inference_3d(
                         model, inputs, patch_size=sw_patch_size, overlap=sw_overlap, device=device, model_name=model_name, coord_type=coord_type
                     )
             else:
-                if collect_attention:
-                    real_model = model.module if hasattr(model, 'module') else model
-                    if hasattr(real_model, 'forward') and 'return_attention' in real_model.forward.__code__.co_varnames:
-                        logits, attention_dict = real_model(inputs, return_attention=True)
-                        avg_weights = attention_dict['average'].cpu().numpy()  # [B, 4]
-                        for i in range(avg_weights.shape[0]):
-                            all_attention_weights.append(avg_weights[i])
-                    else:
-                        logits = model(inputs)
-                else:
-                    logits = model(inputs)
+                logits = model(inputs)
             
             # Dice score 계산 (WT/TC/ET, RC for BRATS2024)
             dice_scores = calculate_wt_tc_et_dice(logits, labels, dataset_version=dataset_version)
@@ -443,76 +349,6 @@ def evaluate_model(model, test_loader, device='cuda', model_name: str = 'model',
     # Background 제외한 평균 (클래스 1, 2, 3만)
     avg_precision = np.mean(precision_scores[1::4])  # 클래스별로 평균
     avg_recall = np.mean(recall_scores[1::4])
-    
-    # 모달리티별 어텐션 가중치 분석 및 저장
-    if collect_attention and len(all_attention_weights) > 0:
-        try:
-            attention_array = np.array(all_attention_weights)  # [n_samples, 4]
-            modality_names = ['T1', 'T1CE', 'T2', 'FLAIR']
-            
-            # 평균 기여도 계산
-            mean_contributions = attention_array.mean(axis=0)  # [4]
-            std_contributions = attention_array.std(axis=0)  # [4]
-            
-            # 결과 출력
-            print(f"\n{'='*60}")
-            print(f"Modality Attention Analysis - {model_name}")
-            print(f"{'='*60}")
-            print(f"Total samples analyzed: {len(all_attention_weights)}")
-            print(f"\nAverage Modality Contributions:")
-            for i, mod_name in enumerate(modality_names):
-                print(f"  {mod_name:6s}: {mean_contributions[i]:.4f} ± {std_contributions[i]:.4f}")
-            
-            # CSV 저장
-            if results_dir:
-                attention_df = pd.DataFrame(attention_array, columns=modality_names)
-                attention_df['sample_id'] = range(len(attention_array))
-                attention_df = attention_df[['sample_id'] + modality_names]
-                
-                csv_path = os.path.join(results_dir, f'modality_attention_{model_name}.csv')
-                attention_df.to_csv(csv_path, index=False)
-                print(f"\nAttention weights saved to: {csv_path}")
-                
-                # 요약 통계 저장
-                summary_df = pd.DataFrame({
-                    'modality': modality_names,
-                    'mean_contribution': mean_contributions,
-                    'std_contribution': std_contributions
-                })
-                summary_path = os.path.join(results_dir, f'modality_attention_summary_{model_name}.csv')
-                summary_df.to_csv(summary_path, index=False)
-                print(f"Attention summary saved to: {summary_path}")
-            
-            print(f"{'='*60}\n")
-        except Exception as e:
-            print(f"Warning: Failed to analyze/save attention weights: {e}")
-    
-    # MobileViT attention 가중치 분석 및 저장
-    if collect_mvit_attention and len(all_mvit_attention_weights) > 0:
-        try:
-            from utils.mvit_attention_utils import analyze_mvit_attention_weights, check_mvit_attention_learning
-            
-            # Attention 분석
-            analysis_result = analyze_mvit_attention_weights(
-                all_mvit_attention_weights,
-                results_dir=results_dir,
-                model_name=model_name,
-            )
-            
-            # Attention 학습 상태 확인
-            is_learning, message = check_mvit_attention_learning(all_mvit_attention_weights)
-            print(f"\nMobileViT Attention Learning Status: {message}")
-            if not is_learning:
-                print(f"⚠️  Warning: MobileViT attention may not be learning properly!")
-                print(f"   Consider:")
-                print(f"   - Checking learning rate")
-                print(f"   - Increasing training epochs")
-                print(f"   - Adjusting MobileViT hyperparameters (num_heads, num_layers, etc.)")
-            
-        except Exception as e:
-            print(f"Warning: Failed to analyze/save MobileViT attention weights: {e}")
-            import traceback
-            traceback.print_exc()
     
     # Save confusion matrix heatmap on main (or non-distributed)
     try:

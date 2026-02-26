@@ -11,21 +11,16 @@
 ├── models/                             # 모델 아키텍처
 │   ├── __init__.py
 │   ├── channel_configs.py             # 중앙 집중식 채널 설정 (_xs, _s, _m, _l)
-│   ├── baseline/                      # 참조/논문 모델
-│   │   ├── model_3d_unet.py           # 3D U-Net (xs, s, m, l)
+│   ├── baseline/                      # 참조/논문 모델 (UNETR/SwinUNETR는 MONAI 외부 로드)
+│   │   ├── model_3d_unet.py           # 3D U-Net 빌딩 블록 (custom 공용)
 │   │   ├── model_3d_unet_modal_comparison.py  # 모달리티 비교 (2modal, 4modal)
-│   │   ├── model_unetr.py             # UNETR
-│   │   ├── model_swin_unetr.py        # Swin UNETR
-│   │   ├── mobileunetr.py            # Mobile UNETR (2D)
 │   │   ├── mobileunetr_3d.py         # Mobile UNETR 3D
 │   │   └── model_segformer3d.py       # SegFormer 3D
 │   ├── custom/                        # 프로젝트 커스텀 모델
 │   │   ├── dualbranch_replk.py        # Dual-Branch RepLK + MViT
 │   │   ├── dualbranch_mvit.py         # Dual-Branch MobileViT Extended
-│   │   ├── dualbranch_14_unet.py      # Dual-Branch Backbone 비교
-│   │   ├── dualbranch_shufflenet_v2.py  # Dual-Branch ShuffleNet V2
-│   │   └── architecture/cascade/     # Cascade / SegNeXt 등
-│   │       └── seg_model/
+│   │   ├── dualbranch_backbone_unet.py   # Dual-Branch Backbone 비교
+│   │   └── dualbranch_shufflenet_v2.py  # Dual-Branch ShuffleNet V2
 │   └── modules/                       # 공통 빌딩 블록
 │       ├── dualbranch_blocks.py       # Dual-Branch 공통 블록
 │       ├── replk_modules.py           # RepLK
@@ -215,16 +210,16 @@ torchrun --nnodes=2 --node_rank=0 --nproc_per_node=4 --master_addr=<MASTER_IP> -
 - `dualbranch_06_unet_{xs|s|m|l}`: RepLK + MViT Stage 4,5
 - `dualbranch_07_unet_{xs|s|m|l}`: RepLK + MViT Stage 5만
 - `dualbranch_13_unet_{xs|s|m|l}`: MobileViT Extended
-- `dualbranch_14_mobilenetv2_expand2_{xs|s|m|l}`: MobileNetV2 (expand_ratio=2)
-- `dualbranch_14_ghostnet_{xs|s|m|l}`: GhostNet
-- `dualbranch_14_dilated_{xs|s|m|l}`: Dilated Conv (rate 1,2,5)
-- `dualbranch_14_convnext_{xs|s|m|l}`: ConvNeXt
-- `dualbranch_14_shufflenetv2_{xs|s|m|l}`: ShuffleNetV2
-- `dualbranch_14_shufflenetv2_dilated_{xs|s|m|l}`: ShuffleNetV2 Dilated
-- `dualbranch_14_shufflenetv2_lk_{xs|s|m|l}`: ShuffleNetV2 Large Kernel
+- `dualbranch_backbone_mobilenetv2_expand2_{xs|s|m|l}`: MobileNetV2 (expand_ratio=2)
+- `dualbranch_backbone_ghostnet_{xs|s|m|l}`: GhostNet
+- `dualbranch_backbone_dilated_{xs|s|m|l}`: Dilated Conv (rate 1,2,5)
+- `dualbranch_backbone_convnext_{xs|s|m|l}`: ConvNeXt
+- `dualbranch_backbone_shufflenetv2_{xs|s|m|l}`: ShuffleNetV2
+- `dualbranch_backbone_shufflenetv2_dilated_{xs|s|m|l}`: ShuffleNetV2 Dilated
+- `dualbranch_backbone_shufflenetv2_lk_{xs|s|m|l}`: ShuffleNetV2 Large Kernel
 - `dualbranch_19_shufflenet_v2_stage3fused_{xs|s|m|l}`: ShuffleNet V2 Stage3 Fused
 
-**예시**: `dualbranch_04_unet_s`, `dualbranch_14_ghostnet_l` 등
+**예시**: `dualbranch_04_unet_s`, `dualbranch_backbone_ghostnet_l` 등
 
 #### 모달리티 비교 모델
 - `unet3d_2modal_s`: 단일 분기, 2채널 (T1ce, FLAIR) concat

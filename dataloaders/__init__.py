@@ -7,7 +7,6 @@ BraTS 관련 데이터셋/로더를 역할별 모듈로 분리한 패키지입�
 from .brats_base import (
     _normalize_volume_np,
     BratsDataset3D,
-    BratsDataset2D,
     split_brats_dataset,
     get_brats_base_datasets,
 )
@@ -26,7 +25,6 @@ __all__ = [
     # base
     "_normalize_volume_np",
     "BratsDataset3D",
-    "BratsDataset2D",
     "split_brats_dataset",
     "get_brats_base_datasets",
     # patch

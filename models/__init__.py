@@ -1,7 +1,7 @@
 """
 3D Segmentation Models
 
-- baseline/: reference/paper models (UNet3D, UNETR, Swin UNETR, MobileUNETR, SegFormer3D, modal comparison)
+- baseline/: UNet3D 빌딩 블록, modal comparison. (UNETR/SwinUNETR는 MONAI 외부 로드)
 - custom/: project-specific variants (dual-branch 등)
 - modules/: shared building blocks
 - channel_configs.py: shared channel configs
@@ -14,18 +14,8 @@ from .baseline import (
     Down3D,
     Up3D,
     OutConv3D,
-    UNETR,
-    UNETR_Simplified,
-    PatchEmbedding3D as UNETRPatchEmbedding,
-    PositionalEncoding3D,
-    TransformerBlock,
-    SwinUNETR,
-    SwinUNETR_Simplified,
-    PatchEmbedding3D as SwinPatchEmbedding,
-    WindowAttention3D,
-    SwinTransformerBlock3D,
-    PatchMerging3D,
-    MobileUNETR,
+    _make_norm3d,
+    _make_activation,
 )
 
 __all__ = [
@@ -35,16 +25,6 @@ __all__ = [
     "Down3D",
     "Up3D",
     "OutConv3D",
-    "UNETR",
-    "UNETR_Simplified",
-    "UNETRPatchEmbedding",
-    "PositionalEncoding3D",
-    "TransformerBlock",
-    "SwinUNETR",
-    "SwinUNETR_Simplified",
-    "SwinPatchEmbedding",
-    "WindowAttention3D",
-    "SwinTransformerBlock3D",
-    "PatchMerging3D",
-    "MobileUNETR",
+    "_make_norm3d",
+    "_make_activation",
 ]

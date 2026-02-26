@@ -23,7 +23,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.experiment_utils import (
     get_model, calculate_flops, calculate_pam, calculate_inference_latency,
     setup_distributed, cleanup_distributed, is_main_process,
-    INPUT_SIZE_2D, INPUT_SIZE_3D
+    INPUT_SIZE_3D,
 )
 from utils.runner import evaluate_model
 from dataloaders import get_data_loaders
@@ -158,7 +158,7 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         use_5fold=use_5fold,
         fold_idx=detected_fold_idx,
         fold_split_dir=fold_split_dir,
-        model_name=model_name,  # Cascade 모델 감지를 위해 전달
+        model_name=model_name,
         coord_type=coord_type,  # 체크포인트에서 감지한 coord_type 전달
         preprocessed_dir=preprocessed_dir
     )
@@ -207,12 +207,8 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
         actual_input_channels = n_channels
     
     total_params = sum(p.numel() for p in real_model.parameters())
-    if dim == '2d':
-        flops = calculate_flops(model, input_size=(1, actual_input_channels, *INPUT_SIZE_2D))
-        input_size = (1, actual_input_channels, *INPUT_SIZE_2D)
-    else:
-        flops = calculate_flops(model, input_size=(1, actual_input_channels, *INPUT_SIZE_3D))
-        input_size = (1, actual_input_channels, *INPUT_SIZE_3D)
+    flops = calculate_flops(model, input_size=(1, actual_input_channels, *INPUT_SIZE_3D))
+    input_size = (1, actual_input_channels, *INPUT_SIZE_3D)
     
     # PAM 계산 (rank 0에서만, batch_size=1로 고정, 여러 번 측정)
     pam_train_list = []
@@ -379,10 +375,10 @@ def load_checkpoint_and_evaluate(results_dir, model_name, seed, data_path, dim='
     return ([result], stage_pam_results) if is_main_process(rank) else ([], [])
 
 
-def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d', 
+def run_evaluation(results_dir, data_path, models=None, seeds=None,
                    dataset_version='brats2018', batch_size=1, num_workers=0,
                    use_5fold=False, fold_idx=None, preprocessed_base_dir=None):
-    """평가 실행 (Early stopping으로 중단된 경우에도 사용 가능)"""
+    """평가 실행 (3D 전용, Early stopping으로 중단된 경우에도 사용 가능)"""
     
     if not os.path.exists(results_dir):
         print(f"Error: Results directory not found: {results_dir}")
@@ -466,7 +462,7 @@ def run_evaluation(results_dir, data_path, models=None, seeds=None, dim='3d',
                 model_name=model_name,
                 seed=seed,
                 data_path=data_path,
-                dim=dim,
+                dim='3d',
                 dataset_version=dataset_version,
                 batch_size=batch_size,
                 num_workers=num_workers,
@@ -555,8 +551,6 @@ if __name__ == "__main__":
                        help='Specific models to evaluate (default: all found checkpoints)')
     parser.add_argument('--seeds', nargs='+', type=int, default=None,
                        help='Specific seeds to evaluate (default: all found seeds)')
-    parser.add_argument('--dim', type=str, default='3d', choices=['2d', '3d'],
-                       help='Data dimension: 2d or 3d (default: 3d)')
     parser.add_argument('--dataset_version', type=str, default='brats2018',
                        choices=['brats2017', 'brats2018', 'brats2019', 'brats2020', 'brats2021', 'brats2023', 'brats2024'],
                        help='Dataset version (default: brats2018)')
@@ -578,7 +572,6 @@ if __name__ == "__main__":
     print(f"Preprocessed base dir: {args.preprocessed_base_dir}")
     print(f"Models: {args.models if args.models else 'All found checkpoints'}")
     print(f"Seeds: {args.seeds if args.seeds else 'All found seeds'}")
-    print(f"Dimension: {args.dim}")
     print(f"Dataset version: {args.dataset_version}")
     
     try:
@@ -587,7 +580,6 @@ if __name__ == "__main__":
             data_path=args.data_path,
             models=args.models,
             seeds=args.seeds,
-            dim=args.dim,
             dataset_version=args.dataset_version,
             batch_size=args.batch_size,
             num_workers=args.num_workers,

@@ -499,25 +499,22 @@ def comprehensive_analysis_multi_model(models_dict: Dict[str, torch.nn.Module],
         print()
 
 if __name__ == "__main__":
-    # 테스트
-    from models import UNet3D_Small, UNETR_Simplified, SwinUNETR_Simplified
-    # Alias for backward compatibility
-    UNet3D_Simplified = UNet3D_Small
+    # 테스트 (3D 전용, UNETR/SwinUNETR는 MONAI 로드)
+    from models import UNet3D_Small
+    from utils.experiment_utils import get_model
     from dataloaders import get_data_loaders
-    
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # 다중 모델 로드
+
+    # 다중 모델 로드 (UNet3D: in-repo, UNETR/SwinUNETR: MONAI)
     models_dict = {
-        'UNet3D': UNet3D_Simplified(n_channels=4, n_classes=4).to(device),
-        'UNETR': UNETR_Simplified(img_size=(64, 64, 64), patch_size=(8, 8, 8),
-                                 in_channels=4, out_channels=4).to(device),
-        'SwinUNETR': SwinUNETR_Simplified(img_size=(64, 64, 64), patch_size=(4, 4, 4),
-                                         in_channels=4, out_channels=4).to(device)
+        'UNet3D': UNet3D_Small(n_channels=4, n_classes=4).to(device),
+        'UNETR': get_model('unetr', n_channels=4, n_classes=4, dim='3d').to(device),
+        'SwinUNETR': get_model('swin_unetr', n_channels=4, n_classes=4, dim='3d').to(device),
     }
-    
-    # 데이터 로더
-    train_loader, val_loader, _ = get_data_loaders('.', batch_size=1, num_workers=0, max_samples=3)
+
+    # 데이터 로더 (3D)
+    train_loader, val_loader, _ = get_data_loaders('.', batch_size=1, num_workers=0, max_samples=3, dim='3d')
     
     # 다중 모델 종합 분석
     comprehensive_analysis_multi_model(models_dict, val_loader, device, num_samples=2, results_dir='test_results')
